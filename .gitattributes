@@ -1,0 +1,16 @@
+@"
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.xml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.launch text eol=lf
+*.launch.py text eol=lf
+*.png binary
+*.jpg binary
+*.ply binary
+*.db3 binary
+*.so binary
+*.dll binary
+"@ | Out-File -Encoding utf8 .gitattributes

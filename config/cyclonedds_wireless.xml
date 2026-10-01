@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS configuration for Wi-Fi / wireless Go2 deployment.
+
+  Why this file exists:
+    On a typical Wi-Fi network, multicast is often blocked or filtered by the
+    access point. CycloneDDS by default relies on multicast for discovery,
+    so the ROS 2 nodes on the VM and the robot cannot find each other.
+
+  What this file does:
+    1. Pins CycloneDDS to the Wi-Fi interface (avoids binding to Ethernet).
+    2. Disables multicast discovery.
+    3. Forces Peer-to-Peer discovery using explicit unicast peers.
+
+  IMPORTANT:
+    - Replace 10.42.0.29   with the Go2 robot IP.
+    - Replace 10.42.0.100  with THIS machine's Wi-Fi IP (the VM/PC).
+    - Run `ip addr` to confirm your Wi-Fi interface name (wlp*, wlan*, etc.).
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config
+                                https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+
+  <Domain id="any">
+
+    <General>
+      <Interfaces>
+        <!-- Pin to Wi-Fi interface. Change to wlan0 / wlp3s0 as needed. -->
+        <NetworkInterface name="wlp2s0"
+                          priority="default"
+                          multicast="false" />
+      </Interfaces>
+
+      <!-- Disable multicast discovery entirely -->
+      <AllowMulticast>false</AllowMulticast>
+
+      <!-- Prefer IPv4 (Wi-Fi APs frequently mis-handle IPv6 link-local) -->
+      <EnableMulticastLoopback>false</EnableMulticastLoopback>
+
+      <!-- Max message size (LiDAR PointCloud2 can be large) -->
+      <MaxMessageSize>65500B</MaxMessageSize>
+
+      <!-- Fragment size matched to typical Wi-Fi MTU -->
+      <FragmentSize>1344B</FragmentSize>
+    </General>
+
+    <Discovery>
+      <!--
+        Static peer list. Every participant must be able to reach every other
+        participant. Add both directions explicitly.
+      -->
+      <Peers>
+        <Peer address="10.42.0.29"/>    <!-- CHANGEME: Go2 robot IP -->
+        <Peer address="10.42.0.100"/>   <!-- CHANGEME: this machine's Wi-Fi IP -->
+      </Peers>
+
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
+
+      <!-- Reduce discovery burst on constrained Wi-Fi -->
+      <SPDPInterval>30s</SPDPInterval>
+    </Discovery>
+
+    <!--
+      Internal buffer tuning for high-throughput LiDAR traffic.
+      Raise these if you see "message lost" warnings.
+    -->
+    <Internal>
+      <Watermarks>
+        <WhcHigh>500kB</WhcHigh>
+      </Watermarks>
+      <SocketReceiveBufferSize min="4MB"/>
+    </Internal>
+
+  </Domain>
+</CycloneDDS>
