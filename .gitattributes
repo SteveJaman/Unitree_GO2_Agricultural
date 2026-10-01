@@ -1,4 +1,4 @@
-@"
+Set-Content -Path .gitattributes -Encoding UTF8 -Value @"
 * text=auto eol=lf
 *.sh text eol=lf
 *.py text eol=lf
@@ -13,4 +13,4 @@
 *.db3 binary
 *.so binary
 *.dll binary
-"@ | Out-File -Encoding utf8 .gitattributes
+"@
