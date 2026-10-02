@@ -1,0 +1,13 @@
+# Python dependencies for Unitree_GO2_Agricultural
+#
+# These are the pip-installable packages. ROS 2 packages (rclpy, rclpy.qos,
+# sensor_msgs, nav_msgs, geometry_msgs, std_msgs, cv_bridge, tf2_ros,
+# unitree_api, image_transport, etc.) are NOT pip-installable. Install them
+# with apt (ros-humble-*) or build them from source. See docs/setup.md.
+
+# Core numerics — used by map_node.py and pointcloud_to_scan.py
+numpy>=1.21,<2.0
+
+# Poisson mesh reconstruction in map_node.py (reconstruct_mesh)
+# Heavy dependency (~400 MB wheel). Skip if you do not need mesh.obj output.
+open3d>=0.17,<0.19
