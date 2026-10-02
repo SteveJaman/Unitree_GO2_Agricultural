@@ -35,9 +35,12 @@ source /opt/ros/humble/setup.bash && colcon build --packages-select go2_integrat
 ./scripts/system_simulation_with_camera.sh
 ```
 
-Start `./scripts/system_simulation.sh` in another terminal first. See [Workflows](#workflows).
+Step 3 launches Unity, the CMU autonomy stack, the mapping node, and RViz
+in one terminal. Nothing else needs to be running first.
 
-Full setup steps are in [docs/setup.md](docs/setup.md).
+To instead run the two-terminal flow (base simulation in one terminal,
+mapping in another), see [Workflows](#workflows). For network setup,
+dependencies, and build steps, see [docs/setup.md](docs/setup.md).
 
 ## Repository Structure
 
@@ -61,6 +64,7 @@ Unitree_GO2_Agricultural/
 |   |-- system_simulation_with_camera.sh
 |   |-- system_simulation_with_mapping.sh
 |   +-- verify_topics.sh
+|-- requirements.txt
 |-- simulation/
 |   |-- README.md
 |   +-- custom_scenes/
@@ -234,9 +238,17 @@ ros2 run nav2_map_server map_saver_cli -f ~/go2_maps/my_map
 - Unitree Go2 EDU (SDK-enabled)
 - Ethernet cable (or USB Wi-Fi dongle on the Jetson for wireless)
 - CMU Unity model downloaded for simulation
-- ROS 2 packages: `slam_toolbox`, `nav2_bringup`, `nav2_amcl`, `nav2_map_server`, `nav2_lifecycle_manager`, `nav2_controller`, `nav2_planner`, `nav2_bt_navigator`, `nav2_behaviors`, `cv_bridge`, `tf2_ros`, `image_transport`
-- Python: `numpy`, `open3d` (for mesh reconstruction)
-
+- ROS 2 Humble plus these `ros-humble-*` packages:
+  `slam-toolbox`, `nav2-bringup`, `nav2-amcl`, `nav2-map-server`,
+  `nav2-lifecycle-manager`, `nav2-controller`, `nav2-planner`,
+  `nav2-bt-navigator`, `nav2-behaviors`, `nav2-regulated-pure-pursuit-controller`,
+  `nav2-navfn-planner`, `cv-bridge`, `tf2-ros`, `image-transport`,
+  `rmw-cyclonedds-cpp`
+- Python packages: `pip install -r requirements.txt`
+  (`numpy` required; `open3d` required only for `mesh.obj` export)
+- `unitree_api` message package, needed by `move_forward.py`. Comes from
+  the Unitree SDK or `go2_robot_sdk`, not pip, not apt
+  
 ## Documentation
 
 All guides live in the [docs](docs/) folder.
