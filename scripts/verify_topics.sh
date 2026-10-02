@@ -2,20 +2,22 @@
 # ---------------------------------------------------------------------------
 # verify_topics.sh
 #
-# Checks that every expected ROS 2 topic exists with the correct type and QoS.
+# Checks that every expected ROS 2 topic exists with the correct type.
 # Run after launching the robot or simulation.
 #
 # Usage:
-#   ./scripts/verify_topics.sh                    # real robot (Ethernet)
-#   ./scripts/verify_topics.sh --sim              # Unity simulation
-#   ./scripts/verify_topics.sh --webrtc           # WebRTC fallback
+#   ./scripts/verify_topics.sh              # real robot (Ethernet)
+#   ./scripts/verify_topics.sh --sim        # Unity simulation
+#   ./scripts/verify_topics.sh --webrtc     # WebRTC fallback
+#   ./scripts/verify_topics.sh --dog        # just the dog, no autonomy stack
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
 MODE="ethernet"
 case "${1:-}" in
-    --sim)    MODE="simulation" ;;
-    --webrtc) MODE="webrtc" ;;
+    --sim)     MODE="simulation" ;;
+    --webrtc)  MODE="webrtc" ;;
+    --dog)     MODE="dog" ;;
     --ethernet|"") MODE="ethernet" ;;
     *) echo "Unknown mode: $1"; exit 1 ;;
 esac
@@ -31,9 +33,10 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 
 case "$MODE" in
-    ethernet)   export CYCLONEDDS_URI="file://${WS_ROOT}/config/cyclonedds_ethernet.xml" ;;
-    simulation) export CYCLONEDDS_URI="file://${WS_ROOT}/config/cyclonedds_ethernet.xml" ;;
-    webrtc)     export CYCLONEDDS_URI="file://${WS_ROOT}/config/cyclonedds_wireless.xml" ;;
+    ethernet|simulation|dog)
+        export CYCLONEDDS_URI="file://${WS_ROOT}/config/cyclonedds_ethernet.xml" ;;
+    webrtc)
+        export CYCLONEDDS_URI="file://${WS_ROOT}/config/cyclonedds_wireless.xml" ;;
 esac
 
 echo "================================================================"
@@ -45,12 +48,22 @@ echo
 # --- Define expected topics per mode ---
 case "$MODE" in
     ethernet|simulation)
+        # CMU autonomy stack remaps /cloud_registered to /registered_scan
         EXPECTED=(
             "/utlidar/cloud:sensor_msgs/msg/PointCloud2"
             "/utlidar/imu:sensor_msgs/msg/Imu"
-            "/cloud_registered:sensor_msgs/msg/PointCloud2"
+            "/registered_scan:sensor_msgs/msg/PointCloud2"
             "/state_estimation:nav_msgs/msg/Odometry"
             "/cmd_vel:geometry_msgs/msg/TwistStamped"
+        )
+        ;;
+    dog)
+        # Just the dog powered on, no autonomy stack
+        EXPECTED=(
+            "/utlidar/cloud:sensor_msgs/msg/PointCloud2"
+            "/utlidar/cloud_deskewed:sensor_msgs/msg/PointCloud2"
+            "/utlidar/imu:sensor_msgs/msg/Imu"
+            "/utlidar/robot_odom:nav_msgs/msg/Odometry"
         )
         ;;
     webrtc)
