@@ -485,8 +485,8 @@ slam_toolbox          AMCL <-- map_server <-- saved map
 ## Cross-References
 
 - [README.md](../README.md) - repo overview, modes, and workflows
-- [SETUP.md](SETUP.md) - first-time clone, dependency, and build setup
-- [ETHERNET.md](ETHERNET.md) - run the stack over a direct cable
-- [WIRELESS.md](WIRELESS.md) - run the stack over a USB Wi-Fi dongle
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - fixes for environment, DDS, SLAM, and motion errors
-- [ROADMAP.md](ROADMAP.md) - development phases and planned work
+- [setup.md](setup.md) - first-time clone, dependency, and build setup
+- [ethernet.md](ethernet.md) - run the stack over a direct cable
+- [wireless.md](wireless.md) - run the stack over a USB Wi-Fi dongle
+- [troubleshooting.md](troubleshooting.md) - fixes for environment, DDS, SLAM, and motion errors
+- [roadmap.md](roadmap.md) - development phases and planned work

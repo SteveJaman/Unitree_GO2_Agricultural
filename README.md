@@ -37,7 +37,7 @@ source /opt/ros/humble/setup.bash && colcon build --packages-select go2_integrat
 
 Start `./scripts/system_simulation.sh` in another terminal first. See [Workflows](#workflows).
 
-Full setup steps are in [docs/SETUP.md](docs/SETUP.md).
+Full setup steps are in [docs/setup.md](docs/setup.md).
 
 ## Repository Structure
 
@@ -48,11 +48,11 @@ Unitree_GO2_Agricultural/
 |   +-- cyclonedds_wireless.xml
 |-- docs/
 |   |-- architecture.md
-|   |-- ETHERNET.md
-|   |-- ROADMAP.md
-|   |-- SETUP.md
-|   |-- TROUBLESHOOTING.md
-|   +-- WIRELESS.md
+|   |-- ethernet.md
+|   |-- roadmap.md
+|   |-- setup.md
+|   |-- troubleshooting.md
+|   +-- wireless.md
 |-- scripts/
 |   |-- move_forward.sh
 |   |-- system_navigation.sh
@@ -252,7 +252,7 @@ All guides live in the [docs](docs/) folder.
 
 ## Roadmap
 
-See [docs/roadmap.md](docs/ROADMAP.md) for the development phases and planned work.
+See [docs/roadmap.md](docs/roadmap.md) for the development phases and planned work.
 
 ## Status
 
