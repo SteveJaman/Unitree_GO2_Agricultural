@@ -1,21 +1,17 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!--
-  CycloneDDS configuration for Wi-Fi / wireless Go2 deployment.
+  CycloneDDS configuration for direct Ethernet connection to the Go2 Jetson.
 
-  Why this file exists:
-    On a typical Wi-Fi network, multicast is often blocked or filtered by the
-    access point. CycloneDDS by default relies on multicast for discovery,
-    so the ROS 2 nodes on the VM and the robot cannot find each other.
+  Network:
+    VM Ethernet adapter (enp0s8) : 192.168.123.100/24
+    Go2 Jetson (eth0)            : 192.168.123.18/24
+    Both are on the same subnet via a physical Ethernet cable.
 
-  What this file does:
-    1. Pins CycloneDDS to the Wi-Fi interface (avoids binding to Ethernet).
-    2. Disables multicast discovery.
-    3. Forces Peer-to-Peer discovery using explicit unicast peers.
-
-  IMPORTANT:
-    - Replace 10.42.0.29   with the Go2 robot IP.
-    - Replace 10.42.0.100  with THIS machine's Wi-Fi IP (the VM/PC).
-    - Run `ip addr` to confirm your Wi-Fi interface name (wlp*, wlan*, etc.).
+  Why no relay is needed:
+    The Go2 Jetson publishes /utlidar/cloud and /utlidar/imu natively
+    over DDS on the internal Ethernet. Since this VM is on the same
+    subnet, it receives those topics directly — no WebRTC, no SDK,
+    no relay, no bridge.
 -->
 <CycloneDDS xmlns="https://cdds.io/config"
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -26,52 +22,34 @@
 
     <General>
       <Interfaces>
-        <!-- Pin to Wi-Fi interface. Change to wlan0 / wlp3s0 as needed. -->
-        <NetworkInterface name="wlp2s0"
+        <!--
+          enp0s8 = VM's bridged Ethernet adapter connected to the Go2.
+          If the VM gets a different adapter name, run:
+              ip -o link show | awk -F': ' '{print $2}' | grep -v lo
+          and update the name below.
+        -->
+        <NetworkInterface name="enp0s8"
                           priority="default"
-                          multicast="false" />
+                          multicast="default" />
       </Interfaces>
 
-      <!-- Disable multicast discovery entirely -->
-      <AllowMulticast>false</AllowMulticast>
-
-      <!-- Prefer IPv4 (Wi-Fi APs frequently mis-handle IPv6 link-local) -->
+      <!--
+        SPDP multicast for discovery. A direct Ethernet link handles
+        multicast fine, so we don't need static peer entries.
+      -->
+      <AllowMulticast>spdp</AllowMulticast>
       <EnableMulticastLoopback>false</EnableMulticastLoopback>
-
-      <!-- Max message size (LiDAR PointCloud2 can be large) -->
-      <MaxMessageSize>65500B</MaxMessageSize>
-
-      <!-- Fragment size matched to typical Wi-Fi MTU -->
-      <FragmentSize>1344B</FragmentSize>
     </General>
 
     <Discovery>
-      <!--
-        Static peer list. Every participant must be able to reach every other
-        participant. Add both directions explicitly.
-      -->
+      <!-- Explicit peer: the Go2 Jetson on 192.168.123.0/24 -->
       <Peers>
-        <Peer address="10.42.0.29"/>    <!-- CHANGEME: Go2 robot IP -->
-        <Peer address="10.42.0.100"/>   <!-- CHANGEME: this machine's Wi-Fi IP -->
+        <Peer address="192.168.123.18"/>
       </Peers>
-
       <ParticipantIndex>auto</ParticipantIndex>
-      <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
-
-      <!-- Reduce discovery burst on constrained Wi-Fi -->
+      <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
       <SPDPInterval>30s</SPDPInterval>
     </Discovery>
-
-    <!--
-      Internal buffer tuning for high-throughput LiDAR traffic.
-      Raise these if you see "message lost" warnings.
-    -->
-    <Internal>
-      <Watermarks>
-        <WhcHigh>500kB</WhcHigh>
-      </Watermarks>
-      <SocketReceiveBufferSize min="4MB"/>
-    </Internal>
 
   </Domain>
 </CycloneDDS>
