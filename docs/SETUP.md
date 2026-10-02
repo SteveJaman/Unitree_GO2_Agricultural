@@ -17,7 +17,7 @@ The repo holds configs, launch scripts, and the go2_integration_pkg ROS 2 packag
 | 3 | Zenoh | Wi-Fi is flaky. TCP-based bridge. |
 | 4 | WebRTC | Legacy fallback. ~1 Hz LiDAR, degraded. |
 
-Start with Ethernet. See docs/ETHERNET.md.
+Start with Ethernet. See docs/ethernet.md.
 
 ## Prerequisites
 
@@ -123,6 +123,6 @@ Both commands must list files. An error means a dependency is missing.
 
 ## Cross-References
 
-- docs/ETHERNET.md - run the stack over a direct cable
-- docs/TROUBLESHOOTING.md - fixes for build, environment, and connection errors
+- docs/ethernet.md - run the stack over a direct cable
+- docs/troubleshooting.md - fixes for build, environment, and connection errors
 - [architecture.md](architecture.md) - topic contract, QoS, command IDs, and data flow

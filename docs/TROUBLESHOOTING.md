@@ -1,133 +1,485 @@
-# Troubleshooting
+# Wireless Mode
 
-Every failure mode encountered during development, with the actual fix.
+Untethered operation. Three approaches, in order of preference.
 
-## How to Use This Document
+## Performance Comparison
 
-Each section is a self-contained issue. Search for the error message you see. If your problem is not here, the "Reporting a New Issue" section at the bottom lists what information to gather.
+| Approach | LiDAR rate | Setup | Requires |
+|----------|-----------|-------|----------|
+| Native Wi-Fi DDS | about 14 Hz | Medium | USB dongle on Jetson |
+| Zenoh bridge | about 10 Hz | High | USB dongle plus Zenoh install |
+| WebRTC fallback | about 1 Hz | Low | Front board only |
 
----
+Native Wi-Fi DDS is the target. It behaves like Ethernet once configured. Zenoh is a bridge for flaky links. WebRTC is a last resort.
 
-## ROS 2 Environment
+## The Hardware Blocker
 
-### `AMENT_TRACE_SETUP_FILES: unbound variable`
+The Go2 has two computers inside.
 
-A shell script uses `set -u` and then sources a ROS 2 setup file. ROS 2 setup files reference undefined variables and abort under `set -u`.
+```
++--------------------------------------+
+|  Go2 robot                           |
+|                                      |
+|  +-----------------------+           |
+|  | Front board           |           |  has Wi-Fi
+|  | (microcontroller)     |           |  speaks WebRTC
+|  | 192.168.137.33        |           |
+|  +-----------+-----------+           |
+|              | internal Ethernet     |
+|  +-----------+-----------+           |
+|  | Jetson (NVIDIA Orin)  |           |  NO Wi-Fi
+|  | runs ROS 2 Foxy       |           |  only eth0
+|  | 192.168.123.18        |           |
+|  +-----------------------+           |
++--------------------------------------+
+```
 
-**Fix:** Wrap every source of a ROS 2 setup file with `set +u` and `set -u`.
+The Jetson hosts the LiDAR, the IMU, and Point-LIO. It has no Wi-Fi chipset.
+
+Only the front board has Wi-Fi, and it speaks WebRTC, not native DDS. It does not route SSH or DDS traffic to the Jetson.
+
+Any wireless approach that uses native DDS requires adding a Wi-Fi interface to the Jetson.
+
+## Hardware Options
+
+### Option 1 - USB Wi-Fi dongle on the Jetson
+
+Plug the dongle into the Jetson. It becomes wlan0. This gives the robot a native Wi-Fi interface.
+
+Recommended dongles:
+
+| Dongle | Chipset | Notes |
+|--------|---------|-------|
+| Panda PAU09 | Ralink RT5572 | Best compatibility, dual-band |
+| Alfa AWUS036NHA | Atheros AR9271 | Long range |
+| TP-Link TL-WN722N v1 | Atheros AR9271 | Cheapest, must be version 1 |
+
+Avoid TP-Link v2 and v3. They use a different chipset with no in-kernel driver.
+
+Avoid Realtek RTL8812BU. It requires compiling a custom driver on the Jetson.
+
+Confirm the Go2 has a reachable USB port. Most EDU units have one on the side or under the top shell.
+
+### Option 2 - Travel router
+
+A small travel router creates a private Wi-Fi network and provides Ethernet ports for wired devices.
+
+```
+Travel router
+   |
+   |--- (Wi-Fi) --> Go2 Jetson with USB dongle
+   |--- (Ethernet LAN) --> workstation
+```
+
+This solves the case where the workstation has no Wi-Fi chipset. The workstation connects to the router by Ethernet. The Jetson connects to the router by Wi-Fi.
+
+Recommended router: GL.iNet Beryl AX (GL-MT3000). About 60 USD. Wi-Fi 6, four Ethernet ports.
+
+### Option 3 - Campus network
+
+If the campus Ethernet wall port and the campus Wi-Fi are on the same subnet, both machines can reach each other without extra hardware.
+
+Test first. Plug the workstation into a wall port. Connect the Jetson to the campus Wi-Fi. Try `ping` and `ros2 topic list` from the workstation.
+
+If ping works but topics do not appear, the campus blocks multicast and you need Option 1 or 2.
+
+## Step 1 - Configure Wi-Fi on the Jetson
+
+SSH into the Jetson over Ethernet.
 
 ```bash
-set +u
+ssh unitree@192.168.123.18
+```
+
+Plug in the dongle. Verify it is detected.
+
+```bash
+lsusb
+ip link
+```
+
+A new interface such as wlan0 should appear.
+
+Install NetworkManager if needed.
+
+```bash
+sudo apt update
+sudo apt install -y network-manager wpasupplicant
+sudo systemctl enable --now NetworkManager
+```
+
+Connect to the Wi-Fi network.
+
+```bash
+sudo nmcli device wifi rescan
+sudo nmcli device wifi list
+sudo nmcli device wifi connect "YourSSID" password "YourPassword"
+```
+
+Verify the interface has an IP.
+
+```bash
+ip addr show wlan0 | grep inet
+```
+
+Example output:
+
+```
+inet 192.168.137.50/24
+```
+
+Make the connection automatic.
+
+```bash
+sudo nmcli connection modify "YourSSID" connection.autoconnect yes
+sudo nmcli connection modify "YourSSID" connection.autoconnect-priority 100
+```
+
+## Step 2 - Update the Wireless DDS Config
+
+Edit config/cyclonedds_wireless.xml.
+
+Two values must be set.
+
+1. NetworkInterface name to the workstation's Wi-Fi adapter, for example wlan0.
+2. Peer addresses to the Wi-Fi IPs of both machines.
+
+Example:
+
+```xml
+<General>
+  <Interfaces>
+    <NetworkInterface name="wlan0" priority="default" multicast="default" />
+  </Interfaces>
+  <AllowMulticast>spdp</AllowMulticast>
+  <EnableMulticastLoopback>false</EnableMulticastLoopback>
+</General>
+<Discovery>
+  <Peers>
+    <Peer address="192.168.137.50"/>
+    <Peer address="192.168.137.100"/>
+  </Peers>
+  <ParticipantIndex>auto</ParticipantIndex>
+  <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
+</Discovery>
+```
+
+Replace the addresses with the actual IPs on your network.
+
+If the access point blocks multicast, change `<AllowMulticast>spdp</AllowMulticast>` to `<AllowMulticast>false</AllowMulticast>`. The explicit peers are then the only discovery path.
+
+## Step 3 - Verify the Jetson Topics
+
+SSH into the Jetson over Wi-Fi.
+
+```bash
+ssh unitree@192.168.137.50
+```
+
+List topics.
+
+```bash
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=0
+
+ros2 topic list | grep utlidar
+```
+
+Expected topics:
+
+```
+/utlidar/cloud
+/utlidar/cloud_deskewed
+/utlidar/imu
+/utlidar/robot_odom
+```
+
+From the workstation, verify the same topics appear.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/files/Unitree_GO2_Agricultural/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 topic list | grep utlidar
+ros2 topic hz /utlidar/cloud_deskewed
+```
+
+Expected rate: about 10 Hz. The LiDAR rate is slightly lower over Wi-Fi than over Ethernet.
+
+## Step 4 - Launch the Autonomy Stack
+
+The repo does not ship a dedicated wireless launcher. Run the autonomy stack manually with the wireless DDS config.
+
+```bash
 source /opt/ros/humble/setup.bash
 source ~/files/autonomy_stack_go2/install/setup.bash
-set -u
+source ~/files/Unitree_GO2_Agricultural/install/setup.bash
+
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 launch vehicle_simulator system_real_robot.launch
 ```
 
-Every script in this repo already does this. If you write a new one, follow the same pattern.
+RViz opens. The point cloud, robot pose, and terrain map appear.
 
----
-
-### `Package 'go2_integration_pkg' not found`
-
-ROS 2 cannot find the package.
-
-**Causes:**
-
-1. You did not run `source install/setup.bash` after building.
-2. The build failed silently.
-3. You are in a different shell than the one you built in.
-
-**Diagnose:**
+If the same command is needed repeatedly, create a wrapper script in the repo.
 
 ```bash
-ros2 pkg prefix go2_integration_pkg
-echo $AMENT_PREFIX_PATH
+#!/usr/bin/env bash
+# system_real_robot_wireless.sh
+set -eo pipefail
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
+CYCLONEDDS_XML="${WS_ROOT}/config/cyclonedds_wireless.xml"
+AUTONOMY_WS="$HOME/files/autonomy_stack_go2"
+
+set +u
+source /opt/ros/humble/setup.bash
+source "${AUTONOMY_WS}/install/setup.bash"
+set -u
+
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://${CYCLONEDDS_XML}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+
+echo "[wireless] CYCLONEDDS_URI = ${CYCLONEDDS_URI}"
+exec ros2 launch vehicle_simulator system_real_robot.launch
 ```
 
-If `ros2 pkg prefix` errors, the package is not installed.
+Save as scripts/system_real_robot_wireless.sh. Make it executable.
 
-**Fix:**
+```bash
+chmod +x scripts/system_real_robot_wireless.sh
+```
+
+## Step 5 - Run Mapping Over Wi-Fi
+
+Once the autonomy stack is up, run the map node in a second terminal.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/files/Unitree_GO2_Agricultural/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 launch go2_integration_pkg mapping.launch.py
+```
+
+The node auto-detects the cloud and odom topics. It saves the map to ~/go2_maps/<timestamp>/ on Ctrl+C.
+
+## Step 6 - Run Navigation Over Wi-Fi
+
+Use the navigation script with the wireless DDS config.
 
 ```bash
 cd ~/files/Unitree_GO2_Agricultural
-rm -rf build install log
+
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=0
+
+./scripts/system_navigation.sh ~/go2_maps/my_map.yaml
+```
+
+The same workflow as Ethernet. The only difference is the transport.
+
+## Zenoh Bridge (When Wi-Fi Is Flaky)
+
+Zenoh is a protocol designed for unreliable networks. It tunnels DDS traffic over TCP. This is more resilient to packet loss than native UDP multicast.
+
+Use it when native DDS over Wi-Fi drops data or loses discovery.
+
+### Install Zenoh on both machines
+
+On the Jetson (via SSH over Ethernet or Wi-Fi):
+
+```bash
+curl -L https://download.eclipse.org/zenoh/debian-repo/zenoh-public-key | \
+    sudo gpg --dearmor --yes --output /etc/apt/keyrings/zenoh-public-key.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/zenoh-public-key.gpg] https://download.eclipse.org/zenoh/debian-repo/ /" | \
+    sudo tee -a /etc/apt/sources.list > /dev/null
+
+sudo apt update
+sudo apt install -y zenoh-bridge-ros2dds
+```
+
+On the workstation, run the same commands. The package is available for both x86 and ARM.
+
+### Why different DDS domains
+
+Zenoh documentation warns that no direct DDS communication should occur between two bridged hosts. Otherwise duplicate and looping traffic can appear.
+
+Use different ROS_DOMAIN_ID on each side.
+
+- Jetson: ROS_DOMAIN_ID=0
+- Workstation: ROS_DOMAIN_ID=42
+
+DDS stays local to each machine. Only Zenoh crosses the Wi-Fi link.
+
+### Run the Zenoh bridge on the Jetson
+
+```bash
+ssh unitree@192.168.137.50
+
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=0
+
+zenoh-bridge-ros2dds
+```
+
+This starts a Zenoh router that listens on TCP port 7447 by default.
+
+### Run the Zenoh client on the workstation
+
+```bash
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=42
+
+zenoh-bridge-ros2dds -e tcp/192.168.137.50:7447
+```
+
+Replace 192.168.137.50 with the Jetson Wi-Fi IP.
+
+### Verify
+
+In a third terminal on the workstation:
+
+```bash
+source /opt/ros/humble/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=42
+
+ros2 topic list | grep utlidar
+ros2 topic hz /utlidar/cloud_deskewed
+```
+
+The Jetson topics appear on the workstation's local DDS domain 42, tunneled over Zenoh.
+
+### Run the autonomy stack with Zenoh
+
+The autonomy stack must use ROS_DOMAIN_ID=42 so it reads from the Zenoh client.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/files/autonomy_stack_go2/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=42
+
+ros2 launch vehicle_simulator system_real_robot.launch
+```
+
+## WebRTC Fallback (Degraded)
+
+Use only when no dongle is available and no travel router can be used.
+
+This mode uses the front board's Wi-Fi. The Jetson stays off the network. WebRTC carries a decoded LiDAR stream to the workstation.
+
+Performance is about 1 Hz LiDAR. Point-LIO may not initialize. Navigation is unreliable.
+
+### Disable video in the WebRTC SDK
+
+The SDK's H.264 decoder consumes 100 percent of one CPU core. Disable it to free CPU for the LiDAR decoder.
+
+Edit ~/files/ros2_ws/src/go2_robot_sdk/go2_robot_sdk/launch/robot.launch.py. Find the go2_driver_node block. Add one parameter.
+
+```python
+parameters=[{
+    'robot_ip': self.config.robot_ip,
+    'token': self.config.robot_token,
+    'conn_type': self.config.conn_type,
+    'enable_video': False,
+}],
+```
+
+Rebuild.
+
+```bash
+cd ~/files/ros2_ws
+colcon build --packages-select go2_robot_sdk --symlink-install
 source install/setup.bash
-ros2 pkg list | grep go2_integration_pkg
 ```
 
----
+### Start the WebRTC SDK
 
-### `colcon build` fails with `cannot find -lXXX`
-
-A C++ dependency is missing. The integration package is Python only, so this usually happens when building the autonomy stack or the WebRTC SDK.
-
-**Fix:** Install the missing library. For the autonomy stack, the common missing pieces are:
+Terminal 1:
 
 ```bash
-sudo apt install -y \
-    libusb-dev \
-    ros-humble-perception-pcl \
-    ros-humble-sensor-msgs-py \
-    ros-humble-tf-transformations \
-    ros-humble-joy \
-    ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-rosidl-generator-dds-idl
+source /opt/ros/humble/setup.bash
+source ~/files/ros2_ws/install/setup.bash
+
+export ROBOT_IP="192.168.137.33"
+export AES_KEY="<your AES key>"
+export ROBOT_AES_KEY="<your AES key>"
+export CONN_TYPE="webrtc"
+
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 launch go2_robot_sdk robot.launch.py \
+    rviz2:=false nav2:=false slam:=false \
+    foxglove:=false joystick:=false teleop:=false
 ```
 
----
+Wait for `Robot 0 validated and ready`.
 
-### `colcon build` succeeds but `ros2 pkg executables` is empty
+### Start the relay nodes
 
-The `install(PROGRAMS ...)` block in `CMakeLists.txt` does not list the scripts.
-
-**Check:**
+Terminal 2:
 
 ```bash
-grep -A 10 "install(PROGRAMS" src/go2_integration_pkg/CMakeLists.txt
+source /opt/ros/humble/setup.bash
+source ~/files/Unitree_GO2_Agricultural/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 launch go2_integration_pkg integrated_robot.launch.py
 ```
 
-The list must include all six nodes:
+This starts cloud_relay_node and cmd_vel_bridge. It renames /point_cloud2 to /utlidar/cloud and converts TwistStamped to Twist.
 
-```
-move_forward.py
-cloud_relay_node.py
-cmd_vel_bridge.py
-map_node.py
-pointcloud_to_scan.py
-camera_relay.py
-```
+### Start the autonomy stack
 
-If any are missing, add them and rebuild.
-
----
-
-## CycloneDDS
-
-### `wlp2s0: does not match an available interface`
-
-The CycloneDDS XML pins an interface name that does not exist on this machine.
-
-**Find the real name:**
+Terminal 3:
 
 ```bash
-ip -o link show | awk -F': ' '{print $2}' | grep -v lo
+source /opt/ros/humble/setup.bash
+source ~/files/autonomy_stack_go2/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI="file://$HOME/files/Unitree_GO2_Agricultural/config/cyclonedds_wireless.xml"
+export ROS_DOMAIN_ID=0
+
+ros2 launch vehicle_simulator system_real_robot.launch
 ```
 
-Typical output: `enp0s3`, `enp0s8`, `enp0s9`.
+### What to expect
 
-**Fix:** Edit the `<NetworkInterface name="...">` in `config/cyclonedds_ethernet.xml` or `cyclonedds_wireless.xml` to match.
+- LiDAR rate about 1 Hz. Point-LIO may not converge.
+- IMU about 250 Hz. Fine.
+- Camera available as /camera/image_raw.
+- Control commands work but latency is high.
 
----
+This mode is for inspection and debugging, not for autonomous navigation.
 
-### `failed to increase socket receive buffer size to at least 4194304 bytes`
+## Performance Tuning
 
-The XML has a `<SocketReceiveBufferSize>` element larger than the kernel allows.
+Apply these on both the Jetson and the workstation.
 
-**Fix A (recommended):** Remove the `<SocketReceiveBufferSize>` element from the XML.
+### Raise kernel socket buffers
 
-**Fix B:** Raise the kernel limit.
+Large LiDAR messages drop when the OS buffer is too small.
 
 ```bash
 sudo sysctl -w net.core.rmem_max=2147483647
@@ -138,674 +490,46 @@ echo "net.core.wmem_max=2147483647" | sudo tee -a /etc/sysctl.d/60-cyclonedds.co
 sudo sysctl --system
 ```
 
----
+### Disable Wi-Fi power saving
 
-### `Failed to find a free participant index for domain 0`
-
-CycloneDDS ran out of participant slots. This happens with many nodes and stale participants from crashed runs.
-
-**Fix:**
-
-1. Raise `MaxAutoParticipantIndex` in the XML.
-
-```xml
-<Discovery>
-  <ParticipantIndex>auto</ParticipantIndex>
-  <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
-  ...
-</Discovery>
-```
-
-2. Kill stale processes.
+Power save throttles the radio and causes latency spikes.
 
 ```bash
-ros2 daemon stop
-pkill -9 -f cyclonedds
-pkill -9 -f ros2
-pkill -9 -f pointlio
-pkill -9 -f rviz2
-sleep 3
+sudo iw dev wlan0 set power_save off
 ```
 
-3. Relaunch.
-
-If the problem persists after both, reboot the VM.
-
----
-
-### Two machines can't see each other's topics
-
-Symptom: `ros2 topic list` on host A shows topics. Host B is empty.
-
-**Check in this order:**
-
-1. Same RMW implementation:
-
-```bash
-echo $RMW_IMPLEMENTATION   # must be rmw_cyclonedds_cpp on both
-```
-
-2. Same domain ID:
-
-```bash
-echo $ROS_DOMAIN_ID        # must match on both
-```
-
-3. Same CycloneDDS XML:
-
-```bash
-echo $CYCLONEDDS_URI
-```
-
-4. Network reachability:
-
-```bash
-ping <other-host>
-```
-
-5. Firewall (rare):
-
-```bash
-sudo iptables -L -n | head -20
-```
-
-If all checks pass but topics still do not appear, the XML might be pinning the wrong interface. Confirm with `ip addr show`.
-
----
-
-## Point-LIO
-
-### `IMU Initializing: 100.0%` then silence, `/state_estimation` empty
-
-The most common Point-LIO failure. Three causes.
-
-**Cause 1: `use_sim_time: true`**
-
-Edit `~/files/autonomy_stack_go2/src/slam/point_lio_unilidar/config/utlidar.yaml`:
-
-```yaml
-use_sim_time: false
-```
-
-Rebuild:
-
-```bash
-cd ~/files/autonomy_stack_go2
-colcon build --packages-select point_lio_unilidar --symlink-install
-```
-
-**Cause 2: Wrong topic names**
-
-Check the config.
-
-```bash
-grep -E "lid_topic|imu_topic" \
-    ~/files/autonomy_stack_go2/src/slam/point_lio_unilidar/config/utlidar.yaml
-```
-
-Must match what the Jetson publishes:
-
-```yaml
-lid_topic: "/utlidar/cloud"
-imu_topic: "/utlidar/imu"
-```
-
-**Cause 3: `transform_everything` crashed**
-
-The autonomy stack includes a Python node that transforms raw topics. If it crashes, Point-LIO gets no data.
-
-Fix: comment out its include in `system_real_robot.launch` and rebuild `vehicle_simulator`.
-
----
-
-### RViz shows `No transform to fixed frame [map]`
-
-Point-LIO has not published the `map -> camera_init` transform yet.
-
-**Causes:**
-
-1. Point-LIO is stuck (see previous section).
-2. It is too early. Wait 30 seconds after launch.
-3. The robot has not moved enough for initialization.
-
-**Workaround:** In RViz, change the Fixed Frame from `map` to `body` or `base_link` until the map frame appears.
-
----
-
-## Mapping Node
-
-### `map_node` starts but `/map/occupancy` is not visible in RViz
-
-**Cause 1: QoS mismatch**
-
-RViz requires `TRANSIENT_LOCAL` durability for the Map display. Check:
-
-```bash
-ros2 topic info /map/occupancy -v
-```
-
-The publisher must show `Durability: TRANSIENT_LOCAL`. If it shows `VOLATILE`, the node was built from an older version. Rebuild.
-
-**Cause 2: Topic name mismatch in RViz**
-
-In the Map display settings, confirm the Topic field says exactly `/map/occupancy`.
-
----
-
-### `map_node` runs but no data arrives
-
-**Cause: Cloud topic does not exist**
-
-Check the node startup log. It prints the topics it auto-detected:
-
-```
-map_node started
-   cloud in : /registered_scan
-   odom in  : /state_estimation
-```
-
-If the auto-detection picked a topic that has no publisher, force it manually.
-
-```bash
-ros2 run go2_integration_pkg map_node.py \
-    --ros-args \
-    -p cloud_topic:=/utlidar/cloud_deskewed \
-    -p odom_topic:=/utlidar/robot_odom
-```
-
-**Cause: TF tree is incomplete for RGB fusion**
-
-If `use_camera` is true but no TF connects `map` to the camera frame, the fusion silently skips. The map still builds, but without color. Check the terminal for repeated "TF lookup failed" debug messages.
-
----
-
-### `map_node` crashes on Ctrl+C
-
-The save routine runs on shutdown. If `open3d` is missing, the mesh reconstruction raises and the node exits uncleanly.
-
-**Fix:** Either install open3d, or disable the mesh step.
-
-```bash
-pip install --user open3d
-```
-
-The node logs "Reconstructing mesh..." before the crash if this is the cause.
-
----
-
-### Mesh reconstruction is slow
-
-Poisson reconstruction on 5+ million points takes minutes.
-
-**Fix:** Reduce the input cloud size. Edit `core/mapping.py`:
-
-```python
-@dataclass
-class MapConfig:
-    max_points: int = 2_000_000      # reduce from 8 million
-    downsample_voxel_m: float = 0.05  # coarser voxels
-    poisson_depth: int = 8            # reduce from 9
-```
-
-Smaller values mean faster reconstruction and lower memory.
-
----
-
-## SLAM Toolbox
-
-### `slam_toolbox` does not start
-
-The package is not installed.
-
-```bash
-sudo apt install ros-humble-slam-toolbox
-```
-
-If the launch file errors with "executable not found", verify:
-
-```bash
-ros2 pkg executables slam_toolbox
-```
-
-Should list `async_slam_toolbox_node`.
-
----
-
-### SLAM map drifts or loops break
-
-**Cause: Odometry is bad or missing.**
-
-Check the odometry topic:
-
-```bash
-ros2 topic hz /odom
-```
-
-If it is silent, no odometry is being published. SLAM needs it. Point-LIO publishes `/state_estimation`, which is odometry-like. Add a static transform to remap if needed.
-
-**Cause: Scan matches are too sparse.**
-
-In `slam_mapping.launch.py`, the `minimum_time_interval` parameter is 0.2 seconds. At 10 Hz LiDAR, that means every other scan is used. Reduce to 0.1 for denser scans.
-
----
-
-## Localization (AMCL)
-
-### Robot pose jumps around
-
-**Cause: Wrong initial pose.**
-
-Click `2D Pose Estimate` in RViz. Drag on the map at the robot's actual location and heading. AMCL converges after a few seconds of motion.
-
-**Cause: Scan does not match the map.**
-
-The LiDAR range or height filter may be wrong. Check that `/scan` matches the walls in the map. If not, adjust `min_height` and `max_height` in `pointcloud_to_scan.py`.
-
----
-
-### `AMCL` does not publish
-
-The lifecycle manager may not have activated it.
-
-```bash
-ros2 lifecycle get /amcl
-```
-
-Should show `active`. If it shows `unconfigured`, the lifecycle manager failed. Check:
-
-```bash
-ros2 node list | grep lifecycle
-```
-
-Should list `lifecycle_manager_localization`. If not, `localization.launch.py` failed to start.
-
----
-
-## Nav2 Navigation
-
-### Nav2 does not start
-
-The full stack needs many packages. Install them.
-
-```bash
-sudo apt install -y \
-    ros-humble-nav2-bringup \
-    ros-humble-nav2-amcl \
-    ros-humble-nav2-map-server \
-    ros-humble-nav2-lifecycle-manager \
-    ros-humble-nav2-controller \
-    ros-humble-nav2-planner \
-    ros-humble-nav2-bt-navigator \
-    ros-humble-nav2-behaviors \
-    ros-humble-nav2-navfn-planner \
-    ros-humble-nav2-regulated-pure-pursuit-controller
-```
-
----
-
-### Nav2 starts but the robot does not move
-
-**Cause 1: No goal set.**
-
-Click `2D Goal Pose` in RViz and drag. A green arrow appears. The planner produces a blue path.
-
-**Cause 2: `/cmd_vel` is not consumed.**
-
-Check the topic:
-
-```bash
-ros2 topic hz /cmd_vel
-```
-
-If it shows nothing, the controller is not producing commands. Check the costmap:
-
-```bash
-ros2 topic echo /local_costmap/costmap --once
-```
-
-If the costmap is empty, the local planner has no obstacle data and produces no path.
-
-**Cause 3: Costmap does not see obstacles.**
-
-The costmap layers read from `/scan`. Verify:
-
-```bash
-ros2 topic hz /scan
-```
-
-If silent, `pointcloud_to_scan.py` is not running or its input topic is wrong. Check its terminal output.
-
----
-
-### Nav2 goal is rejected
-
-**Cause: Goal is outside the loaded map, or in an obstacle.**
-
-The Nav2 planner only accepts goals in free space within the map bounds. Try a goal closer to the robot.
-
-**Cause: Wrong map loaded.**
-
-`localization.launch.py` loads the map from `map_file`. Confirm the path is correct.
-
-```bash
-ls -la ~/go2_maps/my_map.yaml
-```
-
----
-
-## Robot Motion
-
-### Robot does not move when a waypoint is set
-
-**Prerequisite: Robot is standing.**
-
-The autonomy stack does not stand the robot. Use the physical remote.
-
-**Prerequisite: Robot is in Sport Mode.**
-
-Default after standing. Verify in the Unitree app.
-
-**Check `/cmd_vel`:**
-
-```bash
-ros2 topic hz /cmd_vel
-```
-
-If silent, the planner is not producing commands. If publishing, the issue is between the VM and the Jetson.
-
-**On the Jetson side:**
-
-```bash
-ssh unitree@192.168.123.18
-source /opt/ros/foxy/setup.bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=0
-
-ros2 topic hz /api/sport/request
-```
-
-If silent, the VM is not sending commands. If publishing, the robot itself is refusing. Check the app for estop, lock state, or low battery.
-
----
-
-### `move_forward.sh` runs but nothing happens
-
-**Checklist:**
-
-1. Robot is standing.
-2. Robot is in Sport Mode.
-3. `ping 192.168.123.18` works.
-4. `ROS_DOMAIN_ID=0` in the script.
-5. The script printed `Moving forward: vx=0.3 m/s for 3.0s`.
-
-If all pass and the robot still does not move, the Unitree Sport API rejected the command.
-
-Verify message type:
-
-```bash
-ros2 topic info /api/sport/request
-```
-
-Should show `unitree_api/msg/Request`. A different type means the wrong package was sourced.
-
----
-
-## Camera
-
-### `/camera/image_raw` does not exist
-
-**Cause: WebRTC SDK not running.**
-
-The camera stream comes from the WebRTC SDK, not from native DDS. Start it in a separate terminal.
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/files/ros2_ws/install/setup.bash
-export ROBOT_IP="192.168.137.33"
-export CONN_TYPE="webrtc"
-
-ros2 launch go2_robot_sdk robot.launch.py \
-    rviz2:=false nav2:=false slam:=false \
-    foxglove:=false joystick:=false teleop:=false
-```
-
-Wait for `Robot 0 validated and ready`.
-
-**Cause: Ethernet-only setup.**
-
-If you are running the CMU stack over Ethernet and the WebRTC SDK is not active, the camera stream is unavailable. Only the LiDAR and IMU are published natively. To get the camera over Ethernet, you would need a USB camera on the Jetson, or the WebRTC SDK running in parallel.
-
----
-
-### Camera image appears in RViz but is black or garbled
-
-**Cause 1: H.264 decoder failure.**
-
-The WebRTC SDK logs many `non-existing PPS 0 referenced` warnings. These are harmless. The actual image appears once the decoder syncs to the keyframe.
-
-**Cause 2: QoS mismatch.**
-
-RViz requires BEST_EFFORT for high-rate image topics. `camera_relay.py` republishes with the correct QoS. Run it.
-
-```bash
-ros2 run go2_integration_pkg camera_relay.py
-```
-
-Subscribe in RViz to `/camera/image_raw_relayed`, not `/camera/image_raw`.
-
----
-
-### RGB fusion produces grey points instead of coloured
-
-**Cause: TF lookup fails.**
-
-The `map_node.py` needs a transform from the LiDAR frame to the camera optical frame. Check the TF tree:
-
-```bash
-ros2 run tf2_tools view_frames
-```
-
-Open `frames.pdf`. Look for a path from `map` to `camera_color_optical_frame`.
-
-If the path is missing, the camera driver is not publishing its static transforms. Check the WebRTC SDK output or add a static publisher.
-
-```bash
-ros2 run tf2_ros static_transform_publisher \
-    0 0 0 0 0 0 \
-    map camera_color_optical_frame
-```
-
----
-
-## Wireless
-
-### Jetson has no Wi-Fi interface
-
-**Confirmed by:**
-
-```bash
-ssh unitree@192.168.123.18
-ip link
-```
-
-If no `wlan0`, `wlp*`, or `wlx*` appears, the Jetson has no Wi-Fi chipset. Only the front board has Wi-Fi, and it does not route SSH or DDS.
-
-**Fix:** Add a USB Wi-Fi dongle or use a travel router. See `docs/wireless.md`.
-
----
-
-### Wi-Fi dongle not detected on the Jetson
-
-```bash
-lsusb
-```
-
-If the dongle does not appear, try a different USB port. Check `dmesg | tail -20` for kernel messages.
-
-**Known-good chipsets:** Ralink RT5572 (Panda PAU09), Atheros AR9271 (Alfa AWUS036NHA).
-
-**Known-problematic:** Realtek RTL8812BU (requires custom driver compile), TP-Link TL-WN722N v2/v3.
-
----
-
-### Multicast discovery fails on Wi-Fi
-
-**Cause: Access point blocks multicast.**
-
-Native DDS discovery uses multicast. Most consumer Wi-Fi routers block it.
-
-**Fix:** Edit `config/cyclonedds_wireless.xml` to use explicit peers.
-
-```xml
-<Discovery>
-  <Peers>
-    <Peer address="192.168.1.100"/>
-    <Peer address="192.168.1.101"/>
-  </Peers>
-</Discovery>
-```
-
-Also set `<AllowMulticast>false</AllowMulticast>`.
-
-Replace the addresses with the actual Wi-Fi IP of the workstation and the Jetson.
-
----
-
-## SSH
-
-### `ssh: connect to host 192.168.123.18 port 22: Connection refused`
-
-**Cause 1: Wrong IP.**
-
-The front board at `192.168.137.33` does not run sshd. Use the Jetson's Ethernet IP `192.168.123.18`.
-
-**Cause 2: sshd is bound to an internal interface.**
-
-Verify with `sudo ss -tlnp | grep :22` on the Jetson. If it shows `0.0.0.0:22` or `:::22`, sshd is listening on all interfaces. If it shows only `192.168.123.18:22`, it is bound to Ethernet only. Wi-Fi SSH would fail.
-
-**Fix (only if you need Wi-Fi SSH):** Edit `/etc/ssh/sshd_config` on the Jetson. Comment out any `ListenAddress` line. Restart sshd.
-
-```bash
-sudo systemctl restart ssh
-```
-
----
-
-### `Permission denied, please try again` repeatedly
-
-**Cause: Wrong username.**
-
-Windows SSH defaults to your Windows username. Always specify the Unix user.
-
-```bash
-ssh unitree@192.168.123.18
-```
-
-Password is `123` on the EDU unit.
-
----
-
-## Git
-
-### `Permission to <user>/<repo>.git denied`
-
-You are using a GitHub password. GitHub requires a Personal Access Token or an SSH key.
-
-**Fix (token):**
-
-1. Go to https://github.com/settings/tokens
-2. Generate new token (classic). Scope: `repo`.
-3. Copy the token.
-4. `git push` and paste the token as the password.
-
-**Fix (SSH, recommended long-term):**
-
-```bash
-ssh-keygen -t ed25519 -C "you@example.com"
-cat ~/.ssh/id_ed25519.pub
-```
-
-Add the output to https://github.com/settings/keys. Then:
-
-```bash
-git remote set-url origin git@github.com:USER/REPO.git
-git push
-```
-
----
-
-## General
-
-### `bash: ./scripts/foo.sh: Permission denied`
-
-Missing executable bit.
-
-```bash
-chmod +x scripts/*.sh
-```
-
----
-
-### `bash: ./scripts/foo.sh: /bin/bash^M: bad interpreter`
-
-Windows CRLF line endings.
-
-```bash
-sudo apt install -y dos2unix
-dos2unix scripts/*.sh
-```
-
-Or:
-
-```bash
-sed -i 's/\r$//' scripts/*.sh
-```
-
----
-
-### RViz camera warnings `/camera/image/raw`
-
-Harmless. The CMU RViz config references camera topics that may not exist. Ignore them.
-
----
-
-### RViz runs at 15 fps or lower
-
-Reduce load:
-
-1. Disable the RegScan display.
-2. Set the PointCloud2 decay time to 0.
-3. Reduce the Map display alpha.
-4. Close unused Image panels.
-
-If RViz is still slow, run it on a lightweight window manager or use `rviz2 -d minimal.rviz`.
-
----
-
-## Reporting a New Issue
-
-If your problem is not listed, gather this information before filing an issue or asking for help.
-
-1. Full error message.
-2. Output of:
-
-```bash
-echo "RMW:        $RMW_IMPLEMENTATION"
-echo "DOMAIN_ID:  $ROS_DOMAIN_ID"
-echo "CYCLONEDDS: $CYCLONEDDS_URI"
-```
-
-3. `ros2 node list`
-4. `ros2 topic list`
-5. The exact command that failed.
-6. The last 30 lines of the failing terminal.
-
-With that information, the cause is usually identifiable in one pass.
-```
-
-Save it and commit.
-
-```powershell
-git add docs/troubleshooting.md
-git commit -m "Update TROUBLESHOOTING.md with mapping, Nav2, camera, and wireless sections"
-git push
+Replace wlan0 with the actual interface name. This setting is lost on reboot. Add it to /etc/rc.local or a systemd service for persistence.
+
+### Use a dedicated network
+
+The more devices on the Wi-Fi network, the more contention. A dedicated travel router with only the robot and workstation on it performs better than a shared campus network.
+
+## What Working Looks Like
+
+| Check | Expected result |
+|-------|-----------------|
+| ssh unitree@<jetson-wifi-ip> | Connects over Wi-Fi |
+| ros2 topic hz /utlidar/cloud_deskewed | About 10 Hz |
+| ros2 topic hz /utlidar/imu | About 250 Hz |
+| ros2 topic hz /state_estimation | About 10 Hz |
+| Robot standing with remote | Yes |
+| Waypoint set in RViz | Robot walks |
+
+## Failure Modes and Fixes
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Jetson has no wlan0 | No Wi-Fi chipset | Add USB dongle or travel router |
+| Dongle not detected | Wrong port or unsupported chipset | Try different port, use recommended dongle |
+| Topics exist but no data | Multicast blocked | Set explicit peers, disable multicast |
+| Topics do not appear at all | Different RMW or domain | Match RMW_IMPLEMENTATION and ROS_DOMAIN_ID |
+| Ping works, DDS fails | Firewall or multicast isolation | Use travel router or Zenoh |
+| LiDAR rate drops below 5 Hz | Wi-Fi contention | Dedicated network, increase buffers, disable power save |
+| Zenoh bridge loops traffic | Same DDS domain on both sides | Use different ROS_DOMAIN_ID on each machine |
+| WebRTC LiDAR under 2 Hz | H.264 decoder starved | Disable video in the SDK launch file |
+
+## Cross-References
+
+- docs/ethernet.md - the recommended mode when a cable is possible
+- docs/troubleshooting.md - fixes for DDS, mapping, Nav2, and camera issues
+- docs/roadmap.md - development phases including wireless deployment

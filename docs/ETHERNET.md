@@ -81,7 +81,7 @@ ssh unitree@192.168.123.18
 
 Password is 123 on the EDU unit. Type exit to return.
 
-If ping works but SSH refuses, the Jetson's sshd may be bound to an internal interface. See docs/TROUBLESHOOTING.md.
+If ping works but SSH refuses, the Jetson's sshd may be bound to an internal interface. See docs/troubleshooting.md.
 
 ## Step 3 - Make the IP Persistent
 
@@ -165,7 +165,7 @@ The robot should walk forward for 3 seconds, then stop.
 
 If it moves, the DDS and control chain is correct. Continue to Step 6.
 
-If it does not move, see docs/TROUBLESHOOTING.md.
+If it does not move, see docs/troubleshooting.md.
 
 ## Step 6 - Launch the Autonomy Stack
 
@@ -375,7 +375,7 @@ This starts the mapping node, slam_toolbox, pointcloud_to_scan, camera relay, an
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | ping fails | Cable or VM adapter mode | Check Bridged adapter in VM settings |
-| ping works, SSH refuses | sshd bound to internal interface | See docs/TROUBLESHOOTING.md |
+| ping works, SSH refuses | sshd bound to internal interface | See docs/troubleshooting.md |
 | Topics exist but no data | QoS mismatch | Run ros2 topic info <topic> -v |
 | Point-LIO silent after IMU init | use_sim_time true in utlidar.yaml | Set to false and rebuild |
 | /map/occupancy not visible in RViz | Wrong QoS | The node uses TRANSIENT_LOCAL; restart the node |
@@ -384,14 +384,6 @@ This starts the mapping node, slam_toolbox, pointcloud_to_scan, camera relay, an
 
 ## Cross-References
 
-- docs/WIRELESS.md - run the same stack over Wi-Fi
-- docs/TROUBLESHOOTING.md - detailed fixes for every failure
-- docs/ROADMAP.md - development phases and planned features
-```
-
-Save it and commit.
-
-```powershell
-git add docs/ETHERNET.md
-git commit -m "Update ETHERNET.md with mapping, navigation, and camera workflows"
-git push
+- docs/wireless.md - run the same stack over Wi-Fi
+- docs/troubleshooting.md - detailed fixes for every failure
+- docs/roadmap.md - development phases and planned features

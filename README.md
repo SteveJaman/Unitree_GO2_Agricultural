@@ -243,16 +243,16 @@ All guides live in the [docs](docs/) folder.
 
 | File | Description |
 |------|-------------|
-| [docs/SETUP.md](docs/SETUP.md) | First-time clone, dependency, and build setup |
+| [docs/setup.md](docs/setup.md) | First-time clone, dependency, and build setup |
 | [docs/architecture.md](docs/architecture.md) | Topic contract, QoS policies, Sport API command IDs, data flow |
-| [docs/ETHERNET.md](docs/ETHERNET.md) | Run the stack over a direct Ethernet cable |
-| [docs/WIRELESS.md](docs/WIRELESS.md) | Run the stack over a USB Wi-Fi dongle with native DDS |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Fixes for environment, DDS, SLAM, motion, and network errors |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Development phases and planned work |
+| [docs/ethernet.md](docs/ethernet.md) | Run the stack over a direct Ethernet cable |
+| [docs/wireless.md](docs/wireless.md) | Run the stack over a USB Wi-Fi dongle with native DDS |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Fixes for environment, DDS, SLAM, motion, and network errors |
+| [docs/roadmap.md](docs/roadmap.md) | Development phases and planned work |
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the development phases and planned work.
+See [docs/roadmap.md](docs/ROADMAP.md) for the development phases and planned work.
 
 ## Status
 
