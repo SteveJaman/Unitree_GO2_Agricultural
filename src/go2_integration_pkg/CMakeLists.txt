@@ -13,6 +13,8 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
 
 ament_python_install_package(${PROJECT_NAME})
 
@@ -20,6 +22,7 @@ install(PROGRAMS
   ${PROJECT_NAME}/move_forward.py
   ${PROJECT_NAME}/cloud_relay_node.py
   ${PROJECT_NAME}/cmd_vel_bridge.py
+  ${PROJECT_NAME}/map_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
