@@ -26,6 +26,7 @@ Start with Ethernet. See docs/ethernet.md.
 | Ubuntu | VM | 22.04 |
 | ROS 2 | VM | Humble |
 | ROS 2 | Go2 Jetson | Foxy |
+| L1 LiDAR firmware | Go2 Jetson | v1.4.0 or newer |
 | autonomy_stack_go2 | ~/files/autonomy_stack_go2 | External, must be built |
 | go2_robot_sdk | ~/files/ros2_ws/src/go2_robot_sdk | External, must be built |
 
@@ -71,6 +72,31 @@ Install the Python-only mesh reconstruction library. This is optional. The mappi
 pip install --user open3d
 ```
 
+## L1 LiDAR IMU Calibration (One-Time Per Robot)
+
+The IMU inside the L1 LiDAR must be calibrated before SLAM runs. This is a hardware setup step, not part of this software package. Do it once per robot.
+
+### Procedure
+
+SSH into the Go2 Jetson. Place the robot on a flat, level surface and keep it completely still.
+
+```bash
+ssh unitree@192.168.123.18
+rosrun unilidar_sdk2 imu_calibrator
+```
+
+Let it run for about 3 minutes. It collects gyroscope and accelerometer biases and writes the result to `~/.unilidar/imu_bias.yaml`. The L1 driver loads this file automatically on every boot.
+
+### Firmware Check
+
+Verify the L1 firmware version. Firmware below v1.4.0 has a timestamp misalignment bug that causes periodic SLAM drift every 12.7 seconds.
+
+If the version is below v1.4.0, upgrade using Unitree's official `unilidar_firmware_updater` tool. The upgrade takes about 90 seconds.
+
+### Why This Is Not in the Code
+
+Calibration happens upstream of the L1 driver. By the time Point-LIO subscribes to `/utlidar/imu`, the bias corrections are already applied. Adding calibration logic to this repo would be redundant and would conflict with the driver.
+
 ## Install CycloneDDS
 
 The configs in config/ target CycloneDDS. Install the ROS 2 middleware package.
@@ -82,7 +108,7 @@ sudo apt install ros-humble-rmw-cyclonedds-cpp
 
 ## Clone the Repo
 
-Replace <repo-url> with the URL of your copy of the repo.
+Replace `<repo-url>` with the URL of your copy of the repo.
 
 ```bash
 git clone <repo-url> Unitree_GO2_Agricultural
@@ -97,11 +123,11 @@ Unitree_GO2_Agricultural
 |   |-- cyclonedds_ethernet.xml
 |   +-- cyclonedds_wireless.xml
 |-- docs
-|   |-- ETHERNET.md
-|   |-- ROADMAP.md
-|   |-- SETUP.md
-|   |-- TROUBLESHOOTING.md
-|   +-- WIRELESS.md
+|   |-- ethernet.md
+|   |-- roadmap.md
+|   |-- setup.md
+|   |-- troubleshooting.md
+|   +-- wireless.md
 |-- scripts
 |   |-- move_forward.sh
 |   |-- system_navigation.sh
@@ -232,25 +258,3 @@ Both commands must list files. An error means a dependency is missing.
 - docs/wireless.md - run the stack over Wi-Fi with a USB dongle
 - docs/troubleshooting.md - fixes for build, environment, and connection errors
 - docs/roadmap.md - development phases and planned work
-```
-
-## What changed from the old version
-
-| Section | Change |
-|---|---|
-| System dependencies | Added the full Nav2, slam_toolbox, cv_bridge, tf2 package list |
-| Python dependencies | Added `pip install open3d` for mesh reconstruction |
-| Repo layout | Removed Zenoh and WebRTC scripts that no longer exist |
-| Repo layout | Added `camera_relay.py`, `pointcloud_to_scan.py`, and the four new launch files |
-| Scripts list | Now shows the seven current scripts |
-| Executables verify | Now expects six nodes, not three |
-| New "What Each Node Does" section | Describes every node's topic contract |
-| New "What Each Launch File Does" section | Describes each launch file's purpose |
-| Cross-references | Added WIRELESS.md and ROADMAP.md |
-
-Save it to `docs/setup.md` and commit:
-
-```powershell
-git add docs/setup.md
-git commit -m "Update setup.md to reflect current nodes, launch files, and dependencies"
-git push
