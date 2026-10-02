@@ -13,4 +13,4 @@ Set-Content -Path .gitattributes -Encoding UTF8 -Value @"
 *.db3 binary
 *.so binary
 *.dll binary
-"@
+"
