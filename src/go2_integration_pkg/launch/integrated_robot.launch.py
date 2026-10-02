@@ -2,19 +2,16 @@
 """
 integrated_robot.launch.py
 
-Single entry point that starts the integration layer. It does NOT launch the
-WebRTC driver (go2_robot_sdk) or the autonomy stack directly, because they
-each have their own launch files and their own overlays. Instead, this
-launch assumes both are already running in separate terminals and only
-starts the bridging nodes.
+Starts the integration layer between go2_robot_sdk (WebRTC driver) and
+autonomy_stack_go2. Assumes both are already running in separate terminals.
 
-Typical usage:
+Terminal 1:  ros2 launch go2_robot_sdk robot.launch.py
+Terminal 2:  ros2 launch vehicle_simulator system_real_robot.launch
+Terminal 3:  ros2 launch go2_integration_pkg integrated_robot.launch.py
 
-  Terminal 1:  launch go2_robot_sdk      (WebRTC driver)
-  Terminal 2:  launch autonomy_stack_go2 (SLAM + planner)
-  Terminal 3:  ros2 launch go2_integration_pkg integrated_robot.launch.py
-
-The relay node will then connect /point_cloud2 -> /utlidar/cloud.
+The relay nodes connect:
+  /robot0/point_cloud2 -> /utlidar/cloud   (PointCloud2, BEST_EFFORT)
+  /cmd_vel_stamped     -> /cmd_vel         (TwistStamped -> Twist)
 """
 
 from launch import LaunchDescription
@@ -27,7 +24,7 @@ def generate_launch_description() -> LaunchDescription:
     # ---------------- Launch arguments ----------------
     input_topic_arg = DeclareLaunchArgument(
         'input_topic',
-        default_value='/point_cloud2',
+        default_value='/robot0/point_cloud2',
         description='PointCloud2 topic published by go2_robot_sdk',
     )
     output_topic_arg = DeclareLaunchArgument(
@@ -55,14 +52,30 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
+    # ---------------- Twist bridge node ----------------
+    cmd_vel_bridge = Node(
+        package='go2_integration_pkg',
+        executable='cmd_vel_bridge.py',
+        name='cmd_vel_bridge',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'input_topic':  '/cmd_vel_stamped',
+            'output_topic': '/cmd_vel',
+        }],
+    )
+
     # ---------------- Startup banner ----------------
     banner = LogInfo(msg=(
         '\n'
         '================================================================\n'
         ' go2_integration_pkg: integrated_robot.launch.py\n'
-        ' Relaying /point_cloud2 -> /utlidar/cloud (BEST_EFFORT)\n'
-        ' Make sure the following are already running:\n'
-        '   - go2_robot_sdk     (WebRTC driver)\n'
+        ' Relays:\n'
+        '   /robot0/point_cloud2 -> /utlidar/cloud   (BEST_EFFORT)\n'
+        '   /cmd_vel_stamped     -> /cmd_vel         (TwistStamped -> Twist)\n'
+        '\n'
+        ' Assumes already running:\n'
+        '   - go2_robot_sdk      (WebRTC driver)\n'
         '   - point_lio_unilidar (SLAM)\n'
         '   - local_planner / terrain_analysis\n'
         '================================================================\n'
@@ -74,4 +87,5 @@ def generate_launch_description() -> LaunchDescription:
         queue_arg,
         banner,
         cloud_relay,
+        cmd_vel_bridge,
     ])
