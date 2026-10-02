@@ -5,25 +5,23 @@
   <name>go2_integration_pkg</name>
   <version>0.1.0</version>
   <description>
-    Integration layer between the Unitree Go2 WebRTC driver (go2_robot_sdk)
-    and the CMU autonomy_stack_go2. Provides topic relays, QoS bridges,
-    and a unified launch entry point.
+    Integration layer for Unitree Go2. Provides sensor relays, cmd_vel
+    bridges, and a motion test node. Primary connection modes are
+    Ethernet and native Wi-Fi DDS. WebRTC relays kept for fallback.
   </description>
-
   <maintainer email="you@example.com">Your Name</maintainer>
   <license>MIT</license>
 
-  <!-- Build tool -->
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
-  <!-- Runtime dependencies -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>unitree_api</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

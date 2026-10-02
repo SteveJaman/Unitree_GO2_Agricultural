@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS configuration for direct Ethernet to the Go2 Jetson.
+
+  Network layout:
+    VM Ethernet adapter (enp0s8) : 192.168.123.100/24
+    Go2 Jetson (eth0)            : 192.168.123.18/24
+
+  Why this works:
+    The Jetson publishes /utlidar/cloud and /utlidar/imu natively over
+    DDS on its internal Ethernet. Because the VM is on the same subnet,
+    it receives those topics directly with no relay or bridge.
+
+  If the VM's bridged Ethernet adapter has a different name, update the
+  NetworkInterface below. Find it with:
+      ip -o link show | awk -F': ' '{print $2}' | grep -v lo
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config
+                                https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+
+  <Domain id="any">
+
+    <General>
+      <Interfaces>
+        <NetworkInterface name="enp0s8"
+                          priority="default"
+                          multicast="default" />
+      </Interfaces>
+
+      <!--
+        SPDP multicast for discovery, unicast for data. Fine on a direct
+        Ethernet link where multicast is not filtered.
+      -->
+      <AllowMulticast>spdp</AllowMulticast>
+      <EnableMulticastLoopback>false</EnableMulticastLoopback>
+    </General>
+
+    <Discovery>
+      <!-- Explicit peer: the Go2 Jetson -->
+      <Peers>
+        <Peer address="192.168.123.18"/>
+      </Peers>
+
+      <!--
+        Raise participant limit to accommodate the autonomy stack's
+        many nodes plus transient ros2 CLI participants. Without this,
+        you will see "Failed to find a free participant index" errors.
+      -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
+      <SPDPInterval>30s</SPDPInterval>
+    </Discovery>
+
+  </Domain>
+</CycloneDDS>

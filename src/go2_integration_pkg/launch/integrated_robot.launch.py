@@ -2,16 +2,12 @@
 """
 integrated_robot.launch.py
 
-Starts the integration layer between go2_robot_sdk (WebRTC driver) and
-autonomy_stack_go2. Assumes both are already running in separate terminals.
+WebRTC fallback. Starts the two relay nodes:
+  - cloud_relay_node: /point_cloud2 -> /utlidar/cloud
+  - cmd_vel_bridge:   /cmd_vel_stamped -> /cmd_vel
 
-Terminal 1:  ros2 launch go2_robot_sdk robot.launch.py
-Terminal 2:  ros2 launch vehicle_simulator system_real_robot.launch
-Terminal 3:  ros2 launch go2_integration_pkg integrated_robot.launch.py
-
-The relay nodes connect:
-  /robot0/point_cloud2 -> /utlidar/cloud   (PointCloud2, BEST_EFFORT)
-  /cmd_vel_stamped     -> /cmd_vel         (TwistStamped -> Twist)
+Assumes the WebRTC SDK (go2_robot_sdk) is already running.
+Assumes the autonomy stack will be launched separately.
 """
 
 from launch import LaunchDescription
@@ -21,24 +17,16 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
-    # ---------------- Launch arguments ----------------
     input_topic_arg = DeclareLaunchArgument(
-        'input_topic',
-        default_value='/robot0/point_cloud2',
-        description='PointCloud2 topic published by go2_robot_sdk',
-    )
+        'input_topic', default_value='/point_cloud2',
+        description='PointCloud2 topic published by go2_robot_sdk')
     output_topic_arg = DeclareLaunchArgument(
-        'output_topic',
-        default_value='/utlidar/cloud',
-        description='PointCloud2 topic expected by point_lio_unilidar',
-    )
+        'output_topic', default_value='/utlidar/cloud',
+        description='PointCloud2 topic expected by point_lio_unilidar')
     queue_arg = DeclareLaunchArgument(
-        'queue_depth',
-        default_value='5',
-        description='QoS history depth for the relay',
-    )
+        'queue_depth', default_value='5',
+        description='QoS history depth for the relay')
 
-    # ---------------- Cloud relay node ----------------
     cloud_relay = Node(
         package='go2_integration_pkg',
         executable='cloud_relay_node.py',
@@ -46,13 +34,12 @@ def generate_launch_description() -> LaunchDescription:
         output='screen',
         emulate_tty=True,
         parameters=[{
-            'input_topic':  LaunchConfiguration('input_topic'),
+            'input_topic': LaunchConfiguration('input_topic'),
             'output_topic': LaunchConfiguration('output_topic'),
-            'queue_depth':  LaunchConfiguration('queue_depth'),
+            'queue_depth': LaunchConfiguration('queue_depth'),
         }],
     )
 
-    # ---------------- Twist bridge node ----------------
     cmd_vel_bridge = Node(
         package='go2_integration_pkg',
         executable='cmd_vel_bridge.py',
@@ -60,24 +47,22 @@ def generate_launch_description() -> LaunchDescription:
         output='screen',
         emulate_tty=True,
         parameters=[{
-            'input_topic':  '/cmd_vel_stamped',
+            'input_topic': '/cmd_vel_stamped',
             'output_topic': '/cmd_vel',
         }],
     )
 
-    # ---------------- Startup banner ----------------
     banner = LogInfo(msg=(
         '\n'
         '================================================================\n'
-        ' go2_integration_pkg: integrated_robot.launch.py\n'
+        ' go2_integration_pkg: integrated_robot.launch.py (WebRTC mode)\n'
         ' Relays:\n'
-        '   /robot0/point_cloud2 -> /utlidar/cloud   (BEST_EFFORT)\n'
-        '   /cmd_vel_stamped     -> /cmd_vel         (TwistStamped -> Twist)\n'
+        '   /point_cloud2    -> /utlidar/cloud   (BEST_EFFORT)\n'
+        '   /cmd_vel_stamped -> /cmd_vel         (TwistStamped -> Twist)\n'
         '\n'
-        ' Assumes already running:\n'
+        ' Assumes running separately:\n'
         '   - go2_robot_sdk      (WebRTC driver)\n'
-        '   - point_lio_unilidar (SLAM)\n'
-        '   - local_planner / terrain_analysis\n'
+        '   - point_lio_unilidar, local_planner, terrain_analysis\n'
         '================================================================\n'
     ))
 
