@@ -2,7 +2,12 @@
 
 Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integration.
 
-**Progress:** `[ ]` = not started  |  `[~]` = in progress  |  `[x]` = done
+**Progress key:**
+- `[x]` = done and verified with evidence
+- `[~]` = code written, not yet verified on hardware
+- `[ ]` = not started
+
+**Last updated:** Phase 0 largely complete, Phase 1 code-complete, awaiting workstation verification.
 
 ---
 
@@ -10,15 +15,15 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 
 **Goal:** Establish the development environment and verify the complete software stack in simulation before touching real hardware.
 
-**Phase status:** `[ ]`
+**Phase status:** `[~]` (5 of 8 steps verified)
 
 | Done | Step | Task | Status |
 |:----:|------|------|--------|
-| `[x]` | 0.1 | Set up Ubuntu 22.04 workstation with ROS 2 Humble | Done |
-| `[x]` | 0.2 | Clone and build `autonomy_stack_go2` | Done |
-| `[x]` | 0.3 | Set up Ethernet DDS connection to Go2 Jetson | Working |
-| `[x]` | 0.4 | Verify `/utlidar/cloud` and `/utlidar/imu` at full rate (14.7 Hz / 250 Hz) | Done |
-| `[x]` | 0.5 | Build `go2_integration_pkg` (relays, map node, motion test) | Done |
+| `[x]` | 0.1 | Set up Ubuntu 22.04 workstation with ROS 2 Humble | Verified |
+| `[x]` | 0.2 | Clone and build `autonomy_stack_go2` | Verified |
+| `[x]` | 0.3 | Set up Ethernet DDS connection to Go2 Jetson | Verified |
+| `[x]` | 0.4 | Verify `/utlidar/cloud` and `/utlidar/imu` at full rate (14.7 Hz / 250 Hz) | Verified |
+| `[x]` | 0.5 | Build `go2_integration_pkg` (relays, map node, motion test) | Verified |
 | `[ ]` | 0.6 | Download Unity environment model for simulation | Pending |
 | `[ ]` | 0.7 | Test `./scripts/system_simulation_with_mapping.sh` in Unity | Pending |
 | `[ ]` | 0.8 | Verify RViz shows live map from `/map/occupancy` | Pending |
@@ -31,17 +36,17 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 
 **Goal:** Generate high-quality, saved maps from the Go2's L1 LiDAR that can be reloaded for future navigation.
 
-**Phase status:** `[ ]`
+**Phase status:** `[~]` (code complete, verification pending)
 
 ### 1.1 — 2D Occupancy Grid Mapping
 
 | Done | Step | Task | Details |
 |:----:|------|------|---------|
-| `[ ]` | 1.1.1 | Verify `map_node.py` consumes `/registered_scan` from Point-LIO | CMU stack remaps `/cloud_registered` to `/registered_scan` |
-| `[ ]` | 1.1.2 | Verify `/map/occupancy` publishes with `TRANSIENT_LOCAL` QoS | Required for RViz to render the map |
-| `[ ]` | 1.1.3 | Add map saving to `~/go2_maps/<timestamp>/` | PNG + PLY + mesh.obj |
-| `[ ]` | 1.1.4 | Test 2D mapping in Unity simulation | Robot walks, map builds, Ctrl+C saves |
-| `[ ]` | 1.1.5 | Tune `MapConfig` (resolution, hit/miss log-odds) | Target: clean walls, no double-image drift |
+| `[~]` | 1.1.1 | Verify `map_node.py` consumes `/registered_scan` from Point-LIO | Code written; not yet run on workstation |
+| `[~]` | 1.1.2 | Verify `/map/occupancy` publishes with `TRANSIENT_LOCAL` QoS | Code written; not yet verified |
+| `[~]` | 1.1.3 | Add map saving to `~/go2_maps/<timestamp>/` | Code written; not yet verified |
+| `[ ]` | 1.1.4 | Test 2D mapping in Unity simulation | Not run |
+| `[ ]` | 1.1.5 | Tune `MapConfig` (resolution, hit/miss log-odds) | Not started |
 
 **Deliverable:** A saved 2D occupancy grid (`.png`) that accurately represents the scanned environment.
 
@@ -49,11 +54,11 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 
 | Done | Step | Task | Details |
 |:----:|------|------|---------|
-| `[ ]` | 1.2.1 | Install `open3d` on the KSU workstation | `pip install open3d` |
-| `[ ]` | 1.2.2 | Enable Poisson mesh reconstruction in `mapping.py` | Already coded; verify it runs |
-| `[ ]` | 1.2.3 | Test mesh export (`mesh.obj`) from a simulation run | Open in MeshLab to verify watertightness |
-| `[ ]` | 1.2.4 | Add binary PLY export (XYZ + intensity) | Already coded; verify file size is reasonable |
-| `[ ]` | 1.2.5 | Test on real robot over Ethernet | Drive Go2 around a room, save, inspect mesh |
+| `[ ]` | 1.2.1 | Install `open3d` on the KSU workstation | Not installed |
+| `[~]` | 1.2.2 | Enable Poisson mesh reconstruction in `mapping.py` | Code written; not yet run |
+| `[ ]` | 1.2.3 | Test mesh export (`mesh.obj`) from a simulation run | Not run |
+| `[~]` | 1.2.4 | Add binary PLY export (XYZ + intensity) | Code written; not yet verified |
+| `[ ]` | 1.2.5 | Test on real robot over Ethernet | Not run |
 
 **Deliverable:** A watertight 3D mesh (`.obj`) and point cloud (`.ply`) of a real room.
 
@@ -61,11 +66,11 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 
 | Done | Step | Task | Details |
 |:----:|------|------|---------|
-| `[ ]` | 1.3.1 | Identify camera topic from Go2 | `/camera/image/raw` (Unity) or via WebRTC SDK |
-| `[ ]` | 1.3.2 | Add camera intrinsics configuration | Required to project LiDAR points into image frame |
-| `[ ]` | 1.3.3 | Implement `on_image()` in `map_node.py` | Project point cloud, look up pixel colour, attach RGB |
-| `[ ]` | 1.3.4 | Verify coloured PLY export | Open in CloudCompare to see colours |
-| `[ ]` | 1.3.5 | Consider adding an Intel RealSense D435i | Provides depth + RGB for better fusion |
+| `[ ]` | 1.3.1 | Identify camera topic from Go2 | Topic name TBD from Unity and real robot |
+| `[~]` | 1.3.2 | Add camera intrinsics configuration | Code written; defaults baked in for Go2W |
+| `[~]` | 1.3.3 | Implement `on_image()` in `map_node.py` | Code written; not yet run |
+| `[ ]` | 1.3.4 | Verify coloured PLY export | Not run |
+| `[ ]` | 1.3.5 | Consider adding an Intel RealSense D435i | Not started |
 
 **Deliverable:** Coloured 3D map with texture, not just greyscale.
 
@@ -199,8 +204,8 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 
 | Done | Phase | Duration | Deliverable |
 |:----:|-------|----------|-------------|
-| `[ ]` | Phase 0 | 1 week | Working simulation environment |
-| `[ ]` | Phase 1 | 2-3 weeks | 2D map + 3D mesh + coloured point cloud |
+| `[~]` | Phase 0 | 1 week | Working simulation environment |
+| `[~]` | Phase 1 | 2-3 weeks | 2D map + 3D mesh + coloured point cloud |
 | `[ ]` | Phase 2 | 2 weeks | Autonomous navigation to goals |
 | `[ ]` | Phase 3 | 2-3 weeks | D1 arm ROS 2 control + pick-and-place |
 | `[ ]` | Phase 4 | 2 weeks | Integrated mission |
@@ -224,13 +229,31 @@ Do not skip Phase 0. Every subsequent phase depends on a working simulation envi
 
 | Done | Step | Action |
 |:----:|------|--------|
-| `[ ]` | 1 | Verify Unity simulation runs: `./scripts/system_simulation_with_mapping.sh` |
-| `[ ]` | 2 | Confirm `/map/occupancy` appears in RViz with QoS `TRANSIENT_LOCAL` |
-| `[ ]` | 3 | Run a 2-minute mapping session, walk robot in a circle, Ctrl+C to save |
-| `[ ]` | 4 | Inspect saved files: `~/go2_maps/<timestamp>/` should contain `map.png`, `map.ply`, `mesh.obj` |
-| `[ ]` | 5 | Open `mesh.obj` in MeshLab to verify the room is recognisable |
+| `[ ]` | 1 | Download Unity environment model from CMU README |
+| `[ ]` | 2 | Run `./scripts/system_simulation_with_mapping.sh` on KSU workstation |
+| `[ ]` | 3 | Confirm `/map/occupancy` appears in RViz with QoS `TRANSIENT_LOCAL` |
+| `[ ]` | 4 | Run a 2-minute mapping session, walk robot in a circle, Ctrl+C to save |
+| `[ ]` | 5 | Inspect saved files: `~/go2_maps/<timestamp>/` should contain `map.png`, `map.ply`, `mesh.obj` |
+| `[ ]` | 6 | Install `open3d`: `pip install open3d` |
+| `[ ]` | 7 | Verify coloured PLY export with `use_camera:=true` |
+| `[ ]` | 8 | Open `mesh.obj` in MeshLab to verify the room is recognisable |
 
-Once those five steps work, Phase 1 is complete and you can move to real-robot testing.
+Once those eight steps work, Phase 1 is complete and you can move to real-robot testing.
+
+---
+
+## Progress Snapshot
+
+| Phase | Status | Done / Total |
+|-------|--------|--------------|
+| Phase 0 — Foundation | `[~]` | 5 / 8 |
+| Phase 1 — Mapping | `[~]` | 0 / 15 verified (6 coded) |
+| Phase 2 — Navigation | `[ ]` | 0 / 12 |
+| Phase 3 — D1 Arm | `[ ]` | 0 / 16 |
+| Phase 4 — Integration | `[ ]` | 0 / 6 |
+| Phase 5 — Wireless | `[ ]` | 0 / 5 |
+
+**Overall:** Foundation done, mapping code complete and awaiting verification.
 
 ---
 
@@ -247,6 +270,8 @@ Once those five steps work, Phase 1 is complete and you can move to real-robot t
 | `/cmd_vel` | `geometry_msgs/TwistStamped` | output | All modes |
 | `/map/occupancy` | `nav_msgs/OccupancyGrid` | output | All modes |
 | `/map/points` | `sensor_msgs/PointCloud2` | output | All modes |
+| `/camera/image/raw` | `sensor_msgs/Image` | input | Unity, WebRTC |
+| `/camera/camera_info` | `sensor_msgs/CameraInfo` | input | Unity, WebRTC |
 | `/api/sport/request` | `unitree_api/Request` | output | Real robot |
 
 ## QoS Reference
@@ -275,15 +300,18 @@ Once those five steps work, Phase 1 is complete and you can move to real-robot t
 
 ## How to Use This Tracker
 
-1. Copy this file to your team's shared location or keep it in the repo.
-2. When you complete a step, change `[ ]` to `[x]` in the leftmost column of that row.
-3. When all steps in a phase are `[x]`, change the **Phase status** marker to `[x]`.
-4. The **Timeline Summary** checkboxes should be updated when each phase completes.
-5. Commit the updated file:
+1. Keep this file in `docs/ROADMAP.md` in the repo.
+2. When a step is **coded**, change `[ ]` to `[~]`.
+3. When a step is **verified** (ran successfully with evidence), change `[~]` to `[x]`.
+4. When all steps in a phase are `[x]`, change that phase's **Phase status** marker to `[x]`.
+5. Update the **Timeline Summary** and **Progress Snapshot** when a phase completes.
+6. Commit the updated file:
    ```
-   git add ROADMAP.md
-   git commit -m "Phase N: mark step X as complete"
+   git add docs/ROADMAP.md
+   git commit -m "Phase N: mark step X as verified"
    git push
    ```
 
 Anyone on the team can `git pull` to see the current progress.
+
+**Definition of done:** A step is `[x]` only when the code exists, builds without error, runs to completion, and produces the expected output. Code written but not yet run is `[~]`.
