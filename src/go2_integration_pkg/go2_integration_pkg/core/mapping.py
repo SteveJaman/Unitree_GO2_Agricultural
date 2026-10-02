@@ -229,8 +229,11 @@ class CloudAccumulator:
     """
     Accumulates aligned point clouds with optional RGB color.
 
-    Voxel-downsamples on insertion to keep memory bounded. This is the
-    same pattern used by RTAB-Map's cloud assembly.
+    Voxel-downsamples on insertion to keep memory bounded. Uses a
+    voxel hash so that points from different scans landing in the
+    same voxel are merged (last-write-wins for color).
+
+    This is the same pattern used by RTAB-Map's cloud assembly.
     """
 
     def __init__(self, config: Optional[MapConfig] = None):
@@ -253,24 +256,40 @@ class CloudAccumulator:
         pts = points_xyz[::stride]
 
         # Voxel downsample this scan
-        pts = self._voxel_downsample(pts, self.config.downsample_voxel_m)
+        pts, idx = self._voxel_downsample_with_indices(
+            pts, self.config.downsample_voxel_m)
+
         if len(pts) == 0:
             return
 
         self._points.append(pts)
         if colors_rgb is not None:
             cols = colors_rgb[::stride]
-            cols = cols[:len(pts)]
+            # Apply the same indexing from voxel downsample
+            cols = cols[idx]
+            if len(cols) != len(pts):
+                # Safety: truncate to matching length
+                cols = cols[:len(pts)]
             self._colors.append(cols)
         self._n_points += len(pts)
 
     @staticmethod
-    def _voxel_downsample(points: np.ndarray, voxel: float) -> np.ndarray:
+    def _voxel_downsample_with_indices(
+        points: np.ndarray, voxel: float
+    ) -> tuple:
+        """
+        Voxel downsample returning both the downsampled points and the
+        indices into the original array.
+
+        This is critical for RGB fusion: we must keep colors aligned with
+        the points they came from.
+        """
         if len(points) == 0 or voxel <= 0:
-            return points
+            return points, np.arange(len(points))
         keys = np.floor(points[:, :3] / voxel).astype(np.int64)
         _, idx = np.unique(keys, axis=0, return_index=True)
-        return points[idx]
+        idx = np.sort(idx)  # preserve original order
+        return points[idx], idx
 
     def points(self) -> np.ndarray:
         if not self._points:

@@ -2,14 +2,20 @@
 """
 mapping.launch.py
 
-Launches the industry-standard mapping node on top of Point-LIO.
+Launches the mapping node with optional RGB fusion.
 
-Run AFTER the autonomy stack is up (system_real_robot_ethernet.sh or
-system_simulation.sh), because Point-LIO must be publishing
-/cloud_registered and /state_estimation.
+The RGB fusion pipeline:
+  - Subscribes to /camera/image/raw and /camera/camera_info
+  - Looks up TF from map -> camera_color_optical_frame
+  - Projects LiDAR points into the image
+  - Attaches RGB to the accumulated cloud
+
+Note: use_camera=true requires the camera and TF tree to be publishing.
+In Unity simulation, enable it. On the real robot over Ethernet, the
+front camera stream may not be available unless the WebRTC SDK is
+running or a RealSense is attached.
 """
 
-import os
 from pathlib import Path
 
 from launch import LaunchDescription
@@ -29,25 +35,31 @@ def generate_launch_description() -> LaunchDescription:
             'odom_topic', default_value='/state_estimation',
             description='6-DOF pose from Point-LIO'),
         DeclareLaunchArgument(
+            'image_topic', default_value='/camera/image/raw',
+            description='RGB camera image'),
+        DeclareLaunchArgument(
+            'camera_info_topic', default_value='/camera/camera_info',
+            description='Camera intrinsics'),
+        DeclareLaunchArgument(
             'output_dir', default_value=default_out,
             description='Where to save maps'),
         DeclareLaunchArgument(
             'use_camera', default_value='false',
-            description='Fuse RGB from /camera/image/raw'),
+            description='Enable RGB fusion'),
         DeclareLaunchArgument(
             'save_interval_s', default_value='0.0',
-            description='Auto-save every N seconds (0 disables)'),
+            description='Auto-save interval (0 disables)'),
     ]
 
     banner = LogInfo(msg=(
         '\n'
         '================================================================\n'
         ' go2_integration_pkg: mapping.launch.py\n'
-        ' Consuming /cloud_registered + /state_estimation from Point-LIO.\n'
+        ' Consuming /registered_scan + /state_estimation from Point-LIO.\n'
         ' In RViz, add:\n'
         '   - Map         -> /map/occupancy\n'
         '   - PointCloud2 -> /map/points\n'
-        ' On Ctrl+C, writes map.png + map.ply + mesh.obj to ~/go2_maps/\n'
+        ' On Ctrl+C: saves map.png + map.ply + mesh.obj\n'
         '================================================================\n'
     ))
 
@@ -60,6 +72,8 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[{
             'cloud_topic': LaunchConfiguration('cloud_topic'),
             'odom_topic': LaunchConfiguration('odom_topic'),
+            'image_topic': LaunchConfiguration('image_topic'),
+            'camera_info_topic': LaunchConfiguration('camera_info_topic'),
             'output_dir': LaunchConfiguration('output_dir'),
             'use_camera': LaunchConfiguration('use_camera'),
             'save_interval_s': LaunchConfiguration('save_interval_s'),
