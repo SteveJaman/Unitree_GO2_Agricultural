@@ -3,31 +3,84 @@
             schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>go2_integration_pkg</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>
-    Integration layer for Unitree Go2. Provides sensor relays, cmd_vel
-    bridges, and a motion test node. Primary connection modes are
-    Ethernet and native Wi-Fi DDS. WebRTC relays kept for fallback.
+    Integration layer for the Unitree Go2 EDU. Provides DDS relays,
+    motion testing, industrial-grade 2D/3D mapping with log-odds occupancy
+    and Poisson mesh reconstruction, optional RGB camera fusion, and
+    launch files that wire the CMU autonomy stack into a full SLAM +
+    localisation + Nav2 navigation pipeline.
   </description>
+
   <maintainer email="you@example.com">Your Name</maintainer>
   <license>MIT</license>
 
+  <!-- ================================================================= -->
+  <!-- Build tools                                                        -->
+  <!-- ================================================================= -->
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
+  <!-- ================================================================= -->
+  <!-- Core ROS 2                                                         -->
+  <!-- ================================================================= -->
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>unitree_api</exec_depend>
+
+  <!-- ================================================================= -->
+  <!-- Message packages                                                   -->
+  <!-- ================================================================= -->
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>cv_bridge</exec_depend>
-  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>tf2_py</exec_depend>
+  <exec_depend>unitree_api</exec_depend>
+  <exec_depend>unitree_go</exec_depend>
 
+  <!-- ================================================================= -->
+  <!-- Image / vision                                                     -->
+  <!-- ================================================================= -->
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+
+  <!-- ================================================================= -->
+  <!-- SLAM                                                               -->
+  <!-- ================================================================= -->
+  <exec_depend>slam_toolbox</exec_depend>
+
+  <!-- ================================================================= -->
+  <!-- Navigation stack (Nav2)                                            -->
+  <!-- ================================================================= -->
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_recoveries</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <exec_depend>nav2_simple_commander</exec_depend>
+
+  <!-- ================================================================= -->
+  <!-- Python runtime                                                     -->
+  <!-- ================================================================= -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-pip</exec_depend>
+
+  <!-- ================================================================= -->
+  <!-- Test dependencies                                                  -->
+  <!-- ================================================================= -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

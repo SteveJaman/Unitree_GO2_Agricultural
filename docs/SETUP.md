@@ -31,6 +31,46 @@ Start with Ethernet. See docs/ETHERNET.md.
 
 The two external repositories are not part of this repo. Clone and build them before you continue.
 
+## Install System Dependencies
+
+The package uses CycloneDDS as its middleware and Nav2 for navigation. Install both.
+
+```bash
+sudo apt update
+
+# Core ROS 2 middleware
+sudo apt install -y \
+    ros-humble-rmw-cyclonedds-cpp
+
+# Navigation and mapping stack
+sudo apt install -y \
+    ros-humble-slam-toolbox \
+    ros-humble-nav2-bringup \
+    ros-humble-nav2-amcl \
+    ros-humble-nav2-map-server \
+    ros-humble-nav2-lifecycle-manager \
+    ros-humble-nav2-controller \
+    ros-humble-nav2-planner \
+    ros-humble-nav2-bt-navigator \
+    ros-humble-nav2-behaviors
+
+# Camera and vision
+sudo apt install -y \
+    ros-humble-cv-bridge \
+    ros-humble-image-transport \
+    ros-humble-tf2-ros \
+    ros-humble-tf2-py
+
+# Python runtime
+sudo apt install -y python3-numpy python3-pip
+```
+
+Install the Python-only mesh reconstruction library. This is optional. The mapping node skips mesh export if open3d is missing.
+
+```bash
+pip install --user open3d
+```
+
 ## Install CycloneDDS
 
 The configs in config/ target CycloneDDS. Install the ROS 2 middleware package.
@@ -55,19 +95,45 @@ cd Unitree_GO2_Agricultural
 Unitree_GO2_Agricultural
 |-- config
 |   |-- cyclonedds_ethernet.xml
-|   |-- cyclonedds_wireless.xml
-|   |-- zenoh_robot_config.json5
-|   +-- zenoh_vm_config.json5
+|   +-- cyclonedds_wireless.xml
 |-- docs
+|   |-- ETHERNET.md
+|   |-- ROADMAP.md
+|   |-- SETUP.md
+|   |-- TROUBLESHOOTING.md
+|   +-- WIRELESS.md
 |-- scripts
 |   |-- move_forward.sh
+|   |-- system_navigation.sh
 |   |-- system_real_robot_ethernet.sh
-|   |-- system_real_robot_wireless.sh
-|   |-- system_real_robot_webrtc.sh
-|   |-- zenoh_bridge_robot.sh
-|   +-- zenoh_bridge_vm.sh
+|   |-- system_simulation.sh
+|   |-- system_simulation_with_camera.sh
+|   |-- system_simulation_with_mapping.sh
+|   +-- verify_topics.sh
+|-- simulation
+|   |-- README.md
+|   +-- custom_scenes
 +-- src
     +-- go2_integration_pkg
+        |-- CMakeLists.txt
+        |-- package.xml
+        |-- go2_integration_pkg
+        |   |-- __init__.py
+        |   |-- camera_relay.py
+        |   |-- cloud_relay_node.py
+        |   |-- cmd_vel_bridge.py
+        |   |-- map_node.py
+        |   |-- move_forward.py
+        |   |-- pointcloud_to_scan.py
+        |   +-- core
+        |       |-- __init__.py
+        |       +-- mapping.py
+        +-- launch
+            |-- integrated_robot.launch.py
+            |-- localization.launch.py
+            |-- mapping.launch.py
+            |-- nav2_bringup.launch.py
+            +-- slam_mapping.launch.py
 ```
 
 ## Make the Scripts Executable
@@ -104,6 +170,23 @@ Confirm ROS 2 finds the package.
 ros2 pkg list | grep go2_integration_pkg
 ```
 
+Confirm the executables are installed. There must be six.
+
+```bash
+ros2 pkg executables go2_integration_pkg
+```
+
+Expected output:
+
+```
+go2_integration_pkg camera_relay.py
+go2_integration_pkg cloud_relay_node.py
+go2_integration_pkg cmd_vel_bridge.py
+go2_integration_pkg map_node.py
+go2_integration_pkg move_forward.py
+go2_integration_pkg pointcloud_to_scan.py
+```
+
 Confirm the external dependencies exist.
 
 ```bash
@@ -113,15 +196,61 @@ ls ~/files/ros2_ws/src/go2_robot_sdk
 
 Both commands must list files. An error means a dependency is missing.
 
+## What Each Node Does
+
+| Node | Subscribes to | Publishes to | Purpose |
+|------|---------------|--------------|---------|
+| move_forward.py | none | /api/sport/request | Send one forward command to test motion |
+| cloud_relay_node.py | /point_cloud2 | /utlidar/cloud | WebRTC fallback topic rename |
+| cmd_vel_bridge.py | /cmd_vel_stamped | /cmd_vel | WebRTC fallback message conversion |
+| map_node.py | cloud and odom topics | /map/occupancy, /map/points | 2D grid and 3D cloud mapping |
+| pointcloud_to_scan.py | PointCloud2 | /scan | Convert 3D cloud to 2D scan for SLAM |
+| camera_relay.py | /camera/image_raw | /camera/image_raw_relayed | QoS-safe camera image relay |
+
+## What Each Launch File Does
+
+| Launch file | Purpose |
+|-------------|---------|
+| integrated_robot.launch.py | WebRTC fallback relays |
+| mapping.launch.py | Start map_node with optional RGB fusion |
+| slam_mapping.launch.py | Online 2D SLAM with slam_toolbox |
+| localization.launch.py | map_server and AMCL against a saved map |
+| nav2_bringup.launch.py | Full Nav2 navigation stack |
+
 ## What Working Looks Like
 
 | Check | Expected result |
 |-------|-----------------|
 | ros2 pkg list | Includes go2_integration_pkg |
+| ros2 pkg executables | Lists all six nodes |
 | ls on both external paths | Lists files, no error |
 | ls -l scripts | Shell scripts show the x permission |
 
 ## Cross-References
 
 - docs/ETHERNET.md - run the stack over a direct cable
+- docs/WIRELESS.md - run the stack over Wi-Fi with a USB dongle
 - docs/TROUBLESHOOTING.md - fixes for build, environment, and connection errors
+- docs/ROADMAP.md - development phases and planned work
+```
+
+## What changed from the old version
+
+| Section | Change |
+|---|---|
+| System dependencies | Added the full Nav2, slam_toolbox, cv_bridge, tf2 package list |
+| Python dependencies | Added `pip install open3d` for mesh reconstruction |
+| Repo layout | Removed Zenoh and WebRTC scripts that no longer exist |
+| Repo layout | Added `camera_relay.py`, `pointcloud_to_scan.py`, and the four new launch files |
+| Scripts list | Now shows the seven current scripts |
+| Executables verify | Now expects six nodes, not three |
+| New "What Each Node Does" section | Describes every node's topic contract |
+| New "What Each Launch File Does" section | Describes each launch file's purpose |
+| Cross-references | Added WIRELESS.md and ROADMAP.md |
+
+Save it to `docs/SETUP.md` and commit:
+
+```powershell
+git add docs/SETUP.md
+git commit -m "Update SETUP.md to reflect current nodes, launch files, and dependencies"
+git push
