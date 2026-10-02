@@ -530,14 +530,14 @@ The more devices on the Wi-Fi network, the more contention. A dedicated travel r
 
 ## Cross-References
 
-- docs/ETHERNET.md - the recommended mode when a cable is possible
-- docs/TROUBLESHOOTING.md - fixes for DDS, mapping, Nav2, and camera issues
-- docs/ROADMAP.md - development phases including wireless deployment
+- docs/ethernet.md - the recommended mode when a cable is possible
+- docs/troubleshooting.md - fixes for DDS, mapping, Nav2, and camera issues
+- docs/roadmap.md - development phases including wireless deployment
 ```
 
 Save it and commit.
 
 ```powershell
-git add docs/WIRELESS.md
-git commit -m "Update WIRELESS.md with hardware requirements, Zenoh bridge, and tuning"
+git add docs/wireless.md
+git commit -m "Update wireless.md with hardware requirements, Zenoh bridge, and tuning"
 git push

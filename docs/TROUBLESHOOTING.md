@@ -630,7 +630,7 @@ ip link
 
 If no `wlan0`, `wlp*`, or `wlx*` appears, the Jetson has no Wi-Fi chipset. Only the front board has Wi-Fi, and it does not route SSH or DDS.
 
-**Fix:** Add a USB Wi-Fi dongle or use a travel router. See `docs/WIRELESS.md`.
+**Fix:** Add a USB Wi-Fi dongle or use a travel router. See `docs/wireless.md`.
 
 ---
 
@@ -806,6 +806,6 @@ With that information, the cause is usually identifiable in one pass.
 Save it and commit.
 
 ```powershell
-git add docs/TROUBLESHOOTING.md
+git add docs/troubleshooting.md
 git commit -m "Update TROUBLESHOOTING.md with mapping, Nav2, camera, and wireless sections"
 git push

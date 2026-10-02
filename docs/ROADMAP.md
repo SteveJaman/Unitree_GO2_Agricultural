@@ -300,14 +300,14 @@ Once those eight steps work, Phase 1 is complete and you can move to real-robot 
 
 ## How to Use This Tracker
 
-1. Keep this file in `docs/ROADMAP.md` in the repo.
+1. Keep this file in `docs/roadmap.md` in the repo.
 2. When a step is **coded**, change `[ ]` to `[~]`.
 3. When a step is **verified** (ran successfully with evidence), change `[~]` to `[x]`.
 4. When all steps in a phase are `[x]`, change that phase's **Phase status** marker to `[x]`.
 5. Update the **Timeline Summary** and **Progress Snapshot** when a phase completes.
 6. Commit the updated file:
    ```
-   git add docs/ROADMAP.md
+   git add docs/roadmap.md
    git commit -m "Phase N: mark step X as verified"
    git push
    ```

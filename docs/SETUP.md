@@ -17,7 +17,7 @@ The repo holds configs, launch scripts, and the go2_integration_pkg ROS 2 packag
 | 3 | Zenoh | Wi-Fi is flaky. TCP-based bridge. |
 | 4 | WebRTC | Legacy fallback. ~1 Hz LiDAR, degraded. |
 
-Start with Ethernet. See docs/ETHERNET.md.
+Start with Ethernet. See docs/ethernet.md.
 
 ## Prerequisites
 
@@ -228,10 +228,10 @@ Both commands must list files. An error means a dependency is missing.
 
 ## Cross-References
 
-- docs/ETHERNET.md - run the stack over a direct cable
-- docs/WIRELESS.md - run the stack over Wi-Fi with a USB dongle
-- docs/TROUBLESHOOTING.md - fixes for build, environment, and connection errors
-- docs/ROADMAP.md - development phases and planned work
+- docs/ethernet.md - run the stack over a direct cable
+- docs/wireless.md - run the stack over Wi-Fi with a USB dongle
+- docs/troubleshooting.md - fixes for build, environment, and connection errors
+- docs/roadmap.md - development phases and planned work
 ```
 
 ## What changed from the old version
@@ -248,9 +248,9 @@ Both commands must list files. An error means a dependency is missing.
 | New "What Each Launch File Does" section | Describes each launch file's purpose |
 | Cross-references | Added WIRELESS.md and ROADMAP.md |
 
-Save it to `docs/SETUP.md` and commit:
+Save it to `docs/setup.md` and commit:
 
 ```powershell
-git add docs/SETUP.md
-git commit -m "Update SETUP.md to reflect current nodes, launch files, and dependencies"
+git add docs/setup.md
+git commit -m "Update setup.md to reflect current nodes, launch files, and dependencies"
 git push
