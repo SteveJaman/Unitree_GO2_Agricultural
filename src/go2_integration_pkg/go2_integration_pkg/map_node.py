@@ -67,13 +67,13 @@ except ImportError:
 
 try:
     from go2_integration_pkg.core.mapping import (
-        MapConfig, OccupancyGrid, CloudAccumulator,
+        MapConfig, OccupancyGrid as LocalOccupancyGrid, CloudAccumulator,
         reconstruct_mesh, write_pointcloud_ply)
 except ImportError:
     here = Path(__file__).resolve().parent
     sys.path.insert(0, str(here))
     from core.mapping import (
-        MapConfig, OccupancyGrid, CloudAccumulator,
+        MapConfig, OccupancyGrid as LocalOccupancyGrid, CloudAccumulator,
         reconstruct_mesh, write_pointcloud_ply)
 
 
@@ -205,7 +205,7 @@ class MapNode(Node):
             size_m=self.get_parameter('map_size_m').value,
             resolution_m=self.get_parameter('resolution_m').value,
         )
-        self.grid = OccupancyGrid(cfg)
+        self.grid = LocalOccupancyGrid(cfg)
         self.cloud = CloudAccumulator(cfg)
         self.bridge = CvBridge() if self.use_camera else None
 

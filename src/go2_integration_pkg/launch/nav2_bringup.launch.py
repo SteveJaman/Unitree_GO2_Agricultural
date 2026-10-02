@@ -6,7 +6,7 @@ Launches the Nav2 navigation stack for autonomous path planning and
 obstacle avoidance.
 
 Requirements:
-  - /scan topic must be publishing
+  - /scan topic must be publishing (frame_id must match the base frame)
   - TF tree must be complete (map -> odom -> base_link)
   - A map must be loaded (from localization.launch.py)
   - /cmd_vel must be consumable by the robot
@@ -29,6 +29,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'autostart', default_value='true',
             description='Automatically configure and activate Nav2 nodes'),
+        DeclareLaunchArgument(
+            'odom_topic', default_value='/state_estimation',
+            description='Odometry topic (CMU stack publishes '
+                        '/state_estimation, not /odom)'),
     ]
 
     banner = LogInfo(msg=(
@@ -39,12 +43,6 @@ def generate_launch_description() -> LaunchDescription:
         ' In RViz, use "2D Goal Pose" to send the robot to a target.\n'
         '================================================================\n'
     ))
-
-    # Common Nav2 parameters
-    nav2_params = {
-        'use_sim_time': LaunchConfiguration('use_sim_time'),
-        'yaml_filename': '',
-    }
 
     # --- Controller Server ---
     controller_server = Node(
@@ -120,7 +118,7 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
-    # --- Behavior Server ---
+    # --- Behavior Server (includes recoveries on Humble) ---
     behavior_server = Node(
         package='nav2_behaviors',
         executable='behavior_server',
@@ -165,7 +163,7 @@ def generate_launch_description() -> LaunchDescription:
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'global_frame': 'map',
             'robot_base_frame': 'base_link',
-            'odom_topic': '/odom',
+            'odom_topic': LaunchConfiguration('odom_topic'),
             'bt_loop_duration': 10,
             'default_server_timeout': 20,
             'navigators': ['navigate_to_pose', 'navigate_through_poses'],
@@ -178,25 +176,9 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
-    # --- Recovery Server ---
-    recoveries_server = Node(
-        package='nav2_recoveries',
-        executable='recoveries_server',
-        name='recoveries_server',
-        output='screen',
-        parameters=[{
-            'use_sim_time': LaunchConfiguration('use_sim_time'),
-            'global_frame': 'odom',
-            'robot_base_frame': 'base_link',
-            'transform_tolerance': 0.1,
-            'simulate_ahead_time': 2.0,
-            'max_rotational_vel': 1.0,
-            'min_rotational_vel': 0.4,
-            'rotational_acc_lim': 3.2,
-        }],
-    )
-
     # --- Lifecycle Manager ---
+    # Note: recoveries live inside nav2_behaviors on Humble. There is no
+    # separate nav2_recoveries package, so behavior_server is listed once.
     lifecycle_manager = Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
@@ -210,7 +192,6 @@ def generate_launch_description() -> LaunchDescription:
                 'planner_server',
                 'behavior_server',
                 'bt_navigator',
-                'recoveries_server',
             ],
         }],
     )
@@ -221,6 +202,5 @@ def generate_launch_description() -> LaunchDescription:
         planner_server,
         behavior_server,
         bt_navigator,
-        recoveries_server,
         lifecycle_manager,
     ])

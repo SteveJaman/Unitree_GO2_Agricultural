@@ -12,7 +12,11 @@ Subscribes:
   /registered_scan   (sensor_msgs/PointCloud2)
 
 Publishes:
-  /scan              (sensor_msgs/LaserScan)
+  /scan              (sensor_msgs/LaserScan, frame_id="base_link")
+
+The frame_id must match the base frame used by slam_toolbox, AMCL, and
+Nav2. If your TF tree uses "body" instead of "base_link", override the
+parameter: --ros-args -p target_frame:=body
 """
 
 import sys
@@ -47,7 +51,7 @@ class PointCloudToScan(Node):
         self.declare_parameter('angle_increment', 0.0087)   # ~0.5 deg
         self.declare_parameter('range_min', 0.2)
         self.declare_parameter('range_max', 30.0)
-        self.declare_parameter('target_frame', 'body')
+        self.declare_parameter('target_frame', 'base_link')
 
         in_topic = self.get_parameter('input_topic').value
         out_topic = self.get_parameter('output_topic').value
