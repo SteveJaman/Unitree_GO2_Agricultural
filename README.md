@@ -47,6 +47,7 @@ Unitree_GO2_Agricultural/
 |   |-- cyclonedds_ethernet.xml
 |   +-- cyclonedds_wireless.xml
 |-- docs/
+|   |-- architecture.md
 |   |-- ETHERNET.md
 |   |-- ROADMAP.md
 |   |-- SETUP.md
@@ -242,15 +243,16 @@ All guides live in the [docs](docs/) folder.
 
 | File | Description |
 |------|-------------|
-| [docs/SETUP.md](docs/setup.md) | First-time clone, dependency, and build setup |
-| [docs/ETHERNET.md](docs/ethernet.md) | Run the stack over a direct Ethernet cable |
-| [docs/WIRELESS.md](docs/wireless.md) | Run the stack over a USB Wi-Fi dongle with native DDS |
-| [docs/TROUBLESHOOTING.md](docs/troubleshooting.md) | Fixes for environment, DDS, SLAM, motion, and network errors |
-| [docs/ROADMAP.md](docs/roadmap.md) | Development phases and planned work |
+| [docs/SETUP.md](docs/SETUP.md) | First-time clone, dependency, and build setup |
+| [docs/architecture.md](docs/architecture.md) | Topic contract, QoS policies, Sport API command IDs, data flow |
+| [docs/ETHERNET.md](docs/ETHERNET.md) | Run the stack over a direct Ethernet cable |
+| [docs/WIRELESS.md](docs/WIRELESS.md) | Run the stack over a USB Wi-Fi dongle with native DDS |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Fixes for environment, DDS, SLAM, motion, and network errors |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Development phases and planned work |
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/roadmap.md) for the development phases and planned work.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the development phases and planned work.
 
 ## Status
 
