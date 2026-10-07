@@ -23,3 +23,7 @@ desktop.ini
 # OneDrive noise
 *.tmp
 __pycache__/
+
+# Ignore generated view_frames files
+frames_*.gv
+frames_*.pdf
