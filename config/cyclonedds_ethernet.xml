@@ -24,7 +24,7 @@
 
     <General>
       <Interfaces>
-        <NetworkInterface name="enp0s8"
+        <NetworkInterface name="enp0s3"
                           priority="default"
                           multicast="default" />
       </Interfaces>
