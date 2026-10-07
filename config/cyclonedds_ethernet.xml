@@ -24,7 +24,7 @@
 
     <General>
       <Interfaces>
-        <NetworkInterface name="enp0s3"
+        <NetworkInterface name="enp0s8"
                           priority="default"
                           multicast="default" />
       </Interfaces>
@@ -35,6 +35,15 @@
       -->
       <AllowMulticast>spdp</AllowMulticast>
       <EnableMulticastLoopback>false</EnableMulticastLoopback>
+
+      <!--
+        Buffer sizing for large LiDAR frames. PointCloud2 messages from
+        the Go2's L1 LiDAR can exceed 1 MB per frame at 15 Hz. Without
+        these settings, large messages can be silently fragmented or
+        dropped, causing "topic exists but no data" symptoms in RViz.
+      -->
+      <MaxMessageSize>65500</MaxMessageSize>
+      <FragmentSize>1344</FragmentSize>
     </General>
 
     <Discovery>
