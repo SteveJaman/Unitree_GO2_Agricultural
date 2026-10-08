@@ -1,81 +1,40 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# live_mapping.sh
+# live_mapping_sim.sh
 #
-# Minimal live mapping: CMU autonomy stack + map_node.py + RViz.
-# Auto-detects cloud topic and top TF frame. Regenerates RViz config each run.
-#
-# What you get:
-#   /map/occupancy  — 2D log-odds occupancy grid
-#   /map/points     — accumulated 3D point cloud
-#
-# On Ctrl+C: saves map.png, map.ply, mesh.obj to ~/go2_maps/<timestamp>/
+# Test live_mapping.sh logic without a robot or Gazebo.
+# Uses mock_sim.py to publish fake /registered_scan, /state_estimation, /tf.
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 
-NET_MODE="${NET_MODE:-ethernet}"
-
-case "$NET_MODE" in
-  ethernet)
-    XML="${WS_ROOT}/config/cyclonedds_ethernet.xml"
-    ;;
-  wireless)
-    XML="${WS_ROOT}/config/cyclonedds_wireless.xml"
-    ;;
-  *)
-    echo "Unknown NET_MODE=$NET_MODE (use ethernet|wireless)"
-    exit 1
-    ;;
-esac
-
-AUTONOMY_WS="${AUTONOMY_WS:-$HOME/files/autonomy_stack_go2}"
 LOG_DIR="${WS_ROOT}/log"
-RVIZ_CFG="${HOME}/.rviz2/go2_mapping.rviz"
-DIAG_FILE="${LOG_DIR}/diagnostics.txt"
+RVIZ_CFG="${HOME}/.rviz2/go2_mapping_sim.rviz"
+DIAG_FILE="${LOG_DIR}/diagnostics_sim.txt"
 
 mkdir -p "${LOG_DIR}" "$(dirname "${RVIZ_CFG}")"
 : > "${DIAG_FILE}"
 
-# --- ROS 2 environment -----------------------------------------------------
 set +u
 source /opt/ros/humble/setup.bash
-source "${AUTONOMY_WS}/install/setup.bash"
 source "${WS_ROOT}/install/setup.bash"
 set -u
 
-# --- CycloneDDS ------------------------------------------------------------
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI="file://${XML}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+# No CYCLONEDDS_URI — mock runs locally
 
 log() { echo "$@" | tee -a "${DIAG_FILE}"; }
 
 echo "================================"
-echo " Go2 Live Mapping"
+echo " Go2 Live Mapping (MOCK SIM)"
 echo "================================"
-echo "Network: ${NET_MODE}"
-echo "DDS:     ${CYCLONEDDS_URI}"
 echo ""
 
-# --- Sanity check (matches move_forward.sh pattern) ------------------------
-if [ "$NET_MODE" = "ethernet" ]; then
-    if ! ping -c 1 -W 1 192.168.123.18 > /dev/null 2>&1; then
-        echo "ERROR: Cannot reach Go2 at 192.168.123.18"
-        exit 1
-    fi
-    echo "Go2 reachable at 192.168.123.18"
-fi
-
-echo ""
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 wait_for_topic() {
-    local topic="$1"; local timeout="${2:-90}"; local i=0
+    local topic="$1"; local timeout="${2:-30}"; local i=0
     while [ "${i}" -lt "${timeout}" ]; do
         ros2 topic list 2>/dev/null | grep -qxF "${topic}" && return 0
         sleep 1; i=$((i + 1))
@@ -118,80 +77,46 @@ detect_top_frame() {
     return 1
 }
 
-# ---------------------------------------------------------------------------
-# Cleanup on Ctrl+C
-# ---------------------------------------------------------------------------
 PIDS=()
 cleanup() {
     echo
-    echo "[mapping] Shutting down..."
-    for pid in "${PIDS[@]}"; do
-        kill -INT "${pid}" 2>/dev/null || true
-    done
+    echo "[mapping-sim] Shutting down..."
+    for pid in "${PIDS[@]}"; do kill -INT "${pid}" 2>/dev/null || true; done
     sleep 2
-    for pid in "${PIDS[@]}"; do
-        kill -TERM "${pid}" 2>/dev/null || true
-    done
+    for pid in "${PIDS[@]}"; do kill -TERM "${pid}" 2>/dev/null || true; done
     wait 2>/dev/null || true
-    echo "[mapping] Done. Diagnostics: ${DIAG_FILE}"
+    echo "[mapping-sim] Done. Diagnostics: ${DIAG_FILE}"
 }
 trap cleanup EXIT INT TERM
 
-# ---------------------------------------------------------------------------
-# 1. Launch CMU autonomy stack
-# ---------------------------------------------------------------------------
-log "[1/4] Starting CMU autonomy stack..."
-ros2 launch vehicle_simulator system_real_robot.launch \
-    > "${LOG_DIR}/autonomy.log" 2>&1 &
+# 1. Mock publisher
+log "[1/4] Starting mock_sim.py..."
+python3 "${SCRIPT_DIR}/mock_sim.py" \
+    > "${LOG_DIR}/mock_sim.log" 2>&1 &
 PIDS+=("$!")
 
-log "[1/4] Waiting for /state_estimation (up to 90s)..."
-if ! wait_for_topic /state_estimation 90; then
-    log "  ERROR: /state_estimation did not appear."
-    log "  Check ${LOG_DIR}/autonomy.log"
-    log "  If stuck at 'IMU Initializing: 100.0%', fix use_sim_time:"
-    log "    grep use_sim_time ${AUTONOMY_WS}/src/slam/point_lio_unilidar/config/utlidar.yaml"
+log "[1/4] Waiting for /registered_scan..."
+if ! wait_for_topic /registered_scan 30; then
+    log "  ERROR: mock didn't publish. Check ${LOG_DIR}/mock_sim.log"
     exit 1
 fi
-log "  /state_estimation is up."
+log "  /registered_scan is up."
 
-# ---------------------------------------------------------------------------
-# 2. Detect topics
-# ---------------------------------------------------------------------------
-log "[2/4] Detecting cloud and odom topics..."
+# 2. Detect
+log "[2/4] Detecting topics..."
 CLOUD_TOPIC=$(detect_cloud_topic || true)
 ODOM_TOPIC=$(detect_odom_topic || true)
-
-if [ -z "${CLOUD_TOPIC}" ]; then
-    log "  ERROR: no cloud topic found. Available topics:"
-    ros2 topic list 2>/dev/null | sed 's/^/    /' | tee -a "${DIAG_FILE}"
-    exit 1
-fi
-
 [ -z "${ODOM_TOPIC}" ] && ODOM_TOPIC="/state_estimation"
-
 log "  cloud topic = ${CLOUD_TOPIC}"
 log "  odom topic  = ${ODOM_TOPIC}"
 
-# ---------------------------------------------------------------------------
-# 3. Detect top TF frame + write fresh RViz config
-# ---------------------------------------------------------------------------
+# 3. TF frame + RViz config
 log "[3/4] Detecting top TF frame..."
 TOP_FRAME=$(detect_top_frame || true)
+[ -z "${TOP_FRAME}" ] && TOP_FRAME="map"
+log "  top frame   = ${TOP_FRAME}"
 
-if [ -z "${TOP_FRAME}" ]; then
-    log "  WARN: could not detect TF frame. Dumping raw /tf and /tf_static:"
-    timeout 3 ros2 topic echo /tf --once 2>/dev/null \
-        | head -20 | sed 's/^/    /' | tee -a "${DIAG_FILE}" || true
-    timeout 3 ros2 topic echo /tf_static --once 2>/dev/null \
-        | head -20 | sed 's/^/    /' | tee -a "${DIAG_FILE}" || true
-    log "  Falling back to 'camera_init'."
-    TOP_FRAME="camera_init"
-else
-    log "  top frame   = ${TOP_FRAME}"
-fi
-
-log "[3/4] Writing RViz config (Fixed Frame = ${TOP_FRAME})..."
+log "[3/4] Writing RViz config..."
 cat > "${RVIZ_CFG}" << EOF
 Panels:
   - Class: rviz_common/Displays
@@ -267,36 +192,30 @@ Visualization Manager:
       Yaw: 0.785
 EOF
 
-# ---------------------------------------------------------------------------
-# 4. Launch map_node.py with explicit topics
-# ---------------------------------------------------------------------------
+# 4. map_node.py
 log "[4/4] Starting map_node.py..."
 ros2 run go2_integration_pkg map_node.py --ros-args \
     -p cloud_topic:="${CLOUD_TOPIC}" \
     -p odom_topic:="${ODOM_TOPIC}" \
-    > "${LOG_DIR}/map_node.log" 2>&1 &
+    > "${LOG_DIR}/map_node_sim.log" 2>&1 &
 PIDS+=("$!")
 
 log "[4/4] Waiting for /map/occupancy (max 30s)..."
 if ! wait_for_topic /map/occupancy 30; then
     log "  ERROR: /map/occupancy did not appear."
-    log "  map_node.log tail:"
-    tail -30 "${LOG_DIR}/map_node.log" | sed 's/^/    /' | tee -a "${DIAG_FILE}"
+    tail -30 "${LOG_DIR}/map_node_sim.log" | sed 's/^/    /' | tee -a "${DIAG_FILE}"
     exit 1
 fi
 
 log ""
 log "================================"
-log " Live mapping running"
+log " SIM test running"
 log "================================"
 log " Fixed Frame : ${TOP_FRAME}"
 log " Cloud topic : ${CLOUD_TOPIC}"
 log " Odom topic  : ${ODOM_TOPIC}"
 log ""
-log " Drive the robot with the physical remote."
-log " Press Ctrl+C to save the map."
-log " Save location: ~/go2_maps/<timestamp>/"
-log " Diagnostics: ${DIAG_FILE}"
+log " Watch the map build in RViz. Ctrl+C to stop."
 log "================================"
 log ""
 

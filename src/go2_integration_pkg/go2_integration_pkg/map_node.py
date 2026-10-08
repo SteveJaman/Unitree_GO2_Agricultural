@@ -228,7 +228,7 @@ class MapNode(Node):
         self.cloud_sub = self.create_subscription(
             PointCloud2, cloud_topic, self.on_cloud, sensor_qos(5))
         self.odom_sub = self.create_subscription(
-            Odometry, odom_topic, self.on_odom, 10)
+            Odometry, odom_topic, self.on_odom, sensor_qos(10))
 
         if self.use_camera:
             self.image_sub = self.create_subscription(
