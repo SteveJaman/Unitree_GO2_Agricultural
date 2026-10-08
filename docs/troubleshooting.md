@@ -801,3 +801,38 @@ echo "CYCLONEDDS: $CYCLONEDDS_URI"
 6. The last 30 lines of the failing terminal.
 
 With that information, the cause is usually identifiable in one pass.
+---
+
+## QoS Mismatch — Topic Exists But No Data Arrives
+
+Symptom: `ros2 topic list` shows the topic. `ros2 topic echo` on the publisher side works. But your node never receives anything, and no error is printed.
+
+Cause: The subscriber's QoS is **RELIABLE** but the publisher's is **BEST_EFFORT**. DDS silently refuses this combination.
+
+This bit `map_node.py` on 2026-10-07. The odom subscriber used the default RELIABLE profile, but Point-LIO publishes `/state_estimation` as BEST_EFFORT. The mock test passed because the mock used RELIABLE; the real robot would have silently failed.
+
+**Fix applied:** the odom subscriber now uses `sensor_qos(10)` (BEST_EFFORT), matching the publisher.
+
+**Diagnostic:**
+```bash
+ros2 topic info <topic> -v
+
+Compare the "Reliability" on the publisher block and the subscriber block. If subscriber is RELIABLE and publisher is BEST_EFFORT, that's the bug.
+
+Rule: Always use sensor_qos(...) (BEST_EFFORT) on subscribers to sensor and Point-LIO output topics. Only use RELIABLE for control topics and latched maps.
+
+---
+
+## QoS Mismatch — Topic Exists But No Data Arrives
+
+Symptom: `ros2 topic list` shows the topic. But your node never receives anything, and no error is printed.
+
+Cause: The subscriber QoS is **RELIABLE** but the publisher QoS is **BEST_EFFORT**. DDS silently refuses this combination.
+
+This bit `map_node.py` on 2026-10-07. The odom subscriber used the default RELIABLE profile, but Point-LIO publishes `/state_estimation` as BEST_EFFORT.
+
+**Fix applied:** the odom subscriber now uses `sensor_qos(10)` (BEST_EFFORT).
+
+**Diagnostic:** `ros2 topic info <topic> -v` — compare the Reliability on publisher vs subscriber blocks.
+
+**Rule:** Always use `sensor_qos(...)` (BEST_EFFORT) for sensor and Point-LIO output topics. Only use RELIABLE for control topics and latched maps.

@@ -126,3 +126,30 @@ Both commands must list files. An error means a dependency is missing.
 - docs/ethernet.md - run the stack over a direct cable
 - docs/troubleshooting.md - fixes for build, environment, and connection errors
 - [architecture.md](architecture.md) - topic contract, QoS, command IDs, and data flow
+---
+
+## Executable Bits on Python Nodes
+
+If you see `No executable found` when running `ros2 run go2_integration_pkg <node>.py`, the source file is missing its `+x` bit.
+
+**Fix:**
+
+```bash
+chmod +x src/go2_integration_pkg/go2_integration_pkg/*.py
+colcon build --symlink-install --packages-select go2_integration_pkg
+source install/setup.bash
+```
+
+Verify with `ros2 pkg executables go2_integration_pkg` — you should see six executables. The bits are committed to the repo.
+
+---
+
+## Local Simulation Test — No Robot, No Gazebo
+
+```bash
+./scripts/live_mapping_sim.sh
+```
+
+Runs `scripts/mock_sim.py`, which publishes synthetic `/registered_scan`, `/state_estimation`, and `/tf` on a circular trajectory. `live_mapping.sh` then runs its normal detection logic against those topics.
+
+Press Ctrl+C to stop. Diagnostics: `log/diagnostics_sim.txt`.

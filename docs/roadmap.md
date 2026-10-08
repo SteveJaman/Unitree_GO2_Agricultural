@@ -7,7 +7,7 @@ Unitree Go2 EDU — full autonomy stack with 3D mapping and D1 servo arm integra
 - `[~]` = code written, not yet verified on hardware
 - `[ ]` = not started
 
-**Last updated:** Phase 0 largely complete, Phase 1 code-complete, awaiting workstation verification.
+**Last updated:** Phase 0 complete. Phase 1 verified against mock test. Awaiting real-robot verification at KSU.
 
 ---
 

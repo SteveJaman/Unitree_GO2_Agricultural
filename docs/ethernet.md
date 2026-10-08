@@ -387,3 +387,20 @@ This starts the mapping node, slam_toolbox, pointcloud_to_scan, camera relay, an
 - docs/wireless.md - run the same stack over Wi-Fi
 - docs/troubleshooting.md - detailed fixes for every failure
 - docs/roadmap.md - development phases and planned features
+---
+
+## Quick Start — One-Command Mapping
+
+If you just want a live map without tuning anything:
+
+```bash
+./scripts/live_mapping.sh
+```
+
+This launches the CMU autonomy stack, waits for Point-LIO to publish `/state_estimation`, auto-detects the cloud topic and top TF frame, generates an RViz config with the correct Fixed Frame and QoS, and starts `map_node.py`. Drive the robot with the physical remote. Press Ctrl+C to save.
+
+The map is saved to `~/go2_maps/<timestamp>/` with `map.png`, `map.ply`, `mesh.obj`, and `points.npy`.
+
+Diagnostics: `log/diagnostics.txt`.
+
+To test offline without a robot: `scripts/live_mapping_sim.sh`.
