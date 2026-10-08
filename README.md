@@ -152,6 +152,8 @@ Scripts live in `scripts/`.
 | `system_navigation.sh <map.yaml>` | Start Nav2 with AMCL localisation against a saved map |
 | `move_forward.sh` | Send a forward motion command to test the motion path |
 | `verify_topics.sh` | Check the ROS 2 topics used by the system |
+| `live_mapping.sh` | Real-robot live mapping: CMU stack + map_node.py + RViz, saves map on Ctrl+C |
+| `live_mapping_sim.sh` | Test live_mapping.sh locally with synthetic topics (no robot or Gazebo needed) |
 
 ## Mapping and Navigation Capabilities
 
