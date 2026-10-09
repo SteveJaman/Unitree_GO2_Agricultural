@@ -1,0 +1,7 @@
+<library path="go2_explore_panel">
+  <class name="go2_explore_panel/ExplorePanel"
+         type="go2_explore_panel::ExplorePanel"
+         base_class_type="rviz_common::Panel">
+    <description>Auto Explore toggle for go2-nav2-wifi</description>
+  </class>
+</library>

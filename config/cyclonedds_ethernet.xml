@@ -34,7 +34,7 @@
         Ethernet link where multicast is not filtered.
       -->
       <AllowMulticast>spdp</AllowMulticast>
-      <EnableMulticastLoopback>false</EnableMulticastLoopback>
+      <EnableMulticastLoopback>true</EnableMulticastLoopback>
 
       <!--
         Buffer sizing for large LiDAR frames. PointCloud2 messages from

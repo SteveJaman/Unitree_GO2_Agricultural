@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>go2_explore_panel</name>
+  <version>0.1.0</version>
+  <description>RViz2 panel with Auto Explore toggle for go2-nav2-wifi</description>
+  <maintainer email="you@example.com">You</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rviz_common</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz_common plugin="${prefix}/rviz_common_plugins.xml" />
+  </export>
+</package>
