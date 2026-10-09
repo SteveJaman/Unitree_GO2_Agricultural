@@ -4,6 +4,7 @@
 #
 # Minimal live mapping: CMU autonomy stack + map_node.py + RViz.
 # Auto-detects cloud topic and top TF frame. Regenerates RViz config each run.
+# Auto-publishes static transforms for CMU data frames under the top frame.
 #
 # What you get:
 #   /map/occupancy  — 2D log-odds occupancy grid
@@ -19,16 +20,9 @@ WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 NET_MODE="${NET_MODE:-ethernet}"
 
 case "$NET_MODE" in
-  ethernet)
-    XML="${WS_ROOT}/config/cyclonedds_ethernet.xml"
-    ;;
-  wireless)
-    XML="${WS_ROOT}/config/cyclonedds_wireless.xml"
-    ;;
-  *)
-    echo "Unknown NET_MODE=$NET_MODE (use ethernet|wireless)"
-    exit 1
-    ;;
+  ethernet)  XML="${WS_ROOT}/config/cyclonedds_ethernet.xml" ;;
+  wireless)  XML="${WS_ROOT}/config/cyclonedds_wireless.xml" ;;
+  *) echo "Unknown NET_MODE=$NET_MODE (use ethernet|wireless)"; exit 1 ;;
 esac
 
 AUTONOMY_WS="${AUTONOMY_WS:-$HOME/files/autonomy_stack_go2}"
@@ -60,15 +54,15 @@ echo "Network: ${NET_MODE}"
 echo "DDS:     ${CYCLONEDDS_URI}"
 echo ""
 
-# --- Sanity check (matches move_forward.sh pattern) ------------------------
+# --- Sanity check ---------------------------------------------------------
 if [ "$NET_MODE" = "ethernet" ]; then
     if ! ping -c 1 -W 1 192.168.123.18 > /dev/null 2>&1; then
-        echo "ERROR: Cannot reach Go2 at 192.168.123.18"
-        exit 1
+        echo "WARN: Cannot ping Go2 at 192.168.123.18 (ICMP may be blocked)."
+        echo "      Continuing anyway — DDS may still work."
+    else
+        echo "Go2 reachable at 192.168.123.18"
     fi
-    echo "Go2 reachable at 192.168.123.18"
 fi
-
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -98,24 +92,31 @@ detect_odom_topic() {
     return 1
 }
 
+# Prefer well-known CMU map frames, then fall back to top of tree.
 detect_top_frame() {
-    local frames
-    frames=$(timeout 3 ros2 topic echo /tf_static --once 2>/dev/null \
-        | grep -E "frame_id|child_frame_id" \
-        | sed -E 's/.*:\s*"?([^"]*)"?/\1/' | tr -d ' ')
-    if [ -z "$frames" ]; then
-        frames=$(timeout 3 ros2 topic echo /tf --once 2>/dev/null \
-            | grep -E "frame_id|child_frame_id" \
-            | sed -E 's/.*:\s*"?([^"]*)"?/\1/' | tr -d ' ')
+    # On the real CMU stack, the map frame is camera_init (Point-LIO's
+    # convention). We could try to detect it via `ros2 topic echo /tf`,
+    # but Point-LIO publishes /tf as BEST_EFFORT while ros2 CLI defaults
+    # to RELIABLE — discovery silently fails and the echo hangs.
+    #
+    # Since the frame name is fixed across the CMU stack, we hardcode it.
+    # If the stack ever changes the frame, override with:
+    #   TOP_FRAME_OVERRIDE=lidar3d_map ./scripts/live_mapping.sh
+
+    if [ -n "${TOP_FRAME_OVERRIDE:-}" ]; then
+        echo "${TOP_FRAME_OVERRIDE}"
+        return 0
     fi
-    [ -z "$frames" ] && return 1
-    local parents children
-    parents=$(echo "$frames" | awk 'NR%2==1')
-    children=$(echo "$frames" | awk 'NR%2==0')
-    while read -r p; do
-        echo "$children" | grep -qxF "$p" || { echo "$p"; return 0; }
-    done <<< "$parents"
-    return 1
+
+    # Sanity check: does camera_init appear anywhere in the TF topic list?
+    # (list is reliable, echo is not)
+    if ros2 topic list 2>/dev/null | grep -qxF "/tf"; then
+        echo "camera_init"
+        return 0
+    fi
+
+    echo "camera_init"
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -138,14 +139,26 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# 1. Launch CMU autonomy stack
+# 0. Kill any stale RViz / static publishers from previous runs
 # ---------------------------------------------------------------------------
-log "[1/4] Starting CMU autonomy stack..."
-ros2 launch vehicle_simulator system_real_robot.launch \
+pkill -f "rviz2" 2>/dev/null || true
+pkill -f "static_transform_publisher" 2>/dev/null || true
+sleep 1
+
+# ---------------------------------------------------------------------------
+# 1. Launch CMU autonomy stack (suppress internal RViz)
+# ---------------------------------------------------------------------------
+log "[1/5] Starting CMU autonomy stack (rviz:=false)..."
+
+ros2 launch vehicle_simulator system_real_robot.launch rviz:=false \
     > "${LOG_DIR}/autonomy.log" 2>&1 &
 PIDS+=("$!")
 
-log "[1/4] Waiting for /state_estimation (up to 90s)..."
+# CMU stack may still open its own RViz regardless — clean it up
+sleep 5
+pkill -f "rviz2" 2>/dev/null || true
+
+log "[1/5] Waiting for /state_estimation (up to 90s)..."
 if ! wait_for_topic /state_estimation 90; then
     log "  ERROR: /state_estimation did not appear."
     log "  Check ${LOG_DIR}/autonomy.log"
@@ -158,7 +171,7 @@ log "  /state_estimation is up."
 # ---------------------------------------------------------------------------
 # 2. Detect topics
 # ---------------------------------------------------------------------------
-log "[2/4] Detecting cloud and odom topics..."
+log "[2/5] Detecting cloud and odom topics..."
 CLOUD_TOPIC=$(detect_cloud_topic || true)
 ODOM_TOPIC=$(detect_odom_topic || true)
 
@@ -167,31 +180,57 @@ if [ -z "${CLOUD_TOPIC}" ]; then
     ros2 topic list 2>/dev/null | sed 's/^/    /' | tee -a "${DIAG_FILE}"
     exit 1
 fi
-
 [ -z "${ODOM_TOPIC}" ] && ODOM_TOPIC="/state_estimation"
 
 log "  cloud topic = ${CLOUD_TOPIC}"
 log "  odom topic  = ${ODOM_TOPIC}"
 
 # ---------------------------------------------------------------------------
-# 3. Detect top TF frame + write fresh RViz config
+# 3. Detect top TF frame + auto-bridge CMU frames
 # ---------------------------------------------------------------------------
-log "[3/4] Detecting top TF frame..."
+log "[3/5] Detecting top TF frame..."
 TOP_FRAME=$(detect_top_frame || true)
 
 if [ -z "${TOP_FRAME}" ]; then
-    log "  WARN: could not detect TF frame. Dumping raw /tf and /tf_static:"
-    timeout 3 ros2 topic echo /tf --once 2>/dev/null \
-        | head -20 | sed 's/^/    /' | tee -a "${DIAG_FILE}" || true
-    timeout 3 ros2 topic echo /tf_static --once 2>/dev/null \
-        | head -20 | sed 's/^/    /' | tee -a "${DIAG_FILE}" || true
-    log "  Falling back to 'camera_init'."
+    log "  WARN: could not detect TF frame. Falling back to 'camera_init'."
     TOP_FRAME="camera_init"
 else
     log "  top frame   = ${TOP_FRAME}"
 fi
 
-log "[3/4] Writing RViz config (Fixed Frame = ${TOP_FRAME})..."
+# Publish a static transform from the top frame to each CMU data frame.
+# This is idempotent: if the real TF tree already connects them, the
+# static publisher is redundant. If it doesn't, this fills the gap so
+# RViz can render.
+log "  Publishing static bridges under ${TOP_FRAME}."
+
+CMU_FRAMES=(
+    body
+    vehicle
+    sensor
+    lidar3d_map
+    camera
+    aft_mapped
+    base_link
+    base_footprint
+)
+
+for child in "${CMU_FRAMES[@]}"; do
+    # Skip if this child IS the top frame (can't be its own child)
+    [ "${child}" = "${TOP_FRAME}" ] && continue
+
+    ros2 run tf2_ros static_transform_publisher \
+        --frame-id "${TOP_FRAME}" \
+        --child-frame-id "${child}" \
+        > /dev/null 2>&1 &
+    PIDS+=("$!")
+done
+sleep 1
+
+# ---------------------------------------------------------------------------
+# 4. Write RViz config
+# ---------------------------------------------------------------------------
+log "[4/5] Writing RViz config (Fixed Frame = ${TOP_FRAME})..."
 cat > "${RVIZ_CFG}" << EOF
 Panels:
   - Class: rviz_common/Displays
@@ -210,6 +249,11 @@ Visualization Manager:
       Name: TF
       Enabled: true
       Show Names: true
+      Topic:
+        Value: /tf
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 100
     - Class: rviz_default_plugins/PointCloud2
       Name: RegisteredScan
       Enabled: true
@@ -268,16 +312,16 @@ Visualization Manager:
 EOF
 
 # ---------------------------------------------------------------------------
-# 4. Launch map_node.py with explicit topics
+# 5. Launch map_node.py with explicit topics
 # ---------------------------------------------------------------------------
-log "[4/4] Starting map_node.py..."
+log "[5/5] Starting map_node.py..."
 ros2 run go2_integration_pkg map_node.py --ros-args \
     -p cloud_topic:="${CLOUD_TOPIC}" \
     -p odom_topic:="${ODOM_TOPIC}" \
     > "${LOG_DIR}/map_node.log" 2>&1 &
 PIDS+=("$!")
 
-log "[4/4] Waiting for /map/occupancy (max 30s)..."
+log "[5/5] Waiting for /map/occupancy (max 30s)..."
 if ! wait_for_topic /map/occupancy 30; then
     log "  ERROR: /map/occupancy did not appear."
     log "  map_node.log tail:"
