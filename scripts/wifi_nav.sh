@@ -3,19 +3,21 @@
 # wifi_nav.sh
 #
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
-# using the go2-nav2-wifi stack.
+# using the go2-nav2-wifi stack, with a CUSTOM frontier explorer (no
+# explore_lite dependency).
 #
 # Architecture:
 #   Robot (Jetson) : Point-LIO onboard. Raw LiDAR never leaves the robot.
 #                    Bidirectional relay: sensors up, /cmd_vel down.
-#   VM (this host) : Docker container runs RViz + Nav2 + explore_lite.
+#   VM (this host) : Docker container runs RViz + Nav2 + custom explorer.
 #
 # What this wrapper does:
 #   - Pre-flight cleanup of stale processes (local, container, remote)
 #   - Removal of incomplete run directories on the Jetson
-#   - Prerequisite checks (Docker, repo, SSH, explore_lite, panel)
-#   - Optional autonomous frontier exploration (explore_lite + Go2 Explore panel)
+#   - Prerequisite checks (Docker, repo, SSH, panel)
+#   - Optional autonomous frontier exploration (custom frontier_explorer.py)
 #   - Optional floor-plane filter to prevent floor-as-obstacle failures
+#   - Optional collision safety watchdog
 #   - Post-run log tail and archive summary
 #
 # Usage:
@@ -48,6 +50,14 @@ MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
 ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${SCRIPT_DIR}/go2_floor_filter.py"
+EXPLORER_SCRIPT="${SCRIPT_DIR}/frontier_explorer.py"
+
+# --- SAFETY thresholds -----------------------------------------------------
+SAFETY_STOP_DISTANCE="${SAFETY_STOP_DISTANCE:-0.45}"
+SAFETY_WARN_DISTANCE="${SAFETY_WARN_DISTANCE:-0.70}"
+SAFETY_MAX_VEL_X="${SAFETY_MAX_VEL_X:-0.20}"
+SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
+SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
 # --- Parse args ------------------------------------------------------------
 MODE="--nav"
@@ -73,11 +83,11 @@ while [ $# -gt 0 ]; do
 done
 
 # ===========================================================================
-# Helper: kill every explore_lite process inside the container by explicit PID
+# Helpers
 # ===========================================================================
 kill_explore_inside_container() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
-        pids=$(ps -eo pid,cmd | grep -E "explore_lite|ros2 run explore" \
+        pids=$(ps -eo pid,cmd | grep -E "frontier_explorer|explore_lite|ros2 run explore" \
                | grep -v grep | awk "{print \$1}")
         if [ -n "$pids" ]; then
             for pid in $pids; do
@@ -88,9 +98,6 @@ kill_explore_inside_container() {
     ' 2>/dev/null || true
 }
 
-# ===========================================================================
-# Helper: kill floor filter inside the container
-# ===========================================================================
 kill_floor_filter_inside_container() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
         pids=$(ps -eo pid,cmd | grep -E "go2_floor_filter" \
@@ -103,31 +110,34 @@ kill_floor_filter_inside_container() {
     ' 2>/dev/null || true
 }
 
-# ===========================================================================
-# Cleanup: kills stale processes and removes incomplete runs
-# ===========================================================================
+stop_exploration() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c '
+        source /opt/ros/humble/setup.bash
+        source /ws/install/setup.bash 2>/dev/null
+        timeout 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
+    ' 2>/dev/null || true
+}
+
 do_clean() {
-    # --- Local side ---
     echo "[clean] Killing local stale processes..."
     pkill -9 -f "rviz2"             2>/dev/null || true
     pkill -9 -f "mapping.sh"        2>/dev/null || true
     pkill -9 -f "pointlio_mapping"  2>/dev/null || true
     pkill -9 -f "go2_cloud_stamp"   2>/dev/null || true
+    pkill -9 -f "frontier_explorer" 2>/dev/null || true
+    pkill -9 -f "safety_watchdog"   2>/dev/null || true
 
-    # --- Inside the container ---
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
-        echo "[clean] Killing stale explore_lite + floor filter inside container..."
+        echo "[clean] Killing stale explore + floor filter inside container..."
         kill_explore_inside_container
         kill_floor_filter_inside_container
     fi
 
-    # --- Docker compose down ---
     echo "[clean] Stopping local Docker containers..."
     if [ -f "${NAV2_WIFI_DIR}/docker/docker-compose.yml" ]; then
         (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     fi
 
-    # --- Remote side ---
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
             "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "true" >/dev/null 2>&1; then
         echo "[clean] WARN: cannot reach robot — skipping remote cleanup"
@@ -157,7 +167,6 @@ do_clean() {
                 fi
             done
             echo \"[clean] removed \$removed incomplete run(s)\"
-            echo \"[clean] remaining runs on robot:\"
             ls -1 \"\$BASE\" 2>/dev/null | head -10 || true
         fi
     " 2>/dev/null || true
@@ -172,14 +181,10 @@ if [ "${ACTION}" = "setup-ssh" ]; then
     if [ -x "${SCRIPT_DIR}/wifi_mapping.sh" ]; then
         exec "${SCRIPT_DIR}/wifi_mapping.sh" --setup-ssh
     else
-        echo "ERROR: wifi_mapping.sh not found — cannot delegate --setup-ssh." >&2
-        exit 1
+        echo "ERROR: wifi_mapping.sh not found." >&2; exit 1
     fi
 fi
 
-# ===========================================================================
-# Dispatch: clean-only
-# ===========================================================================
 if [ "${ACTION}" = "clean" ]; then
     echo "================================================================"
     echo " Cleaning stale processes and partial runs"
@@ -192,7 +197,7 @@ fi
 # Banner
 # ===========================================================================
 echo "================================================================"
-echo " Go2 Nav2 Wi-Fi waypoint navigation"
+echo " Go2 Nav2 Wi-Fi navigation (custom frontier explorer)"
 echo "================================================================"
 echo "  Action      : ${ACTION}"
 echo "  Mode        : ${MODE}"
@@ -209,52 +214,35 @@ echo
 # Prerequisite checks
 # ===========================================================================
 if ! command -v docker >/dev/null 2>&1; then
-    echo "ERROR: docker not found." >&2
-    echo "  Install:  curl -fsSL https://get.docker.com | sudo sh" >&2
-    exit 1
+    echo "ERROR: docker not found." >&2; exit 1
 fi
 if ! docker ps >/dev/null 2>&1; then
-    echo "ERROR: cannot talk to Docker daemon." >&2
-    echo "  Try:  newgrp docker" >&2
-    exit 1
+    echo "ERROR: cannot talk to Docker daemon. Try: newgrp docker" >&2; exit 1
 fi
-[ -d "${NAV2_WIFI_DIR}" ] || {
-    echo "ERROR: ${NAV2_WIFI_DIR} not found." >&2
-    exit 1
-}
-[ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || {
-    echo "ERROR: ${NAV2_WIFI_DIR}/mapping.sh not found." >&2
-    exit 1
-}
+[ -d "${NAV2_WIFI_DIR}" ] || { echo "ERROR: ${NAV2_WIFI_DIR} not found." >&2; exit 1; }
+[ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || { echo "ERROR: mapping.sh not found." >&2; exit 1; }
 echo "[checks] docker + repo present .................... OK"
 
-SSH_KEY_READY="false"
-if [ -f "${HOME}/.ssh/id_ed25519" ] && \
-   ssh -o BatchMode=yes -o ConnectTimeout=3 \
-       "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
-    SSH_KEY_READY="true"
+if ssh -o BatchMode=yes -o ConnectTimeout=3 \
+        "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
 fi
 
-# --- Explore prerequisite checks -------------------------------------------
 if [ "${EXPLORE}" = "true" ]; then
-    if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}" && \
-       docker exec -u root "${CONTAINER_NAME}" bash -c \
-           "source /opt/ros/humble/setup.bash && \
-            source /ws/install/setup.bash 2>/dev/null; \
-            ros2 pkg executables explore_lite 2>/dev/null | grep -q explore" \
-       2>/dev/null; then
-        echo "[checks] explore_lite in container ................ OK"
+    if [ -f "${EXPLORER_SCRIPT}" ]; then
+        echo "[checks] frontier_explorer.py present ............ OK"
     else
-        echo "[checks] explore_lite in container ................ MISSING"
+        echo "[checks] frontier_explorer.py present ............ MISSING"
+        echo "         Expected at: ${EXPLORER_SCRIPT}"
+        EXPLORE="false"
     fi
 
     if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}" && \
        docker exec -u root "${CONTAINER_NAME}" bash -c \
-           "source /opt/ros/humble/setup.bash && \
+           "source /opt/ros/humble/setup.bash; \
             source /ws/install/setup.bash 2>/dev/null; \
             ros2 pkg list 2>/dev/null | grep -q go2_explore_panel" \
        2>/dev/null; then
@@ -264,20 +252,17 @@ if [ "${EXPLORE}" = "true" ]; then
     fi
 fi
 
-# --- Floor filter prerequisite check ---------------------------------------
 if [ "${FLOOR_FILTER}" = "true" ]; then
     if [ -f "${FLOOR_FILTER_SCRIPT}" ]; then
         echo "[checks] floor filter script present .............. OK"
     else
         echo "[checks] floor filter script present .............. MISSING"
-        echo "         Expected at: ${FLOOR_FILTER_SCRIPT}"
-        echo "         Set FLOOR_FILTER=false or provide the script."
         FLOOR_FILTER="false"
     fi
 fi
 
 # ===========================================================================
-# Pre-flight cleanup (skipped for --check)
+# Pre-flight cleanup
 # ===========================================================================
 if [ "${ACTION}" != "check" ]; then
     echo
@@ -286,9 +271,6 @@ if [ "${ACTION}" != "check" ]; then
     echo
 fi
 
-# ===========================================================================
-# Dispatch: check-only
-# ===========================================================================
 if [ "${ACTION}" = "check" ]; then
     echo
     echo "All checks done. Run without --check to launch."
@@ -309,8 +291,6 @@ fi
 echo "================================================================"
 echo " REMINDER — robot relay must be running in FULL mode"
 echo "================================================================"
-echo
-echo " In a SEPARATE terminal, start the relay on the robot:"
 echo
 echo "     ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
 echo "     export GO2_HOST_IP=${GO2_HOST_IP}"
@@ -344,10 +324,19 @@ cd "${NAV2_WIFI_DIR}"
 export GO2_HOST_IP GO2_ROBOT_IP GO2_RELAY_DOMAIN_ID
 
 EXPLORE_HOST_PID=""
+WATCHDOG_PID=""
 
 cleanup() {
     echo
     echo "[wifi_nav] Shutting down..."
+    # Stop robot motion first
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+        echo "[wifi_nav] SAFETY: publishing stop to /explore/resume"
+        stop_exploration
+    fi
+    if [ -n "${WATCHDOG_PID}" ]; then
+        kill "${WATCHDOG_PID}" 2>/dev/null || true
+    fi
     if [ -n "${EXPLORE_HOST_PID}" ]; then
         kill "${EXPLORE_HOST_PID}" 2>/dev/null || true
     fi
@@ -364,30 +353,22 @@ echo "Launching: ./mapping.sh --3d ${MODE}"
 echo
 
 if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
-    # ------------------------------------------------------------------
-    # Background: wait for mapping + Nav2, then start optional helpers
-    # ------------------------------------------------------------------
     (
         sleep 20
 
         # ---------- Floor filter ----------
         if [ "${FLOOR_FILTER}" = "true" ]; then
-            # Kill any stale floor filter
             docker exec -u root "${CONTAINER_NAME}" bash -c '
                 pids=$(ps -eo pid,cmd | grep -E "go2_floor_filter" \
                        | grep -v grep | awk "{print \$1}")
                 if [ -n "$pids" ]; then
-                    for pid in $pids; do
-                        kill -9 "$pid" 2>/dev/null || true
-                    done
+                    for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
                 fi
             ' 2>/dev/null || true
 
-            # Copy script into the container (fresh each run)
             docker cp "${FLOOR_FILTER_SCRIPT}" \
                 "${CONTAINER_NAME}:/tmp/go2_floor_filter.py" 2>/dev/null || true
 
-            # Launch it
             docker exec -u root "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && \
                  source /ws/install/setup.bash 2>/dev/null; \
@@ -400,49 +381,35 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                 2>/dev/null || true
         fi
 
-        # ---------- explore_lite ----------
+        # ---------- Custom frontier explorer ----------
         if [ "${EXPLORE}" = "true" ]; then
-            # Write params file with WILDCARD namespace so explore_lite picks them up
-            EXPLORE_PARAMS_TMP=$(mktemp /tmp/explore_params_XXXXXX.yaml)
-            cat > "${EXPLORE_PARAMS_TMP}" << 'EOF'
-/**:
-  ros__parameters:
-    robot_base_frame: base_link
-    costmap_topic: /map
-    costmap_updates_topic: /map_updates
-    visualize: true
-    planner_frequency: 0.5
-    progress_timeout: 30.0
-    potential_scale: 3.0
-    orientation_scale: 0.0
-    gain_scale: 1.0
-    transform_tolerance: 0.3
-    min_frontier_size: 0.75
-    return_to_init: false
-EOF
-            docker cp "${EXPLORE_PARAMS_TMP}" \
-                "${CONTAINER_NAME}:/tmp/explore_params.yaml" 2>/dev/null || true
-            rm -f "${EXPLORE_PARAMS_TMP}"
-
-            # Kill stale instances before starting fresh
+            echo "[explore] Killing stale explorer instances..."
             docker exec -u root "${CONTAINER_NAME}" bash -c '
-                pids=$(ps -eo pid,cmd | grep -E "explore_lite|ros2 run explore" \
+                pids=$(ps -eo pid,cmd | grep -E "frontier_explorer|explore_lite|ros2 run explore" \
                        | grep -v grep | awk "{print \$1}")
                 if [ -n "$pids" ]; then
-                    for pid in $pids; do
-                        kill -9 "$pid" 2>/dev/null || true
-                    done
+                    for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
                 fi
                 sleep 1
             ' 2>/dev/null || true
 
-            # Start ONE fresh instance
+            echo "[explore] Copying frontier_explorer.py into container..."
+            docker cp "${EXPLORER_SCRIPT}" \
+                "${CONTAINER_NAME}:/tmp/frontier_explorer.py" 2>/dev/null || true
+
+            echo "[explore] Starting custom frontier explorer..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && \
                  source /ws/install/setup.bash 2>/dev/null; \
-                 exec ros2 run explore_lite explore \
-                     --ros-args --params-file /tmp/explore_params.yaml" \
-                > "${NAV2_WIFI_DIR}/ws/log/explore.log" 2>&1 &
+                 exec python3 /tmp/frontier_explorer.py \
+                     --ros-args \
+                     -p robot_base_frame:=base_link \
+                     -p map_frame:=map \
+                     -p min_frontier_size:=8 \
+                     -p min_known_cells:=200 \
+                     -p return_to_init:=true \
+                     -p tick_hz:=1.0" \
+                > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
     ) &
     EXPLORE_HOST_PID=$!
@@ -470,14 +437,14 @@ fi
 echo
 
 # ===========================================================================
-# Post-run: explore / floor filter logs
+# Post-run: frontier explorer log tail
 # ===========================================================================
 if [ "${EXPLORE}" = "true" ] && \
-   [ -f "${NAV2_WIFI_DIR}/ws/log/explore.log" ]; then
+   [ -f "${NAV2_WIFI_DIR}/ws/log/frontier.log" ]; then
     echo "================================================================"
-    echo " Last 20 lines of explore.log:"
+    echo " Last 20 lines of frontier.log:"
     echo "================================================================"
-    tail -20 "${NAV2_WIFI_DIR}/ws/log/explore.log"
+    tail -20 "${NAV2_WIFI_DIR}/ws/log/frontier.log"
     echo
 fi
 

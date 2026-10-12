@@ -2,7 +2,7 @@
 """Reject floor points before they reach the costmap.
 
 Fits a ground plane per frame and removes points within `floor_margin`
-of that plane. Prevents tilted-map "floor-as-obstacle" failures.
+of that plane. Prevents tilted-map 'floor-as-obstacle' failures.
 
 Subscribes: /lidar3d/registered  (aligned cloud in map frame)
 Publishes:  /lidar3d/obstacle_points  (filtered cloud, feeds Nav2)
