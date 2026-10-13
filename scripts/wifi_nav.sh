@@ -11,14 +11,9 @@
 #                    Bidirectional relay: sensors up, /cmd_vel down.
 #   VM (this host) : Docker container runs RViz + Nav2 + custom explorer.
 #
-# What this wrapper does:
-#   - Pre-flight cleanup of stale processes (local, container, remote)
-#   - Removal of incomplete run directories on the Jetson
-#   - Prerequisite checks (Docker, repo, SSH, panel)
-#   - Optional autonomous frontier exploration (custom frontier_explorer.py)
-#   - Optional floor-plane filter to prevent floor-as-obstacle failures
-#   - Optional collision safety watchdog
-#   - Post-run log tail and archive summary
+# Network (Wi-Fi):
+#   VM      : 192.168.1.5
+#   Robot   : 192.168.1.9
 #
 # Usage:
 #   ./wifi_nav.sh                  # manual waypoint navigation
@@ -42,8 +37,11 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # --- Configuration ---------------------------------------------------------
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
-GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.5}"
-GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"
+
+# Network — Wi-Fi only
+GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.5}"       # VM (this laptop)
+GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"     # Go2 Jetson over Wi-Fi
+
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
 GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
 MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
@@ -140,7 +138,7 @@ do_clean() {
 
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
             "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "true" >/dev/null 2>&1; then
-        echo "[clean] WARN: cannot reach robot — skipping remote cleanup"
+        echo "[clean] WARN: cannot reach robot at ${GO2_ROBOT_IP} — skipping remote cleanup"
         return 0
     fi
 
@@ -329,7 +327,6 @@ WATCHDOG_PID=""
 cleanup() {
     echo
     echo "[wifi_nav] Shutting down..."
-    # Stop robot motion first
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
         echo "[wifi_nav] SAFETY: publishing stop to /explore/resume"
         stop_exploration
@@ -405,8 +402,15 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                      --ros-args \
                      -p robot_base_frame:=base_link \
                      -p map_frame:=map \
+                     -p goal_topic:=/goal_pose \
+                     -p cmd_vel_topic:=/cmd_vel_nav \
                      -p min_frontier_size:=8 \
                      -p min_known_cells:=200 \
+                     -p blind_enable:=true \
+                     -p blind_trigger_cells:=100 \
+                     -p blind_step_distance:=0.6 \
+                     -p blind_step_speed:=0.12 \
+                     -p coverage_enable:=true \
                      -p return_to_init:=true \
                      -p tick_hz:=1.0" \
                 > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
