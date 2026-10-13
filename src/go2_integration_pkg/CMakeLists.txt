@@ -58,6 +58,11 @@ ament_python_install_package(${PROJECT_NAME})
 # with `ros2 run go2_integration_pkg <script>.py` and referenced from
 # launch files by its executable name.
 # -----------------------------------------------------------------------------
+# using the following configuration so no need to add the python file here 
+file(GLOB PYTHON_SCRIPTS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}/*.py"
+)
+
 install(PROGRAMS
   ${PROJECT_NAME}/move_forward.py
   ${PROJECT_NAME}/cloud_relay_node.py
@@ -65,6 +70,7 @@ install(PROGRAMS
   ${PROJECT_NAME}/map_node.py
   ${PROJECT_NAME}/pointcloud_to_scan.py
   ${PROJECT_NAME}/camera_relay.py
+  ${PYTHON_SCRIPTS} # added from the above PYTHON_SCRIPTS
   DESTINATION lib/${PROJECT_NAME}
 )
 

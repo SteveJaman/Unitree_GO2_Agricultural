@@ -35,6 +35,23 @@ source /opt/ros/humble/setup.bash && colcon build --packages-select go2_integrat
 ./scripts/system_simulation_with_camera.sh
 ```
 
+## build failed 
+in case of build failed in new system, for the following errors 
+> `nav2_common` package configuration could not be found
+> `nav2_bringup` package configuration could not be found
+cause: required navigation2 package were either not installed or were not available in the sourced ROS2 env. 
+solution: 
+```bash 
+sudo apt update
+sudo apt install ros-$ROS_DISTRO-nav2-common ros-$ROS_DISTRO-nav2-bringup
+
+```
+or alternatively, install the complete Navigation2 stack
+```
+sudo apt install ros-$ROS_DISTRO-navigation2 ros-$ROS_DISTRO-nav2-bringup
+```
+
+
 Step 3 launches Unity, the CMU autonomy stack, the mapping node, and RViz
 in one terminal. Nothing else needs to be running first.
 
