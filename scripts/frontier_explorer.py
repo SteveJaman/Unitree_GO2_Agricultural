@@ -2,23 +2,33 @@
 """
 frontier_explorer.py
 
-Custom frontier-based exploration node. Replaces explore_lite.
+Custom three-phase exploration node. Replaces explore_lite.
 
-Flow:
-  1. Subscribe to /map (OccupancyGrid, TRANSIENT_LOCAL QoS to match slam_toolbox).
-  2. Subscribe to /explore/resume (Bool) — the Go2 Explore panel toggles this.
-  3. When enabled and the map has frontiers:
-       - Detect frontier cells (free adjacent to unknown).
-       - Cluster into frontier groups.
-       - Score by size / distance (gain-based selection).
-       - Send highest-scoring frontier to /navigate_to_pose action.
-       - Wait for the goal to complete, then repeat.
-  4. When no frontiers remain for N consecutive checks:
-       - Send one goal back to the origin.
-       - Wait for arrival.
-       - Publish DONE status.
+Phases:
+  1. BLIND LEAD-IN (Roomba-style)
+       When the map has < min_known_cells, drive forward directly
+       via cmd_vel for a short distance. This forces new sensor data
+       so the map can grow.
 
-Works with partial maps — starts exploring as soon as any frontier exists.
+  2. FRONTIER EXPLORATION (Yamauchi 1997)
+       Detect frontier cells (free adjacent to unknown), cluster,
+       score by gain/distance, publish goal to /goal_pose.
+
+  3. VISITED-CELL COVERAGE
+       When no frontiers remain, drive to the nearest unvisited
+       free cell. Fills gaps and completes coverage.
+
+  4. RETURN TO ORIGIN (optional)
+       When coverage complete, drive back to captured origin.
+
+Communication:
+  Publishes PoseStamped goals to /goal_pose, which goal_pose_nav.py
+  picks up and forwards to the Nav2 planner and controller. We do
+  NOT use the /navigate_to_pose action server directly — the
+  go2-nav2-wifi stack expects /goal_pose instead.
+
+  Blind lead-in publishes geometry_msgs/Twist on /cmd_vel_nav
+  directly (bypasses Nav2 for cold start).
 """
 import math
 import time
@@ -28,18 +38,16 @@ from typing import Optional, List, Tuple
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionClient
 from rclpy.qos import (
     QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy)
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Bool, String
-from nav2_msgs.action import NavigateToPose
 from tf2_ros import Buffer, TransformListener
 
 
 # ---------------------------------------------------------------------------
-# Tunables (override with --ros-args -p name:=value)
+# Tunables
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     'robot_base_frame': 'base_link',
@@ -47,55 +55,85 @@ DEFAULTS = {
     'map_topic':        '/map',
     'resume_topic':     '/explore/resume',
     'status_topic':     '/explore/status',
+    'goal_topic':       '/goal_pose',
+    'cmd_vel_topic':    '/cmd_vel_nav',    # goes through velocity smoother
 
     # Frontier detection
-    'min_frontier_size':     8,      # grid cells
-    'min_known_cells':       200,    # don't start until map has this many known cells
-    'frontier_blacklist_s':  30.0,   # don't retry a failed frontier for N sec
-    'goal_timeout_s':        120.0,  # cancel goal if not reached in N sec
-    'progress_timeout_s':    45.0,   # cancel if no meaningful progress in N sec
+    'min_frontier_size':     8,
+    'min_known_cells':       200,
+    'frontier_blacklist_s':  30.0,
+
+    # Goal tracking (since we don't get action feedback)
+    'goal_xy_tolerance':     0.35,
+    'goal_timeout_s':        60.0,
+    'progress_timeout_s':    20.0,
+    'progress_min_m':        0.15,
+
+    # Blind lead-in
+    'blind_enable':          True,
+    'blind_trigger_cells':   100,
+    'blind_step_distance':   0.6,
+    'blind_step_speed':      0.12,
+    'blind_step_timeout':    20.0,
+    'blind_max_attempts':    4,
+
+    # Coverage
+    'coverage_enable':       True,
+    'coverage_min_dist':     0.6,
+    'visited_radius_m':      0.4,
 
     # Loop timing
-    'tick_hz':               1.0,    # exploration loop rate
+    'tick_hz':               1.0,
 
     # Return-to-init
     'return_to_init':        True,
-    'return_xy_tolerance':   0.3,    # consider "home" within N meters
+    'return_xy_tolerance':   0.3,
     'return_timeout_s':      120.0,
 }
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
 @dataclass
 class Frontier:
-    cx: float          # world x
-    cy: float          # world y
-    size: int          # cells in cluster
-    distance: float    # straight-line from robot
+    cx: float
+    cy: float
+    size: int
+    distance: float
 
 
-# ---------------------------------------------------------------------------
-# Main node
-# ---------------------------------------------------------------------------
 class FrontierExplorer(Node):
 
     def __init__(self):
         super().__init__('frontier_explorer')
 
-        # Parameters
         for k, v in DEFAULTS.items():
             self.declare_parameter(k, v)
 
         p = lambda name: self.get_parameter(name).value
         self.robot_frame = p('robot_base_frame')
         self.map_frame = p('map_frame')
+        self.goal_topic = p('goal_topic')
+        self.cmd_vel_topic = p('cmd_vel_topic')
+
         self.min_frontier_size = int(p('min_frontier_size'))
         self.min_known_cells = int(p('min_known_cells'))
         self.blacklist_s = float(p('frontier_blacklist_s'))
+
+        self.goal_xy_tol = float(p('goal_xy_tolerance'))
         self.goal_timeout = float(p('goal_timeout_s'))
         self.progress_timeout = float(p('progress_timeout_s'))
+        self.progress_min_m = float(p('progress_min_m'))
+
+        self.blind_enable = bool(p('blind_enable'))
+        self.blind_trigger_cells = int(p('blind_trigger_cells'))
+        self.blind_step_distance = float(p('blind_step_distance'))
+        self.blind_step_speed = float(p('blind_step_speed'))
+        self.blind_step_timeout = float(p('blind_step_timeout'))
+        self.blind_max_attempts = int(p('blind_max_attempts'))
+
+        self.coverage_enable = bool(p('coverage_enable'))
+        self.coverage_min_dist = float(p('coverage_min_dist'))
+        self.visited_radius = float(p('visited_radius_m'))
+
         self.tick_hz = float(p('tick_hz'))
         self.return_to_init = bool(p('return_to_init'))
         self.return_tol = float(p('return_xy_tolerance'))
@@ -106,18 +144,29 @@ class FrontierExplorer(Node):
         self.enabled = False
         self.state = 'IDLE'         # IDLE | EXPLORING | RETURNING | DONE
         self.origin_xy: Optional[Tuple[float, float]] = None
-        self.current_goal_handle = None
-        self.current_goal_xy: Optional[Tuple[float, float]] = None
-        self.goal_start_time = 0.0
-        self.last_progress_time = 0.0
-        self.last_progress_xy: Optional[Tuple[float, float]] = None
-        self.blacklist = {}          # (grid_x, grid_y) -> expiry_time
+        self.blacklist = {}
         self.empty_frontier_ticks = 0
         self.goals_sent = 0
         self.goals_succeeded = 0
         self.goals_failed = 0
+        self.blind_attempts = 0
 
-        # QoS: match slam_toolbox's /map publisher (TRANSIENT_LOCAL + RELIABLE)
+        # Active goal tracking (no action feedback with /goal_pose)
+        self.active_goal_xy: Optional[Tuple[float, float]] = None
+        self.active_goal_tag = None
+        self.active_goal_start = 0.0
+        self.active_goal_last_progress_xy: Optional[Tuple[float, float]] = None
+        self.active_goal_last_progress_time = 0.0
+
+        # Blind lead-in state
+        self.blind_active = False
+        self.blind_start_xy: Optional[Tuple[float, float]] = None
+        self.blind_start_time = 0.0
+
+        # Visited grid (for coverage phase)
+        self.visited: Optional[np.ndarray] = None
+
+        # QoS for /map: match slam_toolbox
         map_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -131,23 +180,21 @@ class FrontierExplorer(Node):
             Bool, p('resume_topic'), self.on_resume, 10)
 
         # Publishers
-        self.status_pub = self.create_publisher(
-            String, p('status_topic'), 10)
+        self.status_pub = self.create_publisher(String, p('status_topic'), 10)
+        self.goal_pub = self.create_publisher(PoseStamped, self.goal_topic, 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
 
         # TF
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Action client
-        self.nav_client = ActionClient(
-            self, NavigateToPose, 'navigate_to_pose')
-
-        # Main loop
+        # Timer
         self.create_timer(1.0 / self.tick_hz, self.tick)
 
         self.get_logger().info(
-            f'frontier_explorer ready (min_frontier={self.min_frontier_size}, '
-            f'return_to_init={self.return_to_init}, tick={self.tick_hz} Hz)')
+            f'frontier_explorer ready: goal_topic={self.goal_topic} '
+            f'cmd_vel_topic={self.cmd_vel_topic} '
+            f'blind={self.blind_enable} coverage={self.coverage_enable}')
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -162,7 +209,6 @@ class FrontierExplorer(Node):
         self.enabled = new
         if new:
             self.get_logger().info('Exploration ENABLED')
-            # Capture origin on first enable
             if self.origin_xy is None:
                 pose = self.get_robot_pose()
                 if pose is not None:
@@ -172,9 +218,11 @@ class FrontierExplorer(Node):
             if self.state in ('IDLE', 'DONE'):
                 self.state = 'EXPLORING'
                 self.empty_frontier_ticks = 0
+                self.blind_attempts = 0
         else:
-            self.get_logger().info('Exploration DISABLED — cancelling current goal')
-            self.cancel_current_goal()
+            self.get_logger().info('Exploration DISABLED')
+            self.cancel_active_goal()
+            self.stop_blind()
             self.state = 'IDLE'
         self.publish_status()
 
@@ -182,69 +230,146 @@ class FrontierExplorer(Node):
     # Main loop
     # ------------------------------------------------------------------
     def tick(self):
-        if not self.enabled:
+        if not self.enabled or self.state in ('IDLE', 'DONE'):
             return
         if self.map is None:
             return
-        if self.state == 'IDLE' or self.state == 'DONE':
+
+        # Blind step takes priority
+        if self.blind_active:
+            self.tick_blind()
             return
 
-        # If a goal is already running, only monitor it
-        if self.current_goal_handle is not None:
-            self.monitor_goal()
+        # Active goal: just monitor it
+        if self.active_goal_xy is not None:
+            self.tick_active_goal()
             return
 
-        # Otherwise: pick a frontier
+        # Otherwise: pick next action
         if self.state == 'EXPLORING':
             self.step_explore()
         elif self.state == 'RETURNING':
             self.step_return()
 
     # ------------------------------------------------------------------
-    # Exploration step
+    # Phase 1: Blind lead-in
+    # ------------------------------------------------------------------
+    def start_blind_step(self, robot_pose):
+        self.blind_active = True
+        self.blind_start_xy = robot_pose
+        self.blind_start_time = time.time()
+        self.get_logger().info(
+            f'BLIND step {self.blind_attempts + 1}/{self.blind_max_attempts}: '
+            f'driving {self.blind_step_distance} m at {self.blind_step_speed} m/s')
+
+    def tick_blind(self):
+        if self.blind_start_xy is None:
+            self.stop_blind()
+            return
+
+        pose = self.get_robot_pose()
+        if pose is None:
+            self.stop_blind()
+            return
+
+        elapsed = time.time() - self.blind_start_time
+        travelled = math.hypot(pose[0] - self.blind_start_xy[0],
+                               pose[1] - self.blind_start_xy[1])
+
+        if travelled >= self.blind_step_distance or elapsed >= self.blind_step_timeout:
+            self.get_logger().info(
+                f'BLIND step done: {travelled:.2f} m in {elapsed:.1f}s')
+            self.blind_attempts += 1
+            self.stop_blind()
+            return
+
+        # Publish forward velocity
+        twist = Twist()
+        twist.linear.x = self.blind_step_speed
+        twist.angular.z = 0.0
+        self.cmd_vel_pub.publish(twist)
+
+    def stop_blind(self):
+        if not self.blind_active:
+            return
+        # Send a stop command
+        stop = Twist()
+        self.cmd_vel_pub.publish(stop)
+        self.blind_active = False
+        self.blind_start_xy = None
+        self.blind_start_time = 0.0
+
+    # ------------------------------------------------------------------
+    # Phase 2 & 3: Frontier + Coverage
     # ------------------------------------------------------------------
     def step_explore(self):
+        robot_pose = self.get_robot_pose()
+        if robot_pose is None:
+            self.get_logger().warn(
+                'Robot pose unavailable', throttle_duration_sec=5.0)
+            return
+
+        # Mark current location as visited
+        self.mark_visited(robot_pose)
+
         grid = self.to_numpy(self.map)
         if grid is None:
             return
 
         known_cells = int(np.count_nonzero(grid != -1))
-        if known_cells < self.min_known_cells:
-            self.get_logger().info(
-                f'Map warming up: {known_cells}/{self.min_known_cells} known cells',
-                throttle_duration_sec=5.0)
+
+        # PHASE 1: Blind lead-in if the map is too sparse
+        if (self.blind_enable
+                and known_cells < self.blind_trigger_cells
+                and self.blind_attempts < self.blind_max_attempts):
+            self.start_blind_step(robot_pose)
             return
 
-        robot_pose = self.get_robot_pose()
-        if robot_pose is None:
-            self.get_logger().warn(
-                'Robot pose unavailable (TF map->base_link missing)',
-                throttle_duration_sec=5.0)
-            return
-
+        # PHASE 2: Frontier exploration
         frontiers = self.detect_frontiers(grid, robot_pose)
-        if not frontiers:
-            self.empty_frontier_ticks += 1
-            if self.empty_frontier_ticks >= 5:
-                self.get_logger().info('No frontiers remain — exploration complete')
-                self.state = 'RETURNING' if self.return_to_init else 'DONE'
-                self.empty_frontier_ticks = 0
-                self.publish_status()
+        if frontiers:
+            self.empty_frontier_ticks = 0
+            frontiers.sort(
+                key=lambda f: f.size / max(f.distance, 0.5), reverse=True)
+            best = frontiers[0]
+            self.get_logger().info(
+                f'FRONTIER: ({best.cx:.2f}, {best.cy:.2f}) '
+                f'size={best.size} dist={best.distance:.2f}m '
+                f'({len(frontiers)} candidates)')
+            tag = (int(best.cx / self.map.info.resolution),
+                   int(best.cy / self.map.info.resolution))
+            self.publish_goal(best.cx, best.cy, tag=tag)
             return
-        self.empty_frontier_ticks = 0
 
-        # Score frontiers by gain/cost
-        frontiers.sort(key=lambda f: f.size / max(f.distance, 0.5), reverse=True)
-        best = frontiers[0]
+        # No frontiers
+        self.empty_frontier_ticks += 1
 
-        self.get_logger().info(
-            f'Frontier selected: ({best.cx:.2f}, {best.cy:.2f}) '
-            f'size={best.size} dist={best.distance:.2f}m '
-            f'(out of {len(frontiers)} candidates)')
+        # PHASE 3: Visited-cell coverage (only after frontiers have been
+        # gone for a few ticks, to avoid flickering when a cluster briefly
+        # disappears during replanning)
+        if self.coverage_enable and self.empty_frontier_ticks >= 2:
+            target = self.nearest_unvisited(robot_pose)
+            if target is not None:
+                dist = math.hypot(target[0] - robot_pose[0],
+                                  target[1] - robot_pose[1])
+                if dist >= self.coverage_min_dist:
+                    self.get_logger().info(
+                        f'COVERAGE: nearest unvisited ({target[0]:.2f}, '
+                        f'{target[1]:.2f}) dist={dist:.2f}m')
+                    self.publish_goal(target[0], target[1], tag=None)
+                    return
 
-        self.send_goal(best.cx, best.cy, tag=(int(best.cx / self.map.info.resolution),
-                                              int(best.cy / self.map.info.resolution)))
+        # PHASE 4: Nothing left to do
+        if self.empty_frontier_ticks >= 5:
+            self.get_logger().info(
+                'Nothing left to explore — exploration complete')
+            self.state = 'RETURNING' if self.return_to_init else 'DONE'
+            self.empty_frontier_ticks = 0
+            self.publish_status()
 
+    # ------------------------------------------------------------------
+    # Phase 4: Return to origin
+    # ------------------------------------------------------------------
     def step_return(self):
         if self.origin_xy is None:
             self.state = 'DONE'
@@ -254,9 +379,9 @@ class FrontierExplorer(Node):
         pose = self.get_robot_pose()
         if pose is None:
             return
-        dx = pose[0] - self.origin_xy[0]
-        dy = pose[1] - self.origin_xy[1]
-        dist = math.hypot(dx, dy)
+
+        dist = math.hypot(pose[0] - self.origin_xy[0],
+                          pose[1] - self.origin_xy[1])
         if dist < self.return_tol:
             self.get_logger().info(
                 f'Returned to origin (dist={dist:.2f}m) — DONE')
@@ -265,33 +390,169 @@ class FrontierExplorer(Node):
             return
 
         self.get_logger().info(
-            f'Returning to origin ({self.origin_xy[0]:.2f}, '
-            f'{self.origin_xy[1]:.2f}), currently {dist:.2f}m away')
-        self.send_goal(self.origin_xy[0], self.origin_xy[1], tag=None)
+            f'RETURN: to origin ({self.origin_xy[0]:.2f}, '
+            f'{self.origin_xy[1]:.2f}), {dist:.2f}m away')
+        self.publish_goal(self.origin_xy[0], self.origin_xy[1], tag=None)
+
+    # ------------------------------------------------------------------
+    # Goal publishing and tracking
+    # ------------------------------------------------------------------
+    def publish_goal(self, x, y, tag=None):
+        if self.active_goal_xy is not None:
+            return
+
+        msg = PoseStamped()
+        msg.header.frame_id = self.map_frame
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = x
+        msg.pose.position.y = y
+        msg.pose.orientation.w = 1.0
+
+        self.goal_pub.publish(msg)
+        self.goals_sent += 1
+        self.active_goal_xy = (x, y)
+        self.active_goal_tag = tag
+        self.active_goal_start = time.time()
+        self.active_goal_last_progress_xy = None
+        self.active_goal_last_progress_time = time.time()
+
+        self.get_logger().info(f'Goal sent: ({x:.2f}, {y:.2f})')
+
+    def tick_active_goal(self):
+        pose = self.get_robot_pose()
+        if pose is None:
+            return
+        now = time.time()
+
+        # Success: robot is within tolerance of the goal
+        dist = math.hypot(pose[0] - self.active_goal_xy[0],
+                          pose[1] - self.active_goal_xy[1])
+        if dist < self.goal_xy_tol:
+            self.goals_succeeded += 1
+            self.get_logger().info(
+                f'Goal reached: ({self.active_goal_xy[0]:.2f}, '
+                f'{self.active_goal_xy[1]:.2f})')
+            self.clear_active_goal()
+            return
+
+        # Progress tracking
+        if self.active_goal_last_progress_xy is None:
+            self.active_goal_last_progress_xy = pose
+            self.active_goal_last_progress_time = now
+        else:
+            moved = math.hypot(
+                pose[0] - self.active_goal_last_progress_xy[0],
+                pose[1] - self.active_goal_last_progress_xy[1])
+            if moved >= self.progress_min_m:
+                self.active_goal_last_progress_xy = pose
+                self.active_goal_last_progress_time = now
+
+        # Timeout without progress
+        if now - self.active_goal_last_progress_time > self.progress_timeout:
+            self.get_logger().warn(
+                f'No progress for {self.progress_timeout:.0f}s — abandoning goal')
+            self.blacklist_tag()
+            self.goals_failed += 1
+            self.clear_active_goal()
+            return
+
+        # Absolute timeout
+        if now - self.active_goal_start > self.goal_timeout:
+            self.get_logger().warn(
+                f'Goal timeout ({self.goal_timeout:.0f}s) — abandoning')
+            self.blacklist_tag()
+            self.goals_failed += 1
+            self.clear_active_goal()
+            return
+
+    def blacklist_tag(self):
+        if self.active_goal_tag is not None:
+            self.blacklist[self.active_goal_tag] = time.time() + self.blacklist_s
+
+    def clear_active_goal(self):
+        self.active_goal_xy = None
+        self.active_goal_tag = None
+        self.active_goal_last_progress_xy = None
+
+    def cancel_active_goal(self):
+        if self.active_goal_xy is not None:
+            self.clear_active_goal()
+
+    # ------------------------------------------------------------------
+    # Visited grid
+    # ------------------------------------------------------------------
+    def mark_visited(self, world_xy):
+        if self.map is None:
+            return
+        grid = self.to_numpy(self.map)
+        if grid is None:
+            return
+
+        # Initialize/resize visited to match the current map
+        if self.visited is None or self.visited.shape != grid.shape:
+            new_visited = np.zeros(grid.shape, dtype=bool)
+            if self.visited is not None:
+                # Copy overlap (bottom-left anchored)
+                h = min(self.visited.shape[0], grid.shape[0])
+                w = min(self.visited.shape[1], grid.shape[1])
+                new_visited[:h, :w] = self.visited[:h, :w]
+            self.visited = new_visited
+
+        res = self.map.info.resolution
+        ox = self.map.info.origin.position.x
+        oy = self.map.info.origin.position.y
+
+        cx = int((world_xy[0] - ox) / res)
+        cy = int((world_xy[1] - oy) / res)
+        r = max(1, int(self.visited_radius / res))
+
+        x0 = max(0, cx - r)
+        x1 = min(grid.shape[1], cx + r + 1)
+        y0 = max(0, cy - r)
+        y1 = min(grid.shape[0], cy + r + 1)
+        if x0 < x1 and y0 < y1:
+            self.visited[y0:y1, x0:x1] = True
+
+    def nearest_unvisited(self, robot_xy):
+        if self.visited is None or self.map is None:
+            return None
+        grid = self.to_numpy(self.map)
+        if grid is None or grid.shape != self.visited.shape:
+            return None
+
+        free = (grid == 0)
+        unvisited_free = free & ~self.visited
+        ys, xs = np.where(unvisited_free)
+        if len(xs) == 0:
+            return None
+
+        res = self.map.info.resolution
+        ox = self.map.info.origin.position.x
+        oy = self.map.info.origin.position.y
+        wx = xs * res + ox + res / 2
+        wy = ys * res + oy + res / 2
+
+        dists = (wx - robot_xy[0]) ** 2 + (wy - robot_xy[1]) ** 2
+        i = int(np.argmin(dists))
+        return (float(wx[i]), float(wy[i]))
 
     # ------------------------------------------------------------------
     # Frontier detection
     # ------------------------------------------------------------------
-    def to_numpy(self, occ: OccupancyGrid) -> Optional[np.ndarray]:
+    def to_numpy(self, occ):
         if not occ.data:
             return None
         w, h = occ.info.width, occ.info.height
-        grid = np.array(occ.data, dtype=np.int8).reshape(h, w)
-        return grid
+        return np.array(occ.data, dtype=np.int8).reshape(h, w)
 
-    def detect_frontiers(
-            self, grid: np.ndarray, robot_xy: Tuple[float, float]
-    ) -> List[Frontier]:
+    def detect_frontiers(self, grid, robot_xy):
         free = (grid == 0)
         unknown = (grid == -1)
-
-        # Frontier cells: free cells with at least one unknown 4-neighbor
         unknown_d = (
             np.roll(unknown, 1, 0) | np.roll(unknown, -1, 0) |
             np.roll(unknown, 1, 1) | np.roll(unknown, -1, 1))
         frontier_mask = free & unknown_d
 
-        # Remove frontier cells that are already blacklisted
         now = time.time()
         self.blacklist = {k: v for k, v in self.blacklist.items() if v > now}
 
@@ -299,17 +560,15 @@ class FrontierExplorer(Node):
         if len(xs) == 0:
             return []
 
-        # Cluster by simple BFS on a coarser grid (5-cell blocks)
         res = self.map.info.resolution
         ox = self.map.info.origin.position.x
         oy = self.map.info.origin.position.y
 
         used = np.zeros_like(frontier_mask, dtype=bool)
-        frontiers: List[Frontier] = []
+        frontiers = []
         for x0, y0 in zip(xs.tolist(), ys.tolist()):
             if used[y0, x0]:
                 continue
-            # BFS cluster
             stack = [(x0, y0)]
             cluster_pts = []
             used[y0, x0] = True
@@ -326,19 +585,14 @@ class FrontierExplorer(Node):
             if len(cluster_pts) < self.min_frontier_size:
                 continue
 
-            # Cluster centroid in world coords
             px = np.array([p[0] for p in cluster_pts], dtype=float)
             py = np.array([p[1] for p in cluster_pts], dtype=float)
             cxw = px.mean() * res + ox + res / 2
             cyw = py.mean() * res + oy + res / 2
 
-            # Skip if any cell in the cluster is blacklisted
-            blk = False
-            for (bx, by) in cluster_pts[:min(len(cluster_pts), 10)]:
-                if (bx, by) in self.blacklist:
-                    blk = True
-                    break
-            if blk:
+            # Blacklist check
+            if any((bx, by) in self.blacklist
+                   for bx, by in cluster_pts[:min(len(cluster_pts), 10)]):
                 continue
 
             dist = math.hypot(cxw - robot_xy[0], cyw - robot_xy[1])
@@ -347,103 +601,9 @@ class FrontierExplorer(Node):
         return frontiers
 
     # ------------------------------------------------------------------
-    # Goal management
-    # ------------------------------------------------------------------
-    def send_goal(self, x: float, y: float, tag):
-        if self.current_goal_handle is not None:
-            return
-        if not self.nav_client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().warn('Nav2 action server unavailable',
-                                   throttle_duration_sec=10.0)
-            return
-
-        goal = NavigateToPose.Goal()
-        goal.pose.header.frame_id = self.map_frame
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
-        goal.pose.pose.position.x = x
-        goal.pose.pose.position.y = y
-        goal.pose.pose.orientation.w = 1.0
-
-        self.get_logger().info(f'Sending goal: ({x:.2f}, {y:.2f})')
-        self.goals_sent += 1
-        send_future = self.nav_client.send_goal_async(goal)
-        send_future.add_done_callback(lambda f: self.on_goal_accepted(f, x, y, tag))
-
-    def on_goal_accepted(self, future, x, y, tag):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().warn(f'Goal rejected: ({x:.2f}, {y:.2f})')
-            self.goals_failed += 1
-            if tag is not None:
-                self.blacklist[tag] = time.time() + self.blacklist_s
-            return
-
-        self.current_goal_handle = goal_handle
-        self.current_goal_xy = (x, y)
-        self.goal_start_time = time.time()
-        self.last_progress_time = time.time()
-        self.last_progress_xy = None
-
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(lambda f: self.on_goal_done(f, tag))
-
-    def on_goal_done(self, future, tag):
-        status = future.result().status
-        # 4 = SUCCEEDED in action_msgs/GoalStatus
-        if status == 4:
-            self.goals_succeeded += 1
-            self.get_logger().info(
-                f'Goal reached: ({self.current_goal_xy[0]:.2f}, '
-                f'{self.current_goal_xy[1]:.2f})')
-        else:
-            self.goals_failed += 1
-            self.get_logger().warn(f'Goal failed (status={status})')
-            if tag is not None:
-                self.blacklist[tag] = time.time() + self.blacklist_s
-
-        self.current_goal_handle = None
-        self.current_goal_xy = None
-        self.publish_status()
-
-    def cancel_current_goal(self):
-        if self.current_goal_handle is not None:
-            self.get_logger().info('Cancelling current goal')
-            self.current_goal_handle.cancel_goal_async()
-            self.current_goal_handle = None
-            self.current_goal_xy = None
-
-    def monitor_goal(self):
-        # Progress check
-        pose = self.get_robot_pose()
-        if pose is None:
-            return
-        now = time.time()
-
-        if self.last_progress_xy is None:
-            self.last_progress_xy = pose
-            self.last_progress_time = now
-            return
-
-        moved = math.hypot(pose[0] - self.last_progress_xy[0],
-                           pose[1] - self.last_progress_xy[1])
-        if moved > 0.2:
-            self.last_progress_xy = pose
-            self.last_progress_time = now
-
-        if now - self.last_progress_time > self.progress_timeout:
-            self.get_logger().warn(
-                f'No progress for {self.progress_timeout:.0f}s — cancelling goal')
-            self.cancel_current_goal()
-
-        if now - self.goal_start_time > self.goal_timeout:
-            self.get_logger().warn(
-                f'Goal exceeded {self.goal_timeout:.0f}s — cancelling goal')
-            self.cancel_current_goal()
-
-    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def get_robot_pose(self) -> Optional[Tuple[float, float]]:
+    def get_robot_pose(self):
         try:
             t = self.tf_buffer.lookup_transform(
                 self.map_frame, self.robot_frame, rclpy.time.Time())
@@ -457,11 +617,11 @@ class FrontierExplorer(Node):
             f'state={self.state} enabled={self.enabled} '
             f'goals_sent={self.goals_sent} '
             f'succeeded={self.goals_succeeded} '
-            f'failed={self.goals_failed}')
+            f'failed={self.goals_failed} '
+            f'blind_attempts={self.blind_attempts}')
         self.status_pub.publish(msg)
 
 
-# ---------------------------------------------------------------------------
 def main(args=None):
     rclpy.init(args=args)
     node = FrontierExplorer()
@@ -470,7 +630,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.cancel_current_goal()
+        node.stop_blind()
+        node.cancel_active_goal()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
