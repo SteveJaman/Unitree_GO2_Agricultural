@@ -12,7 +12,7 @@
 #   VM (this host) : Docker container runs RViz + Nav2 + custom explorer.
 #
 # Network (Wi-Fi):
-#   VM      : 192.168.1.5
+#   VM      : 192.168.1.4
 #   Robot   : 192.168.1.9
 #
 # Usage:
@@ -39,7 +39,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
 
 # Network — Wi-Fi only
-GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.5}"       # VM (this laptop)
+GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.4}"       # VM (this laptop)
 GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"     # Go2 Jetson over Wi-Fi
 
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
