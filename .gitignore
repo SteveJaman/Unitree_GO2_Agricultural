@@ -1,5 +1,4 @@
-@"
-# ROS 2 build artifacts
+﻿# ROS 2 build artifacts
 build/
 install/
 log/
@@ -27,4 +26,3 @@ desktop.ini
 # Generated TF diagrams
 frames_*.gv
 frames_*.pdf
-"@ | Out-File -Encoding utf8 .gitignore
