@@ -1,10 +1,12 @@
 ﻿# Unitree_GO2_Agricultural
 
-Autonomous exploration and navigation layer for the **Unitree Go2 EDU** quadruped.
+Autonomous exploration and navigation layer for the **Unitree Go2 EDU** quadruped,
+with support for the **Unitree D1-T** arm for crop-scanning and data collection.
 This repo sits on top of the [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi)
 stack — Point-LIO SLAM running onboard the Jetson, Nav2 running on a laptop VM,
 bridged over Wi-Fi — and adds a custom frontier-based explorer, an RViz control
-panel, a live camera relay, and a full set of orchestration scripts.
+panel, a live camera relay, an arm controller, and a full set of orchestration
+scripts.
 
 **One command to run everything:**
 
@@ -16,7 +18,24 @@ Power on the dog, stand it, run that. The script does the rest.
 
 ---
 
+## Project Scope
+
+Two integrated capabilities:
+
+1. **Autonomous navigation and mapping** — the Go2 explores and maps an
+   environment on its own, driven by a custom frontier explorer.
+2. **Crop scanning with the D1-T arm** — the arm holds a hyperspectral
+   camera on a custom 3D-printed mount and moves it through a scanning
+   pattern over plants, for later plant-analysis data collection.
+
+The two systems are independent today. Integration — an AI model commanding
+both the dog and the arm — is the long-term goal.
+
+---
+
 ## Architecture
+
+### Navigation
 
 ```
 Robot (Jetson, 192.168.1.9)              Laptop VM (Ubuntu 22.04, 192.168.1.4)
@@ -48,6 +67,20 @@ LiDAR + IMU ─► Point-LIO                 go2-lidar3d container (Docker)
       Unitree Sport API → motors
 ```
 
+### Arm
+
+```
+D1-T arm (6 DOF + gripper)
+      │
+      │ RJ45, DDS
+      ▼
+rt/arm_Command  ──── JSON payloads ────  d1_arm_control.py
+      │                                        │
+      │                                        ▼
+      ▼                                 start_arm.sh
+current_servo_angle  ◄── joint feedback
+```
+
 Key facts:
 - **SLAM runs on the Jetson.** The VM never runs `slam_toolbox`. The global
   frame is `lidar3d_map`, produced by Point-LIO onboard.
@@ -57,6 +90,8 @@ Key facts:
 - **The explorer reads from `/global_costmap/costmap`**, not `/map`. The
   upstream stack does not publish a `/map` topic — the Nav2 costmap is the
   occupancy grid source.
+- **The D1-T arm uses DDS + JSON** on `rt/arm_Command`, not ROS 2 messages.
+  The arm control script wraps the raw interface.
 
 ---
 
@@ -66,6 +101,7 @@ Key facts:
 |---|---|---|
 | Laptop VM | `192.168.1.4` | `GO2_HOST_IP` |
 | Go2 Jetson | `192.168.1.9` | `GO2_ROBOT_IP` |
+| D1-T arm | via Go2 onboard switch | DDS on `rt/arm_Command` |
 | DDS domain | `64` | Wi-Fi side |
 | Relay port | `17999` | TCP, `/cmd_vel` |
 
@@ -77,7 +113,7 @@ no topics cross the wire.
 
 ## Quick Start
 
-### One-time setup (per workstation)
+### Navigation — one-time setup (per workstation)
 
 ```bash
 # 1. Clone the upstream stack and this repo
@@ -101,7 +137,7 @@ pip install pre-commit
 pre-commit install
 ```
 
-### Every session
+### Navigation — every session
 
 ```bash
 # 1. Power on the dog and stand it up
@@ -119,7 +155,7 @@ cd ~/files/Unitree_GO2_Agricultural
 That's it. The dog explores autonomously. Click **STOP** or Ctrl+C in the
 terminal to end. The physical remote is the emergency stop.
 
-### What the script does automatically
+### Navigation — what the script does automatically
 
 1. Kills stale processes on the VM **and** on the Jetson
 2. SSHes into the Jetson, kills any relay holding port 17999
@@ -130,7 +166,49 @@ terminal to end. The physical remote is the emergency stop.
 7. After 20 s: starts the frontier explorer and camera relay
 8. On Ctrl+C: stops exploration, kills helpers, stops the Jetson relay, brings down Docker
 
-### Flags
+### Arm — one-time setup
+
+Install the Unitree SDK2 in the container:
+
+```bash
+docker exec -u root go2-lidar3d bash -lc '
+    pip3 install unitree_sdk2_python
+'
+```
+
+If pip fails, build from source:
+
+```bash
+docker exec -u root go2-lidar3d bash -lc '
+    cd /tmp
+    git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+    cd unitree_sdk2_python
+    export CYCLONEDDS_HOME=/opt/ros/humble
+    pip3 install -e .
+'
+```
+
+### Arm — every session
+
+```bash
+# 1. Power the arm (24V DC) and confirm the RJ45 is connected
+
+# 2. Enable motors and home:
+cd ~/files/Unitree_GO2_Agricultural
+./scripts/runtime/start_arm.sh
+
+# 3. Move a joint directly:
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 joint 0 0.5
+'
+
+# 4. Or move all six joints at once:
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 joints 0.0 0.3 0.6 0.0 0.5 0.0
+'
+```
+
+### Navigation — flags
 
 | Flag | Effect |
 |---|---|
@@ -146,7 +224,7 @@ terminal to end. The physical remote is the emergency stop.
 | `--check` | Verify prerequisites only, no launch |
 | `--setup-ssh` | One-time passwordless SSH setup |
 
-### Runtime overrides (no file edits)
+### Navigation — runtime overrides (no file edits)
 
 Every explorer parameter can be overridden with an env var:
 
@@ -168,6 +246,7 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 | `wifi_nav.sh` | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
 | `wifi_mapping.sh` | Mapping-only wrapper (no explorer) |
 | `start_rtabmap.sh` | Launch RTAB-Map for dense 3D reconstruction alongside the session |
+| `start_arm.sh` | Initialize the D1-T arm: enable motors, home, verify interface |
 
 ### Nodes (`scripts/nodes/`)
 
@@ -176,6 +255,7 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 | `frontier_explorer.py` | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | `go2_camera_relay.py` | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | `go2_floor_filter.py` | Floor-plane filter, prevents floor being treated as an obstacle |
+| `d1_arm_control.py` | Direct control for the D1-T arm via Unitree SDK2 (JSON over DDS) |
 
 ### Tools (`scripts/tools/`)
 
@@ -276,6 +356,101 @@ Expected states: `IDLE` → `EXPLORING` → goals on `/goal_pose` → `RETURNING
 
 ---
 
+## D1-T Arm Control
+
+The D1-T is a 6-DOF collaborative arm with a gripper, controlled via **DDS with
+JSON strings** on the `rt/arm_Command` topic. Joint feedback arrives on
+`current_servo_angle`.
+
+### Physical setup
+
+- **Power:** 24V DC via the DC 5.5-2.1 barrel jack
+- **Communication:** RJ45, typically connected to the Go2's onboard switch, so
+  the arm and robot share a DDS domain
+- **Debug:** USB-C (serial debug only)
+
+### Commands
+
+| Action | JSON payload | Purpose |
+|---|---|---|
+| Home | `{"funcode":7,"address":0,"seq":0,"data":""}` | Return all joints to zero |
+| Enable | `{"funcode":5,"address":0,"seq":0,"data":""}` | Power on motors (torque enabled) |
+| Release | `{"funcode":5,"address":0,"seq":0,"data":"release"}` | Power off (drag-teach mode) |
+| Single joint | `{"funcode":1,"address":X,"seq":0,"data":"Y"}` | Move joint X to angle Y radians |
+| All joints | `{"funcode":2,"address":0,"seq":0,"data":"[a0,...]"}` | Move all six joints at once |
+
+### Usage
+
+```bash
+# Enable and home (typical session start)
+./scripts/runtime/start_arm.sh
+
+# Enable only, skip homing
+./scripts/runtime/start_arm.sh --no-home
+
+# Move one joint (joint index, angle in radians)
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 joint 0 0.5
+'
+
+# Move all six joints
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 joints 0.0 0.3 0.6 0.0 0.5 0.0
+'
+
+# Read current joint angles
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 feedback
+'
+
+# Chain commands
+docker exec -u root go2-lidar3d bash -lc '
+    python3 /tmp/d1_arm_control.py --iface eth0 \
+        home sleep 1 enable joints 0 0.3 0.6 0 0.5 0
+'
+```
+
+### Parameters
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--iface` | `eth0` | Container interface that reaches the arm. Find with `ip -brief link` inside the container |
+
+### Verifying the arm is reachable
+
+From the container:
+
+```bash
+go2sh
+ip -brief link              # see which interface the arm is on
+python3 /tmp/d1_arm_control.py --iface <iface> feedback
+```
+
+From the Jetson:
+
+```bash
+ssh unitree@192.168.1.9
+ip -brief link
+ros2 topic list 2>/dev/null | grep arm
+```
+
+If the arm's topics appear in the container, the existing Wi-Fi relay already
+carries the DDS traffic and no extra relay is needed. If not, the relay must be
+extended to forward the arm's DDS domain, or a second relay added.
+
+### Roadmap for the arm
+
+| Step | Purpose | Status |
+|---|---|---|
+| 1. Direct control | Prove the arm responds to JSON commands | Script written |
+| 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
+| 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
+| 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
+| 5. Scan routine | Move the camera through a plant-scanning path | Pending |
+| 6. AI autonomy | Model commands both the dog and the arm | Long-term |
+
+---
+
 ## Live Camera
 
 The Go2's front camera publishes on `/frontvideostream` as a custom
@@ -303,6 +478,10 @@ ros2 run rqt_image_view rqt_image_view /camera/image_raw
 
 See `docs/camera.md` for full setup and troubleshooting.
 
+> **Note:** the hyperspectral camera on the D1-T arm is a separate device from
+> the Go2's front camera. Its ROS 2 / DDS interface will be documented in a
+> dedicated doc once the physical mount is in place.
+
 ---
 
 ## Repository Structure
@@ -328,11 +507,13 @@ Unitree_GO2_Agricultural/
 │   ├── runtime/                      # shell entry points
 │   │   ├── wifi_nav.sh               # main orchestrator
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
-│   │   └── start_rtabmap.sh          # RTAB-Map launcher
+│   │   ├── start_rtabmap.sh          # RTAB-Map launcher
+│   │   └── start_arm.sh              # D1-T arm init (enable + home)
 │   ├── nodes/                        # ROS 2 Python nodes
 │   │   ├── frontier_explorer.py      # custom explorer
 │   │   ├── go2_camera_relay.py       # camera bridge
-│   │   └── go2_floor_filter.py       # floor-plane filter
+│   │   ├── go2_floor_filter.py       # floor-plane filter
+│   │   └── d1_arm_control.py         # D1-T arm control
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh
@@ -414,6 +595,26 @@ If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 2. Check the relay log: `ssh unitree@192.168.1.9 'tail -20 /tmp/robot-relay.log'`
 3. Confirm FULL mode: the log should say `cmd_vel TCP server started on port 17999`
 
+### Arm does not respond
+
+1. **Check the interface name.** Inside the container: `ip -brief link`. The
+   `--iface` flag must match the interface the arm is on.
+2. **Check the arm is powered.** 24V DC via the barrel jack. The arm's
+   controller should show activity on power.
+3. **Check the RJ45.** Arm should be on the same network segment as the Go2.
+4. **Verify the SDK2 is installed:**
+   ```bash
+   docker exec -u root go2-lidar3d bash -lc 'python3 -c "import unitree_sdk2py; print(\"ok\")"'
+   ```
+5. **Read the joint feedback:**
+   ```bash
+   docker exec -u root go2-lidar3d bash -lc '
+       python3 /tmp/d1_arm_control.py --iface <iface> feedback
+   '
+   ```
+   If feedback arrives but commands do nothing, the motors may not be enabled —
+   run `enable` first.
+
 ---
 
 ## Troubleshooting
@@ -429,6 +630,7 @@ Common items:
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | `./scripts/tools/test_explore.sh` |
 | Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` |
+| Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See **Arm does not respond** above |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
 
 ---
@@ -462,6 +664,7 @@ and manual waypoint navigation via RViz. This repo adds:
 - **RViz control panel** with START/STOP buttons
 - **Live camera relay** — `/frontvideostream` → `/camera/image_raw`
 - **Floor-plane filter** to prevent the ground being treated as an obstacle
+- **D1-T arm control** — direct DDS/JSON commands and a launcher
 - **One-command orchestration** — auto relay startup, cleanup, monitoring
 - **Diagnostic and tuning scripts** — preflight, test_explore, campus_session, tune_costmap
 - **RTAB-Map integration** — dense 3D reconstruction and mesh export
@@ -481,6 +684,7 @@ part of the active pipeline. See `cmu-legacy/README.md`.
 | Project | Purpose |
 |---|---|
 | [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) | SLAM (Point-LIO) + Nav2 + Wi-Fi relay |
+| [`unitree_sdk2_python`](https://github.com/unitreerobotics/unitree_sdk2_python) | DDS interface for the D1-T arm and Go2 Sport API |
 
 ---
 
