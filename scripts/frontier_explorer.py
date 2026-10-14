@@ -53,7 +53,7 @@ DEFAULTS = {
     # The old default caused TF lookups to throw silently and blocked
     # every goal publication (goals_sent stayed 0 forever).
     'map_frame':        'lidar3d_map',
-    'map_topic':        '/global_costmap/costmap_raw',
+    'map_topic':        '/global_costmap/costmap',
     'resume_topic':     '/explore/resume',
     'status_topic':     '/explore/status',
     'goal_topic':       '/goal_pose',
