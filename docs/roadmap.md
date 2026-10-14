@@ -1,5 +1,7 @@
 # Roadmap
 
+[← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](tour.md) · [Camera](camera.md) · [Troubleshooting](troubleshooting.md)
+
 Two phases. Phase 1 is autonomous navigation and 3D tour capture. Phase 2
 is the D1-T arm and crop-scanning pipeline. Each phase has its own success
 metric. Do not start Phase 2 work until Phase 1 milestones 0–2 are green.
@@ -25,19 +27,19 @@ Everything else depends on this. Do not skip.
 
 | # | Task | Status |
 |---|---|---|
-| 0.1 | Jetson relay starts in FULL mode (no `--sensors-only`) | ✅ auto-handled by `wifi_nav.sh` |
+| 0.1 | Jetson relay starts in FULL mode (no `--sensors-only`) | ✅ auto-handled by [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) |
 | 0.2 | Port 17999 conflict eliminated before every session | ✅ auto-handled |
 | 0.3 | `mapping.sh --3d --nav` launches a clean session | ✅ verified |
-| 0.4 | `auto_walk.sh` completes one square | ✅ verified |
+| 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
 
 **Blocker:** if 0.1–0.2 fail, nothing downstream matters. `wifi_nav.sh`
 now SSHes into the Jetson and clears the port before every launch. Manual
-fallback documented in `docs/troubleshooting.md`.
+fallback documented in [troubleshooting.md](troubleshooting.md).
 
 ## Milestone 1 — Visual waypoint system (RViz)
 
 No new code. Configuration only. Code-complete; needs a running RViz to
-save the layout.
+save the layout. Step-by-step guide: [tour.md](tour.md).
 
 | # | Task | Status |
 |---|---|---|
@@ -47,15 +49,15 @@ save the layout.
 | 1.4 | Add Path display on `/local_plan` | ⏳ |
 | 1.5 | Test 3-waypoint route | ⏳ |
 
-**Helper:** `scripts/tools/save_rviz_config.sh` prints the exact steps to
-follow while RViz is open. Target file: `config/tour.rviz`.
+**Helper:** [`scripts/tools/save_rviz_config.sh`](../scripts/tools/save_rviz_config.sh) prints the exact steps to
+follow while RViz is open. Target file: [`config/tour.rviz`](../config/tour.rviz).
 
 **Output:** drop waypoints, see the route, watch the robot follow it — no
 CLI, no `auto_walk.sh`.
 
 ## Milestone 2 — Explorer verification
 
-The explorer code is written and fixed. It has never produced a goal on a
+The explorer code ([`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py)) is written and fixed. It has never produced a goal on a
 live map. This is the single most important verification in Phase 1.
 
 | # | Task | Status |
@@ -75,7 +77,8 @@ live map. This is the single most important verification in Phase 1.
 - Debug log added: `detect_frontiers: known=N frontiers=K`
 
 **Risk:** if 2.1 shows `goals_sent=0` after enabling, the frontier detector
-is finding nothing. The debug log tells you which guard is firing.
+is finding nothing. The debug log tells you which guard is firing. See
+[troubleshooting → Explorer](troubleshooting.md#explorer).
 
 ## Milestone 3 — Camera pipeline
 
@@ -88,10 +91,10 @@ Required for reconstruction. Currently blocked by hardware.
 | 3.3 | Mount Intel RealSense D435i (if available) | ⏳ hardware |
 | 3.4 | Calibrate extrinsics camera ↔ `base_link` | ⏳ |
 
-**Note:** `go2_camera_relay.py` is already written and bridges
+**Note:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) is already written and bridges
 `/frontvideostream` → `/camera/image_raw`. What is missing is the *camera
 backend* on the Jetson — right now the relay logs
-`WARN: camera unavailable`.
+`WARN: camera unavailable`. See [camera.md](camera.md).
 
 **Blocker if no RealSense:** built-in camera + LiDAR gives sparse color
 only. Enough to prototype, not enough for a real-estate quality tour.
@@ -106,10 +109,10 @@ The pipeline that produces the dense 3D tour.
 | # | Task | Status |
 |---|---|---|
 | 4.1 | Install `ros-humble-rtabmap-ros` in the container | ⏳ |
-| 4.2 | Launch RTAB-Map alongside the Nav2 session | ✅ `scripts/runtime/start_rtabmap.sh` written |
+| 4.2 | Launch RTAB-Map alongside the Nav2 session | ✅ [`scripts/runtime/start_rtabmap.sh`](../scripts/runtime/start_rtabmap.sh) written |
 | 4.3 | Remap RTAB-Map output to `/tour/*` to avoid `/map` conflict | ✅ in the launch script |
 | 4.4 | Manual walk in one room, export PLY | ⏳ hardware |
-| 4.5 | Open PLY in Open3D | ✅ `scripts/tools/export_tour.py` written |
+| 4.5 | Open PLY in Open3D | ✅ [`scripts/tools/export_tour.py`](../scripts/tools/export_tour.py) written |
 | 4.6 | Poisson mesh from point cloud | ✅ `export_tour.py` includes this |
 
 **Compute risk:** RTAB-Map is heavier than Point-LIO. If the VM struggles,
@@ -150,11 +153,11 @@ Polish for repeated use.
 
 | # | Task | Status |
 |---|---|---|
-| 7.1 | Pre-flight script checks all layers | ✅ `scripts/tools/preflight.sh` written |
+| 7.1 | Pre-flight script checks all layers | ✅ [`scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) written |
 | 7.2 | Session logs archived per run | ⏳ |
 | 7.3 | Explorer failure recovery | ⏳ |
 | 7.4 | Config file for tour settings | ⏳ |
-| 7.5 | README section on running a tour | ✅ `docs/tour.md` written |
+| 7.5 | README section on running a tour | ✅ [`docs/tour.md`](tour.md) written |
 
 ---
 
@@ -175,8 +178,8 @@ is captured for later plant-analysis research.
 
 | # | Task | Status |
 |---|---|---|
-| 8.1 | `d1_arm_control.py` written — DDS/JSON control | ✅ written |
-| 8.2 | `start_arm.sh` written — enable + home from the VM | ✅ written |
+| 8.1 | [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) written — DDS/JSON control | ✅ written |
+| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — enable + home from the VM | ✅ written |
 | 8.3 | Install `unitree_sdk2_python` in the container | ⏳ |
 | 8.4 | Arm reachable from VM container | ⏳ verify interface |
 | 8.5 | Arm responds to `joint` command | ⏳ hardware |
@@ -203,6 +206,8 @@ docker exec -u root go2-lidar3d bash -lc '
 '
 ```
 
+If it fails, see [troubleshooting → D1-T Arm](troubleshooting.md#d1-t-arm).
+
 ## Milestone 9 — ROS 2 bridge node
 
 Wrap the raw DDS interface in ROS 2 topics so the arm can be controlled
@@ -221,7 +226,8 @@ arm through standard interfaces.
 
 ## Milestone 10 — RViz panel for the arm
 
-Slider per joint, alongside the existing explorer panel.
+Slider per joint, alongside the existing explorer panel
+([`src/go2_explore_panel/`](../src/go2_explore_panel/)).
 
 | # | Task | Status |
 |---|---|---|
@@ -247,7 +253,7 @@ Hardware work.
 | 11.5 | Calibrate camera extrinsics to arm end effector | ⏳ |
 
 **Open question:** what sensor model is the hyperspectral camera? The ROS 2
-interface depends entirely on the answer. Document in `docs/camera.md`
+interface depends entirely on the answer. Document in [camera.md](camera.md)
 once known.
 
 ## Milestone 12 — Scan routine

@@ -1,7 +1,14 @@
 # Troubleshooting
 
+[← Back to README](../README.md) · [Status](STATUS.md) · [Roadmap](roadmap.md)
+
 Every failure mode encountered during development, with the actual fix.
 Sections are self-contained. Search for the error message you see.
+
+**Jump to:** [Session / Infrastructure](#session--infrastructure) ·
+[Motion](#motion) · [Explorer](#explorer) · [D1-T Arm](#d1-t-arm) ·
+[Camera](#camera) · [RViz / VM](#rviz--vm) ·
+[Diagnostics cheat sheet](#diagnostics-cheat-sheet)
 
 ---
 
@@ -39,7 +46,7 @@ docker exec -u root go2-lidar3d bash -lc \
 The session isn't up, or Point-LIO isn't forwarding.
 
 1. Check the `mapping.sh --3d --nav` log
-2. Check the Jetson relay is in FULL mode (see *Jetson relay* below)
+2. Check the Jetson relay is in FULL mode (see [Motion](#motion))
 3. Inspect the TF tree inside the container:
 
 ```bash
@@ -52,7 +59,7 @@ If `frames.pdf` is empty, no session is running.
 
 ### `Address already in use` for port 17999 on the Jetson
 
-`wifi_nav.sh` handles this automatically — it SSHes into the Jetson and
+[`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) handles this automatically — it SSHes into the Jetson and
 kills stale relays before starting a new one. If you need to do it by hand:
 
 ```bash
@@ -76,7 +83,8 @@ The line you actually care about is:
 cmd_vel TCP server started on port 17999
 ```
 
-If that is missing, the motion relay failed. See the port 17999 entry above.
+If that is missing, the motion relay failed. See the
+[port 17999 entry](#address-already-in-use-for-port-17999-on-the-jetson) above.
 
 ### Container has stale `GO2_HOST_IP`
 
@@ -180,11 +188,13 @@ ros2 topic hz /cmd_vel        # expect no data when idle
 
 Two possibilities:
 
-1. **Collision threshold too tight.** Use `tune_costmap.sh --safe` to
+1. **Collision threshold too tight.** Use
+   [`tune_costmap.sh --safe`](../scripts/tools/tune_costmap.sh) to
    restore `inflation_radius=0.35`, `footprint_padding=0.02`. Do not go
    below `inflation_radius=0.20` — that's the Go2's inscribed radius.
 2. **Obstacles aren't in the costmap.** Check `/scan` or `/lidar3d/registered`
-   is reaching the costmap. See *Costmap missing obstacles* below.
+   is reaching the costmap. Run
+   [`verify_costmap.sh`](../scripts/tools/verify_costmap.sh) to confirm the costmap topic publishes.
 
 ### `mapping.sh: line 82: GO2_CONTAINER: Start the project Docker container first`
 
@@ -194,6 +204,9 @@ Same as the first entry — the container doesn't exist. Create it with
 ---
 
 ## Explorer
+
+Explorer code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
+Diagnose without the RViz button: [`test_explore.sh`](../scripts/tools/test_explore.sh).
 
 ### Explorer stays `IDLE` after clicking START
 
@@ -212,7 +225,8 @@ ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: true}"
 ```
 
 If the dog then explores, the bug is in `go2_explore_panel`. Check the
-plugin XML and `CMakeLists.txt` in `src/go2_explore_panel/`.
+plugin XML and `CMakeLists.txt` in
+[`src/go2_explore_panel/`](../src/go2_explore_panel/).
 
 ### Explorer `state=EXPLORING`, `goals_sent=0`
 
@@ -280,8 +294,8 @@ go2sh
 ros2 run tf2_ros tf2_echo lidar3d_map base_link
 ```
 
-If this prints nothing, TF is broken. See the `Invalid frame ID` entry
-above.
+If this prints nothing, TF is broken. See the
+[`Invalid frame ID` entry](#invalid-frame-id-lidar3d_map-on-tf-lookup) above.
 
 ### Explorer immediately finishes with `state=DONE`
 
@@ -310,6 +324,9 @@ If it still uses `cmd_vel_pub`, the file reverted — re-apply the fix.
 ---
 
 ## D1-T Arm
+
+Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) and
+[`start_arm.sh`](../scripts/runtime/start_arm.sh).
 
 ### Arm does not respond to commands
 
@@ -415,12 +432,16 @@ ros2 topic list | grep arm
 ```
 
 If the arm appears on the Jetson but not in the container, the relay needs
-to include the arm's DDS topics. This is an upstream `go2-nav2-wifi` change,
+to include the arm's DDS topics. This is an upstream
+[`go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) change,
 not something the current scripts can fix.
 
 ---
 
 ## Camera
+
+Full camera setup: [camera.md](camera.md). Relay code:
+[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py).
 
 ### Relay crashes on start
 
@@ -454,7 +475,7 @@ Wi-Fi bandwidth. The relay publishes raw frames on `/camera/image_raw`
 (~27 MB/s at 720p30). Options:
 
 1. Lower resolution (`-p resolution:=360p`)
-2. Move to compressed transport — see `docs/camera.md`
+2. Move to compressed transport — see [camera.md](camera.md)
 3. Close the RViz point cloud display while viewing the camera (RViz
    renders on the CPU)
 
@@ -495,7 +516,7 @@ go2sh
 rviz2 -d ~/files/Unitree_GO2_Agricultural/config/tour.rviz
 ```
 
-If `config/tour.rviz` doesn't exist, see `docs/tour.md` for how to save it.
+If [`config/tour.rviz`](../config/tour.rviz) doesn't exist, see [tour.md](tour.md) for how to save it.
 
 ### `rqt_reconfigure` shows no costmap nodes
 
@@ -523,7 +544,7 @@ If empty, the session isn't fully up. Wait longer, or check the
 | Camera empty | `go2sh; ros2 topic hz /camera/image_raw` |
 | Arm unresponsive | `go2sh; python3 /tmp/d1_arm_control.py --iface <iface> feedback` |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
-| Verify everything | `./scripts/tools/preflight.sh` |
+| Verify everything | [`./scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) |
 
 ---
 
@@ -544,5 +565,5 @@ The session log folder contains:
 
 Those three files answer most questions.
 
-See `docs/STATUS.md` for session-by-session notes and
-`docs/roadmap.md` for milestones.
+See [STATUS.md](STATUS.md) for session-by-session notes and
+[roadmap.md](roadmap.md) for milestones.

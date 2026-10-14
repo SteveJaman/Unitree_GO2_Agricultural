@@ -1,5 +1,7 @@
 # Session Status
 
+[← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
+
 Last updated: 2026-10-14
 
 ---
@@ -21,10 +23,12 @@ scripts/
                  test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
 ```
 
-- CMU-era code archived under `cmu-legacy/`
+Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/)
+
+- CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
-- README rewritten for the current stack
-- Docs: `camera.md`, `roadmap.md`, `tour.md`, `troubleshooting.md`
+- [README](../README.md) rewritten for the current stack
+- Docs: [`camera.md`](camera.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md)
 
 ### Navigation — verified working
 
@@ -35,7 +39,7 @@ scripts/
 - `/goal_pose` → `/cmd_vel_nav` → `/cmd_vel` chain publishing
 - `/cmd_vel` produces real non-zero velocities (0.3 m/s observed)
 - TF `lidar3d_map → base_link` resolves continuously
-- `auto_walk.sh` completes a square — **motion path proven**
+- [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes a square — **motion path proven**
 
 ### Explorer — code complete, untested
 
@@ -51,23 +55,24 @@ Six fixes applied this session:
 | 6 | Debug log: `detect_frontiers: known=N frontiers=K` |
 
 Spin-on-goal integrated, gated by `-p spin_on_goal:=true` (default off).
+Code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
 
 ### Camera — code complete, untested
 
-`go2_camera_relay.py` bridges `/frontvideostream` (custom Unitree msg) →
+[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) bridges `/frontvideostream` (custom Unitree msg) →
 `/camera/image_raw` (standard `sensor_msgs/Image`). Launches automatically
-via `wifi_nav.sh` unless `--no-camera`.
+via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 
 ### D1-T arm — code complete, untested
 
-- `d1_arm_control.py` — direct DDS/JSON control
-- `start_arm.sh` — enable + home from VM
+- [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) — direct DDS/JSON control
+- [`start_arm.sh`](../scripts/runtime/start_arm.sh) — enable + home from VM
 - Commands: home, enable, release, joint, joints, feedback
 - Requires `unitree_sdk2_python` installed in the container
 
 ### One-command orchestration
 
-`./scripts/runtime/wifi_nav.sh` now handles the entire session:
+[`./scripts/runtime/wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
 
 1. Kills stale processes on VM **and** Jetson
 2. SSHes into Jetson, clears port 17999
@@ -103,7 +108,7 @@ via `wifi_nav.sh` unless `--no-camera`.
 
 | Item | Blocker |
 |---|---|
-| `config/tour.rviz` | Must be saved from a running RViz on the VM |
+| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
 | RTAB-Map + RealSense | Depth camera not yet purchased |
@@ -111,6 +116,8 @@ via `wifi_nav.sh` unless `--no-camera`.
 ---
 
 ## Known issues
+
+Full list of fixes: [troubleshooting.md](troubleshooting.md).
 
 ### Port 17999 conflict — now auto-handled
 
@@ -137,7 +144,7 @@ Verification pending on the robot.
 
 ### Collision threshold runtime-only
 
-`tune_costmap.sh` sets `inflation_radius` and `footprint_padding` at
+[`tune_costmap.sh`](../scripts/tools/tune_costmap.sh) sets `inflation_radius` and `footprint_padding` at
 runtime. To persist, edit `go2_nav2/config/lidar3d_planner.yaml` and the
 matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 
@@ -197,4 +204,4 @@ docker exec -u root go2-lidar3d bash -lc '
 > the hyperspectral camera through a repeatable scan path over a plant,
 > storing the captured data for later analysis.
 
-See `docs/roadmap.md` for the full milestone list.
+See [roadmap.md](roadmap.md) for the full milestone list.

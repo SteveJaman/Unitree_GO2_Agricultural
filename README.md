@@ -18,6 +18,29 @@ Power on the dog, stand it, run that. The script does the rest.
 
 ---
 
+## Table of Contents
+
+- [Project Scope](#project-scope)
+- [Documentation](#documentation)
+- [Architecture](#architecture)
+- [Network](#network)
+- [Quick Start](#quick-start)
+- [Scripts](#scripts)
+- [Explorer](#explorer)
+- [D1-T Arm Control](#d1-t-arm-control)
+- [Live Camera](#live-camera)
+- [Repository Structure](#repository-structure)
+- [Collision Threshold Tuning](#collision-threshold-tuning)
+- [Known Blockers and Fixes](#known-blockers-and-fixes)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [What This Repo Adds Over Upstream](#what-this-repo-adds-over-upstream)
+- [Legacy](#legacy)
+- [External Dependencies](#external-dependencies)
+- [License](#license)
+
+---
+
 ## Project Scope
 
 Two integrated capabilities:
@@ -30,6 +53,20 @@ Two integrated capabilities:
 
 The two systems are independent today. Integration — an AI model commanding
 both the dog and the arm — is the long-term goal.
+
+---
+
+## Documentation
+
+| Doc | Description |
+|---|---|
+| [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
+| [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
+| [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
+| [docs/tour.md](docs/tour.md) | Waypoint mode setup |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
+| [config/README.md](config/README.md) | Config folder notes (RViz layout) |
+| [cmu-legacy/README.md](cmu-legacy/README.md) | Archived CMU-stack code |
 
 ---
 
@@ -213,7 +250,7 @@ docker exec -u root go2-lidar3d bash -lc '
 | Flag | Effect |
 |---|---|
 | *(none)* | Explore + camera (default) |
-| `--no-explore` | Manual waypoint mode (2D Goal Pose only) |
+| `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](docs/tour.md) |
 | `--no-camera` | Skip the camera relay |
 | `--nav` | Manual waypoint mode, camera on |
 | `--plan` | Preview only — no motion, no explore, no camera |
@@ -239,43 +276,43 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 
 ## Scripts
 
-### Runtime (`scripts/runtime/`)
+### Runtime ([`scripts/runtime/`](scripts/runtime/))
 
 | Script | Purpose |
 |---|---|
-| `wifi_nav.sh` | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
-| `wifi_mapping.sh` | Mapping-only wrapper (no explorer) |
-| `start_rtabmap.sh` | Launch RTAB-Map for dense 3D reconstruction alongside the session |
-| `start_arm.sh` | Initialize the D1-T arm: enable motors, home, verify interface |
+| [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
+| [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
+| [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Launch RTAB-Map for dense 3D reconstruction alongside the session |
+| [`start_arm.sh`](scripts/runtime/start_arm.sh) | Initialize the D1-T arm: enable motors, home, verify interface |
 
-### Nodes (`scripts/nodes/`)
+### Nodes ([`scripts/nodes/`](scripts/nodes/))
 
 | File | Purpose |
 |---|---|
-| `frontier_explorer.py` | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
-| `go2_camera_relay.py` | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
-| `go2_floor_filter.py` | Floor-plane filter, prevents floor being treated as an obstacle |
-| `d1_arm_control.py` | Direct control for the D1-T arm via Unitree SDK2 (JSON over DDS) |
+| [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
+| [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
+| [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | Direct control for the D1-T arm via Unitree SDK2 (JSON over DDS) |
 
-### Tools (`scripts/tools/`)
+### Tools ([`scripts/tools/`](scripts/tools/))
 
 | Script | Purpose |
 |---|---|
-| `auto_walk.sh` | Scripted 1 m square patrol via `/goal_pose` — proof the motion path works |
-| `test_goal_cli.sh` | Publish a single `PoseStamped` goal from the CLI |
-| `test_explore.sh` | Diagnose the explorer without the RViz button |
-| `preflight.sh` | Layered verification: container, DDS, packages, nodes, topics, TF |
-| `campus_session.sh` | All-in-one verify → tune → patch → launch → monitor |
-| `tune_costmap.sh` | Change inflation radius and footprint padding at runtime |
-| `verify_costmap.sh` | Confirm the costmap topic exists and publishes |
-| `save_rviz_config.sh` | Interactive guide to save the RViz layout to `config/tour.rviz` |
-| `export_tour.py` | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
+| [`auto_walk.sh`](scripts/tools/auto_walk.sh) | Scripted 1 m square patrol via `/goal_pose` — proof the motion path works |
+| [`test_goal_cli.sh`](scripts/tools/test_goal_cli.sh) | Publish a single `PoseStamped` goal from the CLI |
+| [`test_explore.sh`](scripts/tools/test_explore.sh) | Diagnose the explorer without the RViz button |
+| [`preflight.sh`](scripts/tools/preflight.sh) | Layered verification: container, DDS, packages, nodes, topics, TF |
+| [`campus_session.sh`](scripts/tools/campus_session.sh) | All-in-one verify → tune → patch → launch → monitor |
+| [`tune_costmap.sh`](scripts/tools/tune_costmap.sh) | Change inflation radius and footprint padding at runtime |
+| [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
+| [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
+| [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 
 ---
 
 ## Explorer
 
-The custom explorer (`scripts/nodes/frontier_explorer.py`) replaces `explore_lite`.
+The custom explorer ([`scripts/nodes/frontier_explorer.py`](scripts/nodes/frontier_explorer.py)) replaces `explore_lite`.
 Four phases:
 
 1. **Blind lead-in** — when the map has < `blind_trigger_cells` known cells,
@@ -449,13 +486,15 @@ extended to forward the arm's DDS domain, or a second relay added.
 | 5. Scan routine | Move the camera through a plant-scanning path | Pending |
 | 6. AI autonomy | Model commands both the dog and the arm | Long-term |
 
+See [docs/roadmap.md](docs/roadmap.md) for the overall project roadmap.
+
 ---
 
 ## Live Camera
 
 The Go2's front camera publishes on `/frontvideostream` as a custom
 `unitree_go/Go2FrontVideoData` message that RViz can't render. The camera relay
-(`scripts/nodes/go2_camera_relay.py`) subscribes to that topic, decodes the
+([`scripts/nodes/go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py)) subscribes to that topic, decodes the
 H.264/JPEG payload, and republishes as standard `sensor_msgs/Image` on
 `/camera/image_raw`.
 
@@ -467,7 +506,7 @@ The relay launches automatically when `wifi_nav.sh` runs (unless `--no-camera`).
 2. Select **Image** → OK
 3. Set **Topic** to `/camera/image_raw`
 4. Set **Reliability** to `Best Effort` (critical — default Reliable will drop frames)
-5. **File → Save Config As** to `config/tour.rviz` so it loads next time
+5. **File → Save Config As** to [`config/tour.rviz`](config/tour.rviz) so it loads next time
 
 Or view outside RViz:
 
@@ -476,7 +515,7 @@ go2sh
 ros2 run rqt_image_view rqt_image_view /camera/image_raw
 ```
 
-See `docs/camera.md` for full setup and troubleshooting.
+See [docs/camera.md](docs/camera.md) for full setup and troubleshooting.
 
 > **Note:** the hyperspectral camera on the D1-T arm is a separate device from
 > the Go2's front camera. Its ROS 2 / DDS interface will be documented in a
@@ -485,6 +524,9 @@ See `docs/camera.md` for full setup and troubleshooting.
 ---
 
 ## Repository Structure
+
+> Code blocks can't contain clickable links. Use the [Documentation](#documentation)
+> section above, or browse the folders directly on GitHub.
 
 ```
 Unitree_GO2_Agricultural/
@@ -528,6 +570,8 @@ Unitree_GO2_Agricultural/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used
 ```
+
+Folders: [`config/`](config/) · [`docs/`](docs/) · [`scripts/`](scripts/) · [`src/go2_explore_panel/`](src/go2_explore_panel/) · [`cmu-legacy/`](cmu-legacy/)
 
 ---
 
@@ -628,9 +672,9 @@ Common items:
 | `ros2: command not found` on host | ROS runs inside Docker | Use `go2sh` or `docker exec -u root go2-lidar3d bash -lc '…'` |
 | `Invalid frame ID "lidar3d_map"` | Session not up, or Point-LIO not forwarding | Check `mapping.sh --3d --nav` log; check Jetson relay |
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it |
-| Explorer stays `IDLE` | Button not wired, or costmap silent | `./scripts/tools/test_explore.sh` |
-| Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` |
-| Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See **Arm does not respond** above |
+| Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](scripts/tools/test_explore.sh) |
+| Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` — see [docs/camera.md](docs/camera.md) |
+| Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
 
 ---
@@ -649,6 +693,8 @@ pre-commit run --all-files    # first-time baseline
 Hooks cover: Python (ruff), shell (shellcheck), C++ (clang-format), Markdown
 (markdownlint), and general hygiene (trailing whitespace, EOF newline, large
 files). To skip once: `git commit --no-verify`.
+
+Session notes live in [docs/STATUS.md](docs/STATUS.md).
 
 ---
 
@@ -674,8 +720,8 @@ and manual waypoint navigation via RViz. This repo adds:
 ## Legacy
 
 Earlier work based on the CMU `autonomy_stack_go2` running over Ethernet or
-the Unity simulation is archived under `cmu-legacy/` for reference. It is not
-part of the active pipeline. See `cmu-legacy/README.md`.
+the Unity simulation is archived under [`cmu-legacy/`](cmu-legacy/) for reference. It is not
+part of the active pipeline. See [`cmu-legacy/README.md`](cmu-legacy/README.md).
 
 ---
 
@@ -690,4 +736,4 @@ part of the active pipeline. See `cmu-legacy/README.md`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
