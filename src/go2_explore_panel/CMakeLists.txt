@@ -20,6 +20,10 @@ find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets)
 
+# for python pkgs
+find_package(ament_cmake_python REQUIRED)
+find_package(rclpy REQUIRED)
+
 # Include the HEADER in the sources list so AUTOMOC sees it
 add_library(go2_explore_panel SHARED
   src/explore_panel.cpp
@@ -60,5 +64,17 @@ pluginlib_export_plugin_description_file(rviz_common rviz_common_plugins.xml)
 ament_export_include_directories(include)
 ament_export_libraries(go2_explore_panel)
 ament_export_targets(export_go2_explore_panel)
+
+
+# python executable nodes 
+file(GLOB PYTHON_SCRIPTS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}/*.py"
+)
+
+install(PROGRAMS
+  ${PYTHON_SCRIPTS}
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 
 ament_package()

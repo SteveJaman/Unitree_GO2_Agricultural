@@ -64,12 +64,6 @@ file(GLOB PYTHON_SCRIPTS CONFIGURE_DEPENDS
 )
 
 install(PROGRAMS
-  ${PROJECT_NAME}/move_forward.py
-  ${PROJECT_NAME}/cloud_relay_node.py
-  ${PROJECT_NAME}/cmd_vel_bridge.py
-  ${PROJECT_NAME}/map_node.py
-  ${PROJECT_NAME}/pointcloud_to_scan.py
-  ${PROJECT_NAME}/camera_relay.py
   ${PYTHON_SCRIPTS} # added from the above PYTHON_SCRIPTS
   DESTINATION lib/${PROJECT_NAME}
 )
