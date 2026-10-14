@@ -1,0 +1,56 @@
+﻿# Pre-commit hooks for Unitree_GO2_Agricultural.
+#
+# Install (once per workstation):
+#   pip install pre-commit
+#   pre-commit install
+#
+# Run manually across the whole repo:
+#   pre-commit run --all-files
+#
+# To skip once:  git commit --no-verify
+
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^cmu-legacy/'
+      - id: end-of-file-fixer
+        exclude: '^cmu-legacy/'
+      - id: check-yaml
+        exclude: '^cmu-legacy/'
+      - id: check-json
+        exclude: '^cmu-legacy/'
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+        exclude: '^cmu-legacy/'
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+        exclude: '^cmu-legacy/'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: '^scripts/nodes/.*\.py$'
+      - id: ruff-format
+        files: '^scripts/nodes/.*\.py$'
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        files: '^scripts/(runtime|tools)/.*\.sh$'
+        args: [--severity=warning, --exclude=SC1091,SC1090]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        files: '^src/go2_explore_panel/.*\.(cpp|hpp)$'
+        args: [--style=file]

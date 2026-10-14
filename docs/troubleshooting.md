@@ -1,838 +1,569 @@
 # Troubleshooting
 
+[← Back to README](../README.md) · [Status](STATUS.md) · [Roadmap](roadmap.md)
+
 Every failure mode encountered during development, with the actual fix.
+Sections are self-contained. Search for the error message you see.
 
-## How to Use This Document
-
-Each section is a self-contained issue. Search for the error message you see. If your problem is not here, the "Reporting a New Issue" section at the bottom lists what information to gather.
-
----
-
-## ROS 2 Environment
-
-### `AMENT_TRACE_SETUP_FILES: unbound variable`
-
-A shell script uses `set -u` and then sources a ROS 2 setup file. ROS 2 setup files reference undefined variables and abort under `set -u`.
-
-**Fix:** Wrap every source of a ROS 2 setup file with `set +u` and `set -u`.
-
-```bash
-set +u
-source /opt/ros/humble/setup.bash
-source ~/files/autonomy_stack_go2/install/setup.bash
-set -u
-```
-
-Every script in this repo already does this. If you write a new one, follow the same pattern.
+**Jump to:** [Session / Infrastructure](#session--infrastructure) ·
+[Motion](#motion) · [Explorer](#explorer) · [D1-T Arm](#d1-t-arm) ·
+[Camera](#camera) · [RViz / VM](#rviz--vm) ·
+[Diagnostics cheat sheet](#diagnostics-cheat-sheet)
 
 ---
 
-### `Package 'go2_integration_pkg' not found`
+## Session / Infrastructure
 
-ROS 2 cannot find the package.
+### `GO2_CONTAINER: Start the project Docker container first`
 
-**Causes:**
-
-1. You did not run `source install/setup.bash` after building.
-2. The build failed silently.
-3. You are in a different shell than the one you built in.
-
-**Diagnose:**
+`mapping.sh` expects a running container. `wifi_nav.sh` creates it.
 
 ```bash
-ros2 pkg prefix go2_integration_pkg
-echo $AMENT_PREFIX_PATH
+cd ~/files/go2-nav2-wifi
+./setup-lidar3d.sh --laptop
 ```
 
-If `ros2 pkg prefix` errors, the package is not installed.
-
-**Fix:**
+Then re-run:
 
 ```bash
 cd ~/files/Unitree_GO2_Agricultural
-rm -rf build install log
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
-source install/setup.bash
-ros2 pkg list | grep go2_integration_pkg
+./scripts/runtime/wifi_nav.sh
 ```
 
----
+### `ros2: command not found` on the host
 
-### `colcon build` fails with `cannot find -lXXX`
-
-A C++ dependency is missing. The integration package is Python only, so this usually happens when building the autonomy stack or the WebRTC SDK.
-
-**Fix:** Install the missing library. For the autonomy stack, the common missing pieces are:
+ROS 2 runs inside the Docker container. The host has no ROS.
 
 ```bash
-sudo apt install -y \
-    libusb-dev \
-    ros-humble-perception-pcl \
-    ros-humble-sensor-msgs-py \
-    ros-humble-tf-transformations \
-    ros-humble-joy \
-    ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-rosidl-generator-dds-idl
+go2sh
+# or, one-off:
+docker exec -u root go2-lidar3d bash -lc \
+    'source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null && ros2 topic list'
 ```
 
----
+### `Invalid frame ID "lidar3d_map"` on TF lookup
 
-### `colcon build` succeeds but `ros2 pkg executables` is empty
+The session isn't up, or Point-LIO isn't forwarding.
 
-The `install(PROGRAMS ...)` block in `CMakeLists.txt` does not list the scripts.
-
-**Check:**
+1. Check the `mapping.sh --3d --nav` log
+2. Check the Jetson relay is in FULL mode (see [Motion](#motion))
+3. Inspect the TF tree inside the container:
 
 ```bash
-grep -A 10 "install(PROGRAMS" src/go2_integration_pkg/CMakeLists.txt
+go2sh
+ros2 run tf2_tools view_frames
+# writes frames.pdf — open it to see the tree
 ```
 
-The list must include all six nodes:
+If `frames.pdf` is empty, no session is running.
 
-```
-move_forward.py
-cloud_relay_node.py
-cmd_vel_bridge.py
-map_node.py
-pointcloud_to_scan.py
-camera_relay.py
-```
+### `Address already in use` for port 17999 on the Jetson
 
-If any are missing, add them and rebuild.
-
----
-
-## CycloneDDS
-
-### `wlp2s0: does not match an available interface`
-
-The CycloneDDS XML pins an interface name that does not exist on this machine.
-
-**Find the real name:**
+[`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) handles this automatically — it SSHes into the Jetson and
+kills stale relays before starting a new one. If you need to do it by hand:
 
 ```bash
-ip -o link show | awk -F': ' '{print $2}' | grep -v lo
-```
-
-Typical output: `enp0s3`, `enp0s8`, `enp0s9`.
-
-**Fix:** Edit the `<NetworkInterface name="...">` in `config/cyclonedds_ethernet.xml` or `cyclonedds_wireless.xml` to match.
-
----
-
-### `failed to increase socket receive buffer size to at least 4194304 bytes`
-
-The XML has a `<SocketReceiveBufferSize>` element larger than the kernel allows.
-
-**Fix A (recommended):** Remove the `<SocketReceiveBufferSize>` element from the XML.
-
-**Fix B:** Raise the kernel limit.
-
-```bash
-sudo sysctl -w net.core.rmem_max=2147483647
-sudo sysctl -w net.core.wmem_max=2147483647
-
-echo "net.core.rmem_max=2147483647" | sudo tee -a /etc/sysctl.d/60-cyclonedds.conf
-echo "net.core.wmem_max=2147483647" | sudo tee -a /etc/sysctl.d/60-cyclonedds.conf
-sudo sysctl --system
-```
-
----
-
-### `Failed to find a free participant index for domain 0`
-
-CycloneDDS ran out of participant slots. This happens with many nodes and stale participants from crashed runs.
-
-**Fix:**
-
-1. Raise `MaxAutoParticipantIndex` in the XML.
-
-```xml
-<Discovery>
-  <ParticipantIndex>auto</ParticipantIndex>
-  <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
-  ...
-</Discovery>
-```
-
-2. Kill stale processes.
-
-```bash
-ros2 daemon stop
-pkill -9 -f cyclonedds
-pkill -9 -f ros2
-pkill -9 -f pointlio
-pkill -9 -f rviz2
+ssh unitree@192.168.1.9
+pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
+rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
+ss -tlnp | grep 17999        # must be empty
 ```
 
-3. Relaunch.
+Then relaunch the session on the VM.
 
-If the problem persists after both, reboot the VM.
+### `SENSOR-ONLY: no cmd_vel TCP server…` in `slam.log`
+
+**Normal.** That is the sensor relay's own banner. The motion relay is a
+separate process started by `mapping.sh --3d --nav`. Ignore this line.
+
+The line you actually care about is:
+
+```
+cmd_vel TCP server started on port 17999
+```
+
+If that is missing, the motion relay failed. See the
+[port 17999 entry](#address-already-in-use-for-port-17999-on-the-jetson) above.
+
+### Container has stale `GO2_HOST_IP`
+
+The container's DDS bind address is baked in at creation time. If it's
+wrong:
+
+```bash
+docker rm -f go2-lidar3d
+cd ~/files/go2-nav2-wifi
+export GO2_HOST_IP=192.168.1.4 GO2_ROBOT_IP=192.168.1.9
+./setup-lidar3d.sh --laptop
+```
+
+Verify:
+
+```bash
+docker exec go2-lidar3d printenv GO2_HOST_IP        # expect 192.168.1.4
+docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address
+```
+
+### `GO2_CONTAINER` is set to the wrong container
+
+The go2-nav2-wifi repo has two compose services: `go2-humble` (base) and
+`go2-lidar3d` (the one you want). `docker compose up` alone starts the
+wrong one.
+
+Correct command:
+
+```bash
+cd ~/files/go2-nav2-wifi
+./setup-lidar3d.sh --laptop
+```
+
+Or, manually, from `docker/`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.lidar3d.yml -p go2-lidar3d up -d
+```
+
+Confirm with `docker ps` — the container name must be `go2-lidar3d`.
 
 ---
 
-### Two machines can't see each other's topics
+## Motion
 
-Symptom: `ros2 topic list` on host A shows topics. Host B is empty.
+### `/cmd_vel` publishes but the dog doesn't move
 
-**Check in this order:**
-
-1. Same RMW implementation:
+The Jetson motion relay failed to bind port 17999. Check on the Jetson:
 
 ```bash
-echo $RMW_IMPLEMENTATION   # must be rmw_cyclonedds_cpp on both
+ssh unitree@192.168.1.9
+ss -tlnp | grep 17999
+tail -30 /tmp/robot-relay.log
 ```
 
-2. Same domain ID:
+Look for `cmd_vel TCP server started on port 17999`. If it's missing, the
+relay started in sensor-only mode. Restart it in FULL mode:
 
 ```bash
-echo $ROS_DOMAIN_ID        # must match on both
+ssh unitree@192.168.1.9
+pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
+rm -f /tmp/go2-relay-wifi.sock*
+sleep 3
+unset GO2_HOST_IP
+export GO2_HOST_IP=192.168.1.4
+bash ~/robot-relay-wifi.sh
 ```
 
-3. Same CycloneDDS XML:
+Or just relaunch `wifi_nav.sh`, which does this automatically.
+
+### Dog moves but doesn't follow the planned route
+
+Check the chain inside the container:
 
 ```bash
-echo $CYCLONEDDS_URI
+go2sh
+ros2 topic echo /cmd_vel_nav --field linear.x    # smoother input
+ros2 topic echo /cmd_vel --field linear.x        # smoother output
 ```
 
-4. Network reachability:
+If `/cmd_vel_nav` has non-zero values but `/cmd_vel` is all zeros, the
+velocity smoother is filtering too aggressively. Check its config in
+`go2_nav2/launch/lidar3d_controller.launch.py`.
+
+### Dog shudders or steps in place while standing still
+
+The smoother's deadband is too small. The lab-fixes doc added the smoother
+specifically to stop this. If it's still happening:
+
+1. Verify the lab fixes are applied (RPP controller, velocity smoother in
+   the launch file)
+2. Check `/cmd_vel` with no goal active: it should be silent, not 20 Hz of
+   zeros
 
 ```bash
-ping <other-host>
+go2sh
+ros2 topic hz /cmd_vel        # expect no data when idle
 ```
 
-5. Firewall (rare):
+### Dog collides with walls or furniture
 
-```bash
-sudo iptables -L -n | head -20
-```
+Two possibilities:
 
-If all checks pass but topics still do not appear, the XML might be pinning the wrong interface. Confirm with `ip addr show`.
+1. **Collision threshold too tight.** Use
+   [`tune_costmap.sh --safe`](../scripts/tools/tune_costmap.sh) to
+   restore `inflation_radius=0.35`, `footprint_padding=0.02`. Do not go
+   below `inflation_radius=0.20` — that's the Go2's inscribed radius.
+2. **Obstacles aren't in the costmap.** Check `/scan` or `/lidar3d/registered`
+   is reaching the costmap. Run
+   [`verify_costmap.sh`](../scripts/tools/verify_costmap.sh) to confirm the costmap topic publishes.
+
+### `mapping.sh: line 82: GO2_CONTAINER: Start the project Docker container first`
+
+Same as the first entry — the container doesn't exist. Create it with
+`./setup-lidar3d.sh --laptop`.
 
 ---
 
-## Point-LIO
+## Explorer
 
-### `IMU Initializing: 100.0%` then silence, `/state_estimation` empty
+Explorer code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
+Diagnose without the RViz button: [`test_explore.sh`](../scripts/tools/test_explore.sh).
 
-The most common Point-LIO failure. Three causes.
+### Explorer stays `IDLE` after clicking START
 
-**Cause 1: `use_sim_time: true`**
-
-Edit `~/files/autonomy_stack_go2/src/slam/point_lio_unilidar/config/utlidar.yaml`:
-
-```yaml
-use_sim_time: false
-```
-
-Rebuild:
+Either the button isn't publishing, or the explorer isn't subscribed.
 
 ```bash
-cd ~/files/autonomy_stack_go2
-colcon build --packages-select point_lio_unilidar --symlink-install
+go2sh
+ros2 topic echo /explore/resume
+# click START in RViz — expect: data: true
 ```
 
-**Cause 2: Wrong topic names**
-
-Check the config.
+If no message arrives, the RViz panel isn't wired. Bypass it:
 
 ```bash
-grep -E "lid_topic|imu_topic" \
-    ~/files/autonomy_stack_go2/src/slam/point_lio_unilidar/config/utlidar.yaml
+ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: true}"
 ```
 
-Must match what the Jetson publishes:
+If the dog then explores, the bug is in `go2_explore_panel`. Check the
+plugin XML and `CMakeLists.txt` in
+[`src/go2_explore_panel/`](../src/go2_explore_panel/).
 
-```yaml
-lid_topic: "/utlidar/cloud"
-imu_topic: "/utlidar/imu"
+### Explorer `state=EXPLORING`, `goals_sent=0`
+
+The explorer enabled but frontier detection isn't producing anything.
+Check in order:
+
+1. **Costmap is publishing:**
+
+   ```bash
+   go2sh
+   ros2 topic hz /global_costmap/costmap    # expect ~1 Hz
+   ```
+
+2. **Explorer is subscribed:**
+
+   ```bash
+   ros2 topic info /global_costmap/costmap --verbose
+   # Subscription count should be 1
+   ```
+
+3. **Frontier detection is running.** Look at the log tail:
+
+   ```bash
+   docker exec go2-lidar3d tail -30 /tmp/frontier.log
+   # should show: detect_frontiers: known=N frontiers=K
+   ```
+
+4. **If `frontiers=0`** while RViz shows unexplored edges:
+   - Lower the cluster threshold:
+     ```bash
+     EXPLORE_MIN_FRONTIER_SIZE=2 ./scripts/runtime/wifi_nav.sh
+     ```
+   - Or drive the dog manually for 10 s to open up the map
+   - Check the costmap topic name — some builds use a different one:
+     ```bash
+     ros2 topic list | grep costmap
+     ```
+     Then override:
+     ```bash
+     EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
+     ```
+
+### Explorer loops on the same frontier
+
+The blacklist isn't catching failed goals. Verify `step_explore()` computes
+`tag` with the map origin offset (the block near `tag = (int(...))`). This
+was fixed in the current code — if you still see the loop, the file may
+have reverted.
+
+### Explorer finds frontiers but sends no goals
+
+`publish_goal()` early-returns if a goal is already active and hasn't timed
+out. Watch `/explore/status` for `goals_sent`. If it stays at 0 while
+`FRONTIER:` lines appear, the previous goal is never clearing.
+
+Check `tick_active_goal()`:
+- `dist < goal_xy_tol` → goal reached, clears
+- `progress_timeout` → abandons, clears
+- `goal_timeout` → abandons, clears
+
+If none fire, `get_robot_pose()` is returning `None`:
+
+```bash
+go2sh
+ros2 run tf2_ros tf2_echo lidar3d_map base_link
 ```
 
-**Cause 3: `transform_everything` crashed**
+If this prints nothing, TF is broken. See the
+[`Invalid frame ID` entry](#invalid-frame-id-lidar3d_map-on-tf-lookup) above.
 
-The autonomy stack includes a Python node that transforms raw topics. If it crashes, Point-LIO gets no data.
+### Explorer immediately finishes with `state=DONE`
 
-Fix: comment out its include in `system_real_robot.launch` and rebuild `vehicle_simulator`.
+The map is too sparse, or `min_known_cells` is never reached. Check the
+log for `Waiting for map to grow: N/200`. If `N` is stuck at a low value,
+the costmap isn't receiving data or is a rolling window that's mostly
+unknown.
+
+Solutions:
+- Drive the dog manually for 10 s to open up the map
+- Lower `EXPLORE_MIN_KNOWN_CELLS=50 ./scripts/runtime/wifi_nav.sh`
+
+### Explorer's STOP button doesn't halt the dog
+
+The emergency stop was fixed to publish on `/cmd_vel` (bypassing the
+smoother) so it overrides Nav2's controller. Verify the fix is in the
+file:
+
+```bash
+grep -A2 "def emergency_stop" scripts/nodes/frontier_explorer.py
+```
+
+Should show `self.stop_pub.publish(stop)`, not `self.cmd_vel_pub.publish`.
+If it still uses `cmd_vel_pub`, the file reverted — re-apply the fix.
 
 ---
 
-### RViz shows `No transform to fixed frame [map]`
+## D1-T Arm
 
-Point-LIO has not published the `map -> camera_init` transform yet.
+Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) and
+[`start_arm.sh`](../scripts/runtime/start_arm.sh).
 
-**Causes:**
+### Arm does not respond to commands
 
-1. Point-LIO is stuck (see previous section).
-2. It is too early. Wait 30 seconds after launch.
-3. The robot has not moved enough for initialization.
+1. **Check the interface name.** Inside the container:
 
-**Workaround:** In RViz, change the Fixed Frame from `map` to `body` or `base_link` until the map frame appears.
+   ```bash
+   go2sh
+   ip -brief link
+   ```
 
----
+   The `--iface` flag must match the interface the arm is on.
 
-## Mapping Node
+2. **Check the arm is powered.** 24V DC via the barrel jack. The arm's
+   controller should show activity on power.
 
-### `map_node` starts but `/map/occupancy` is not visible in RViz
+3. **Check the RJ45.** The arm should be on the same network segment as
+   the Go2's onboard switch.
 
-**Cause 1: QoS mismatch**
+4. **Verify the SDK2 is installed:**
 
-RViz requires `TRANSIENT_LOCAL` durability for the Map display. Check:
+   ```bash
+   docker exec -u root go2-lidar3d bash -lc 'python3 -c "import unitree_sdk2py; print(\"ok\")"'
+   ```
 
-```bash
-ros2 topic info /map/occupancy -v
-```
+5. **Read joint feedback:**
 
-The publisher must show `Durability: TRANSIENT_LOCAL`. If it shows `VOLATILE`, the node was built from an older version. Rebuild.
+   ```bash
+   docker exec -u root go2-lidar3d bash -lc '
+       python3 /tmp/d1_arm_control.py --iface <iface> feedback
+   '
+   ```
 
-**Cause 2: Topic name mismatch in RViz**
+   If feedback arrives but commands do nothing, the motors may not be
+   enabled — run `enable` first.
 
-In the Map display settings, confirm the Topic field says exactly `/map/occupancy`.
+### `ModuleNotFoundError: No module named 'unitree_sdk2py'`
 
----
-
-### `map_node` runs but no data arrives
-
-**Cause: Cloud topic does not exist**
-
-Check the node startup log. It prints the topics it auto-detected:
-
-```
-map_node started
-   cloud in : /registered_scan
-   odom in  : /state_estimation
-```
-
-If the auto-detection picked a topic that has no publisher, force it manually.
+The SDK isn't installed in the container. Install it:
 
 ```bash
-ros2 run go2_integration_pkg map_node.py \
-    --ros-args \
-    -p cloud_topic:=/utlidar/cloud_deskewed \
-    -p odom_topic:=/utlidar/robot_odom
+docker exec -u root go2-lidar3d bash -lc '
+    cd /tmp
+    git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+    cd unitree_sdk2_python
+    export CYCLONEDDS_HOME=/opt/ros/humble
+    pip3 install -e .
+'
 ```
 
-**Cause: TF tree is incomplete for RGB fusion**
+### `Could not locate cyclonedds` during SDK2 install
 
-If `use_camera` is true but no TF connects `map` to the camera frame, the fusion silently skips. The map still builds, but without color. Check the terminal for repeated "TF lookup failed" debug messages.
+The SDK needs cyclonedds headers. Two options:
 
----
-
-### `map_node` crashes on Ctrl+C
-
-The save routine runs on shutdown. If `open3d` is missing, the mesh reconstruction raises and the node exits uncleanly.
-
-**Fix:** Either install open3d, or disable the mesh step.
+**Option A — point at the ROS 2 install:**
 
 ```bash
-pip install --user open3d
+docker exec -u root go2-lidar3d bash -lc '
+    cd /tmp/unitree_sdk2_python
+    export CYCLONEDDS_HOME=/opt/ros/humble
+    pip3 install -e .
+'
 ```
 
-The node logs "Reconstructing mesh..." before the crash if this is the cause.
-
----
-
-### Mesh reconstruction is slow
-
-Poisson reconstruction on 5+ million points takes minutes.
-
-**Fix:** Reduce the input cloud size. Edit `core/mapping.py`:
-
-```python
-@dataclass
-class MapConfig:
-    max_points: int = 2_000_000      # reduce from 8 million
-    downsample_voxel_m: float = 0.05  # coarser voxels
-    poisson_depth: int = 8            # reduce from 9
-```
-
-Smaller values mean faster reconstruction and lower memory.
-
----
-
-## SLAM Toolbox
-
-### `slam_toolbox` does not start
-
-The package is not installed.
+**Option B — build cyclonedds from source:**
 
 ```bash
-sudo apt install ros-humble-slam-toolbox
+docker exec -u root go2-lidar3d bash -lc '
+    cd /tmp
+    git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
+    cd cyclonedds && mkdir build install && cd build
+    cmake .. -DCMAKE_INSTALL_PREFIX=../install
+    cmake --build . --target install
+    cd /tmp/unitree_sdk2_python
+    export CYCLONEDDS_HOME=/tmp/cyclonedds/install
+    pip3 install -e .
+'
 ```
 
-If the launch file errors with "executable not found", verify:
+### Arm moves but reports wrong joint angles in feedback
+
+The arm's DDS topic may be publishing on a different scale or offset. Check
+the raw message:
 
 ```bash
-ros2 pkg executables slam_toolbox
+docker exec -u root go2-lidar3d bash -lc '
+    source /opt/ros/humble/setup.bash
+    ros2 topic echo /arm_state --once
+'
 ```
 
-Should list `async_slam_toolbox_node`.
+Compare to the joint angles you commanded. If there's a scale or sign
+difference, the parsing in `d1_arm_control.py::_on_feedback` needs
+adjusting.
 
----
+### Arm reachable from Jetson but not from VM container
 
-### SLAM map drifts or loops break
-
-**Cause: Odometry is bad or missing.**
-
-Check the odometry topic:
+The Wi-Fi relay may not be forwarding the arm's DDS domain. Check on the
+Jetson:
 
 ```bash
-ros2 topic hz /odom
+ssh unitree@192.168.1.9
+ros2 topic list | grep arm
 ```
 
-If it is silent, no odometry is being published. SLAM needs it. Point-LIO publishes `/state_estimation`, which is odometry-like. Add a static transform to remap if needed.
-
-**Cause: Scan matches are too sparse.**
-
-In `slam_mapping.launch.py`, the `minimum_time_interval` parameter is 0.2 seconds. At 10 Hz LiDAR, that means every other scan is used. Reduce to 0.1 for denser scans.
-
----
-
-## Localization (AMCL)
-
-### Robot pose jumps around
-
-**Cause: Wrong initial pose.**
-
-Click `2D Pose Estimate` in RViz. Drag on the map at the robot's actual location and heading. AMCL converges after a few seconds of motion.
-
-**Cause: Scan does not match the map.**
-
-The LiDAR range or height filter may be wrong. Check that `/scan` matches the walls in the map. If not, adjust `min_height` and `max_height` in `pointcloud_to_scan.py`.
-
----
-
-### `AMCL` does not publish
-
-The lifecycle manager may not have activated it.
-
-```bash
-ros2 lifecycle get /amcl
-```
-
-Should show `active`. If it shows `unconfigured`, the lifecycle manager failed. Check:
-
-```bash
-ros2 node list | grep lifecycle
-```
-
-Should list `lifecycle_manager_localization`. If not, `localization.launch.py` failed to start.
-
----
-
-## Nav2 Navigation
-
-### Nav2 does not start
-
-The full stack needs many packages. Install them.
-
-```bash
-sudo apt install -y \
-    ros-humble-nav2-bringup \
-    ros-humble-nav2-amcl \
-    ros-humble-nav2-map-server \
-    ros-humble-nav2-lifecycle-manager \
-    ros-humble-nav2-controller \
-    ros-humble-nav2-planner \
-    ros-humble-nav2-bt-navigator \
-    ros-humble-nav2-behaviors \
-    ros-humble-nav2-navfn-planner \
-    ros-humble-nav2-regulated-pure-pursuit-controller
-```
-
----
-
-### Nav2 starts but the robot does not move
-
-**Cause 1: No goal set.**
-
-Click `2D Goal Pose` in RViz and drag. A green arrow appears. The planner produces a blue path.
-
-**Cause 2: `/cmd_vel` is not consumed.**
-
-Check the topic:
-
-```bash
-ros2 topic hz /cmd_vel
-```
-
-If it shows nothing, the controller is not producing commands. Check the costmap:
-
-```bash
-ros2 topic echo /local_costmap/costmap --once
-```
-
-If the costmap is empty, the local planner has no obstacle data and produces no path.
-
-**Cause 3: Costmap does not see obstacles.**
-
-The costmap layers read from `/scan`. Verify:
-
-```bash
-ros2 topic hz /scan
-```
-
-If silent, `pointcloud_to_scan.py` is not running or its input topic is wrong. Check its terminal output.
-
----
-
-### Nav2 goal is rejected
-
-**Cause: Goal is outside the loaded map, or in an obstacle.**
-
-The Nav2 planner only accepts goals in free space within the map bounds. Try a goal closer to the robot.
-
-**Cause: Wrong map loaded.**
-
-`localization.launch.py` loads the map from `map_file`. Confirm the path is correct.
-
-```bash
-ls -la ~/go2_maps/my_map.yaml
-```
-
----
-
-## Robot Motion
-
-### Robot does not move when a waypoint is set
-
-**Prerequisite: Robot is standing.**
-
-The autonomy stack does not stand the robot. Use the physical remote.
-
-**Prerequisite: Robot is in Sport Mode.**
-
-Default after standing. Verify in the Unitree app.
-
-**Check `/cmd_vel`:**
-
-```bash
-ros2 topic hz /cmd_vel
-```
-
-If silent, the planner is not producing commands. If publishing, the issue is between the VM and the Jetson.
-
-**On the Jetson side:**
-
-```bash
-ssh unitree@192.168.123.18
-source /opt/ros/foxy/setup.bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=0
-
-ros2 topic hz /api/sport/request
-```
-
-If silent, the VM is not sending commands. If publishing, the robot itself is refusing. Check the app for estop, lock state, or low battery.
-
----
-
-### `move_forward.sh` runs but nothing happens
-
-**Checklist:**
-
-1. Robot is standing.
-2. Robot is in Sport Mode.
-3. `ping 192.168.123.18` works.
-4. `ROS_DOMAIN_ID=0` in the script.
-5. The script printed `Moving forward: vx=0.3 m/s for 3.0s`.
-
-If all pass and the robot still does not move, the Unitree Sport API rejected the command.
-
-Verify message type:
-
-```bash
-ros2 topic info /api/sport/request
-```
-
-Should show `unitree_api/msg/Request`. A different type means the wrong package was sourced.
+If the arm appears on the Jetson but not in the container, the relay needs
+to include the arm's DDS topics. This is an upstream
+[`go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) change,
+not something the current scripts can fix.
 
 ---
 
 ## Camera
 
-### `/camera/image_raw` does not exist
+Full camera setup: [camera.md](camera.md). Relay code:
+[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py).
 
-**Cause: WebRTC SDK not running.**
+### Relay crashes on start
 
-The camera stream comes from the WebRTC SDK, not from native DDS. Start it in a separate terminal.
+Missing dependencies inside the container.
 
 ```bash
-source /opt/ros/humble/setup.bash
-source ~/files/ros2_ws/install/setup.bash
-export ROBOT_IP="192.168.137.33"
-export CONN_TYPE="webrtc"
-
-ros2 launch go2_robot_sdk robot.launch.py \
-    rviz2:=false nav2:=false slam:=false \
-    foxglove:=false joystick:=false teleop:=false
+docker exec -u root go2-lidar3d apt-get update
+docker exec -u root go2-lidar3d apt-get install -y \
+    ros-humble-cv-bridge python3-opencv
 ```
 
-Wait for `Robot 0 validated and ready`.
+### RViz Image display is empty
 
-**Cause: Ethernet-only setup.**
+QoS mismatch. The relay publishes with `BEST_EFFORT`; RViz defaults to
+`RELIABLE`. In the Image display properties, set **Reliability Policy** to
+`Best Effort`. This is the single most common cause.
 
-If you are running the CMU stack over Ethernet and the WebRTC SDK is not active, the camera stream is unavailable. Only the LiDAR and IMU are published natively. To get the camera over Ethernet, you would need a USB camera on the Jetson, or the WebRTC SDK running in parallel.
+### `frame not JPEG-decodable` in `camera_relay.log`
+
+Firmware ships raw H.264 instead of JPEG. Try lowering the resolution:
+
+```bash
+# In wifi_nav.sh, change -p resolution:=720p to -p resolution:=360p
+```
+
+Or install `python3-opencv` with H.264 support (see relay crashes above).
+
+### Camera feed stutters or lags
+
+Wi-Fi bandwidth. The relay publishes raw frames on `/camera/image_raw`
+(~27 MB/s at 720p30). Options:
+
+1. Lower resolution (`-p resolution:=360p`)
+2. Move to compressed transport — see [camera.md](camera.md)
+3. Close the RViz point cloud display while viewing the camera (RViz
+   renders on the CPU)
+
+### Camera unavailable warning on Jetson
+
+```
+WARN: camera unavailable; install its backend or use GO2_RELAY_CAMERA=0
+```
+
+Not a blocker for exploration. Either install the backend or run the relay
+with `GO2_RELAY_CAMERA=0` to silence it.
 
 ---
 
-### Camera image appears in RViz but is black or garbled
+## RViz / VM
 
-**Cause 1: H.264 decoder failure.**
+### RViz renders slowly with the point cloud visible
 
-The WebRTC SDK logs many `non-existing PPS 0 referenced` warnings. These are harmless. The actual image appears once the decoder syncs to the keyframe.
+RViz renders on the CPU inside the container. To improve:
 
-**Cause 2: QoS mismatch.**
+- Close the heavy point cloud display while tuning
+- Untick displays you aren't using
+- Use bridged networking (not NAT) on the VM
+- Give the VM 4+ cores
 
-RViz requires BEST_EFFORT for high-rate image topics. `camera_relay.py` republishes with the correct QoS. Run it.
+### `view_frames` PDF is empty
+
+`view_frames` needs the TF buffer populated. Wait until a session is fully
+up and `/lidar3d/registered` is publishing at ~10 Hz, then re-run.
+
+### RViz opens with the wrong layout
+
+RViz loads its default layout unless told otherwise. To load your saved
+layout:
 
 ```bash
-ros2 run go2_integration_pkg camera_relay.py
+go2sh
+rviz2 -d ~/files/Unitree_GO2_Agricultural/config/tour.rviz
 ```
 
-Subscribe in RViz to `/camera/image_raw_relayed`, not `/camera/image_raw`.
+If [`config/tour.rviz`](../config/tour.rviz) doesn't exist, see [tour.md](tour.md) for how to save it.
+
+### `rqt_reconfigure` shows no costmap nodes
+
+The costmap nodes must be running for `rqt_reconfigure` to see them. Confirm
+with:
+
+```bash
+go2sh
+ros2 node list | grep costmap
+```
+
+If empty, the session isn't fully up. Wait longer, or check the
+`mapping.sh --3d --nav` log for errors.
 
 ---
 
-### RGB fusion produces grey points instead of coloured
+## Diagnostics cheat sheet
 
-**Cause: TF lookup fails.**
-
-The `map_node.py` needs a transform from the LiDAR frame to the camera optical frame. Check the TF tree:
-
-```bash
-ros2 run tf2_tools view_frames
-```
-
-Open `frames.pdf`. Look for a path from `map` to `camera_color_optical_frame`.
-
-If the path is missing, the camera driver is not publishing its static transforms. Check the WebRTC SDK output or add a static publisher.
-
-```bash
-ros2 run tf2_ros static_transform_publisher \
-    0 0 0 0 0 0 \
-    map camera_color_optical_frame
-```
+| Symptom | First command |
+|---|---|
+| Dog doesn't move | `ssh unitree@192.168.1.9 'ss -tlnp \| grep 17999'` |
+| Explorer does nothing | `docker exec go2-lidar3d tail -30 /tmp/frontier.log` |
+| Costmap missing | `go2sh; ros2 topic list \| grep costmap` |
+| TF broken | `go2sh; ros2 run tf2_ros tf2_echo lidar3d_map base_link` |
+| Camera empty | `go2sh; ros2 topic hz /camera/image_raw` |
+| Arm unresponsive | `go2sh; python3 /tmp/d1_arm_control.py --iface <iface> feedback` |
+| Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
+| Verify everything | [`./scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) |
 
 ---
 
-## Wireless
+## Reporting a new issue
 
-### Jetson has no Wi-Fi interface
+Include:
 
-**Confirmed by:**
+1. The exact command that failed
+2. Full error output (do not truncate)
+3. Which component (`wifi_nav`, `mapping.sh`, `frontier_explorer`, arm,
+   camera, etc.)
+4. The session log folder from `~/files/go2-nav2-wifi/ws/log/mapping.*/`
 
-```bash
-ssh unitree@192.168.123.18
-ip link
-```
+The session log folder contains:
+- `slam.log` — Point-LIO and sensor relay output
+- `motion.log` — cmd_vel TCP server and sport bridge
+- `rviz.log` — RViz stdout/stderr
 
-If no `wlan0`, `wlp*`, or `wlx*` appears, the Jetson has no Wi-Fi chipset. Only the front board has Wi-Fi, and it does not route SSH or DDS.
+Those three files answer most questions.
 
-**Fix:** Add a USB Wi-Fi dongle or use a travel router. See `docs/wireless.md`.
-
----
-
-### Wi-Fi dongle not detected on the Jetson
-
-```bash
-lsusb
-```
-
-If the dongle does not appear, try a different USB port. Check `dmesg | tail -20` for kernel messages.
-
-**Known-good chipsets:** Ralink RT5572 (Panda PAU09), Atheros AR9271 (Alfa AWUS036NHA).
-
-**Known-problematic:** Realtek RTL8812BU (requires custom driver compile), TP-Link TL-WN722N v2/v3.
-
----
-
-### Multicast discovery fails on Wi-Fi
-
-**Cause: Access point blocks multicast.**
-
-Native DDS discovery uses multicast. Most consumer Wi-Fi routers block it.
-
-**Fix:** Edit `config/cyclonedds_wireless.xml` to use explicit peers.
-
-```xml
-<Discovery>
-  <Peers>
-    <Peer address="192.168.1.100"/>
-    <Peer address="192.168.1.101"/>
-  </Peers>
-</Discovery>
-```
-
-Also set `<AllowMulticast>false</AllowMulticast>`.
-
-Replace the addresses with the actual Wi-Fi IP of the workstation and the Jetson.
-
----
-
-## SSH
-
-### `ssh: connect to host 192.168.123.18 port 22: Connection refused`
-
-**Cause 1: Wrong IP.**
-
-The front board at `192.168.137.33` does not run sshd. Use the Jetson's Ethernet IP `192.168.123.18`.
-
-**Cause 2: sshd is bound to an internal interface.**
-
-Verify with `sudo ss -tlnp | grep :22` on the Jetson. If it shows `0.0.0.0:22` or `:::22`, sshd is listening on all interfaces. If it shows only `192.168.123.18:22`, it is bound to Ethernet only. Wi-Fi SSH would fail.
-
-**Fix (only if you need Wi-Fi SSH):** Edit `/etc/ssh/sshd_config` on the Jetson. Comment out any `ListenAddress` line. Restart sshd.
-
-```bash
-sudo systemctl restart ssh
-```
-
----
-
-### `Permission denied, please try again` repeatedly
-
-**Cause: Wrong username.**
-
-Windows SSH defaults to your Windows username. Always specify the Unix user.
-
-```bash
-ssh unitree@192.168.123.18
-```
-
-Password is `123` on the EDU unit.
-
----
-
-## Git
-
-### `Permission to <user>/<repo>.git denied`
-
-You are using a GitHub password. GitHub requires a Personal Access Token or an SSH key.
-
-**Fix (token):**
-
-1. Go to https://github.com/settings/tokens
-2. Generate new token (classic). Scope: `repo`.
-3. Copy the token.
-4. `git push` and paste the token as the password.
-
-**Fix (SSH, recommended long-term):**
-
-```bash
-ssh-keygen -t ed25519 -C "you@example.com"
-cat ~/.ssh/id_ed25519.pub
-```
-
-Add the output to https://github.com/settings/keys. Then:
-
-```bash
-git remote set-url origin git@github.com:USER/REPO.git
-git push
-```
-
----
-
-## General
-
-### `bash: ./scripts/foo.sh: Permission denied`
-
-Missing executable bit.
-
-```bash
-chmod +x scripts/*.sh
-```
-
----
-
-### `bash: ./scripts/foo.sh: /bin/bash^M: bad interpreter`
-
-Windows CRLF line endings.
-
-```bash
-sudo apt install -y dos2unix
-dos2unix scripts/*.sh
-```
-
-Or:
-
-```bash
-sed -i 's/\r$//' scripts/*.sh
-```
-
----
-
-### RViz camera warnings `/camera/image/raw`
-
-Harmless. The CMU RViz config references camera topics that may not exist. Ignore them.
-
----
-
-### RViz runs at 15 fps or lower
-
-Reduce load:
-
-1. Disable the RegScan display.
-2. Set the PointCloud2 decay time to 0.
-3. Reduce the Map display alpha.
-4. Close unused Image panels.
-
-If RViz is still slow, run it on a lightweight window manager or use `rviz2 -d minimal.rviz`.
-
----
-
-## Reporting a New Issue
-
-If your problem is not listed, gather this information before filing an issue or asking for help.
-
-1. Full error message.
-2. Output of:
-
-```bash
-echo "RMW:        $RMW_IMPLEMENTATION"
-echo "DOMAIN_ID:  $ROS_DOMAIN_ID"
-echo "CYCLONEDDS: $CYCLONEDDS_URI"
-```
-
-3. `ros2 node list`
-4. `ros2 topic list`
-5. The exact command that failed.
-6. The last 30 lines of the failing terminal.
-
-With that information, the cause is usually identifiable in one pass.
----
-
-## QoS Mismatch — Topic Exists But No Data Arrives
-
-Symptom: `ros2 topic list` shows the topic. `ros2 topic echo` on the publisher side works. But your node never receives anything, and no error is printed.
-
-Cause: The subscriber's QoS is **RELIABLE** but the publisher's is **BEST_EFFORT**. DDS silently refuses this combination.
-
-This bit `map_node.py` on 2026-10-07. The odom subscriber used the default RELIABLE profile, but Point-LIO publishes `/state_estimation` as BEST_EFFORT. The mock test passed because the mock used RELIABLE; the real robot would have silently failed.
-
-**Fix applied:** the odom subscriber now uses `sensor_qos(10)` (BEST_EFFORT), matching the publisher.
-
-**Diagnostic:**
-```bash
-ros2 topic info <topic> -v
-
-Compare the "Reliability" on the publisher block and the subscriber block. If subscriber is RELIABLE and publisher is BEST_EFFORT, that's the bug.
-
-Rule: Always use sensor_qos(...) (BEST_EFFORT) on subscribers to sensor and Point-LIO output topics. Only use RELIABLE for control topics and latched maps.
-
----
-
-## QoS Mismatch — Topic Exists But No Data Arrives
-
-Symptom: `ros2 topic list` shows the topic. But your node never receives anything, and no error is printed.
-
-Cause: The subscriber QoS is **RELIABLE** but the publisher QoS is **BEST_EFFORT**. DDS silently refuses this combination.
-
-This bit `map_node.py` on 2026-10-07. The odom subscriber used the default RELIABLE profile, but Point-LIO publishes `/state_estimation` as BEST_EFFORT.
-
-**Fix applied:** the odom subscriber now uses `sensor_qos(10)` (BEST_EFFORT).
-
-**Diagnostic:** `ros2 topic info <topic> -v` — compare the Reliability on publisher vs subscriber blocks.
-
-**Rule:** Always use `sensor_qos(...)` (BEST_EFFORT) for sensor and Point-LIO output topics. Only use RELIABLE for control topics and latched maps.
+See [STATUS.md](STATUS.md) for session-by-session notes and
+[roadmap.md](roadmap.md) for milestones.
