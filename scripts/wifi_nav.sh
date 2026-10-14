@@ -49,6 +49,7 @@ ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${SCRIPT_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${SCRIPT_DIR}/frontier_explorer.py"
+CAMERA_RELAY_SCRIPT="${SCRIPT_DIR}/go2_camera_relay.py"
 
 # --- SAFETY thresholds -----------------------------------------------------
 SAFETY_STOP_DISTANCE="${SAFETY_STOP_DISTANCE:-0.45}"
@@ -57,17 +58,31 @@ SAFETY_MAX_VEL_X="${SAFETY_MAX_VEL_X:-0.20}"
 SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
 SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
+# --- Explore runtime overrides --------------------------------------------
+# Defaults tuned for the go2-nav2-wifi stack. Flip blind/coverage/return to
+# true once the explorer reliably produces goals.
+EXPLORE_MAP_FRAME="${EXPLORE_MAP_FRAME:-lidar3d_map}"
+EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
+EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
+EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
+EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
+EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
+EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
+EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
+
 # --- Parse args ------------------------------------------------------------
 MODE="--nav"
 ACTION="run"
 EXPLORE="false"
 FLOOR_FILTER="false"
+CAMERA="false"
 export GO2_RECORD="${GO2_RECORD:-0}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --explore)      EXPLORE="true" ;;
         --floor-filter) FLOOR_FILTER="true" ;;
+        --camera)       CAMERA="true" ;;
         --plan)         MODE="--plan" ;;
         --nav)          MODE="--nav" ;;
         --record)       export GO2_RECORD=1 ;;
@@ -108,6 +123,18 @@ kill_floor_filter_inside_container() {
     ' 2>/dev/null || true
 }
 
+kill_camera_relay_inside_container() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c '
+        pids=$(ps -eo pid,cmd | grep -E "go2_camera_relay" \
+               | grep -v grep | awk "{print \$1}")
+        if [ -n "$pids" ]; then
+            for pid in $pids; do
+                kill -9 "$pid" 2>/dev/null || true
+            done
+        fi
+    ' 2>/dev/null || true
+}
+
 stop_exploration() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
         source /opt/ros/humble/setup.bash
@@ -123,12 +150,14 @@ do_clean() {
     pkill -9 -f "pointlio_mapping"  2>/dev/null || true
     pkill -9 -f "go2_cloud_stamp"   2>/dev/null || true
     pkill -9 -f "frontier_explorer" 2>/dev/null || true
+    pkill -9 -f "go2_camera_relay"  2>/dev/null || true
     pkill -9 -f "safety_watchdog"   2>/dev/null || true
 
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
-        echo "[clean] Killing stale explore + floor filter inside container..."
+        echo "[clean] Killing stale explore + floor filter + camera inside container..."
         kill_explore_inside_container
         kill_floor_filter_inside_container
+        kill_camera_relay_inside_container
     fi
 
     echo "[clean] Stopping local Docker containers..."
@@ -201,6 +230,7 @@ echo "  Action      : ${ACTION}"
 echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
+echo "  Camera      : ${CAMERA}"
 echo "  GO2_RECORD  : ${GO2_RECORD}"
 echo "  Host IP     : ${GO2_HOST_IP}"
 echo "  Robot       : ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
@@ -259,6 +289,15 @@ if [ "${FLOOR_FILTER}" = "true" ]; then
     fi
 fi
 
+if [ "${CAMERA}" = "true" ]; then
+    if [ -f "${CAMERA_RELAY_SCRIPT}" ]; then
+        echo "[checks] camera relay script present .............. OK"
+    else
+        echo "[checks] camera relay script present .............. MISSING"
+        CAMERA="false"
+    fi
+fi
+
 # ===========================================================================
 # Pre-flight cleanup
 # ===========================================================================
@@ -279,7 +318,7 @@ if [ "${ACTION}" = "check" ]; then
     echo "       export GO2_HOST_IP=${GO2_HOST_IP}"
     echo "       bash ~/robot-relay-wifi.sh"
     echo
-    echo "  2. Then run:  ./wifi_nav.sh [--explore] [--floor-filter]"
+    echo "  2. Then run:  ./wifi_nav.sh [--explore] [--floor-filter] [--camera]"
     exit 0
 fi
 
@@ -340,6 +379,7 @@ cleanup() {
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
         kill_explore_inside_container
         kill_floor_filter_inside_container
+        kill_camera_relay_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     echo "[wifi_nav] Done."
@@ -349,7 +389,7 @@ trap cleanup EXIT INT TERM
 echo "Launching: ./mapping.sh --3d ${MODE}"
 echo
 
-if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
+if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ]; then
     (
         sleep 20
 
@@ -378,6 +418,29 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                 2>/dev/null || true
         fi
 
+        # ---------- Camera relay ----------
+        if [ "${CAMERA}" = "true" ]; then
+            echo "[camera] Killing stale camera relay instances..."
+            kill_camera_relay_inside_container
+
+            echo "[camera] Copying go2_camera_relay.py into container..."
+            docker cp "${CAMERA_RELAY_SCRIPT}" \
+                "${CONTAINER_NAME}:/tmp/go2_camera_relay.py" 2>/dev/null || true
+
+            echo "[camera] Starting camera relay..."
+            docker exec -u root "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && \
+                 source /ws/install/setup.bash 2>/dev/null; \
+                 nohup python3 /tmp/go2_camera_relay.py \
+                     --ros-args \
+                     -p source_topic:=/frontvideostream \
+                     -p output_topic:=/camera/image_raw \
+                     -p frame_id:=camera_link \
+                     -p resolution:=720p \
+                     > /tmp/camera_relay.log 2>&1 &" \
+                2>/dev/null || true
+        fi
+
         # ---------- Custom frontier explorer ----------
         if [ "${EXPLORE}" = "true" ]; then
             echo "[explore] Killing stale explorer instances..."
@@ -401,17 +464,19 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                  exec python3 /tmp/frontier_explorer.py \
                      --ros-args \
                      -p robot_base_frame:=base_link \
-                     -p map_frame:=map \
+                     -p map_frame:=${EXPLORE_MAP_FRAME} \
+                     -p map_topic:=${EXPLORE_MAP_TOPIC} \
                      -p goal_topic:=/goal_pose \
                      -p cmd_vel_topic:=/cmd_vel_nav \
-                     -p min_frontier_size:=8 \
-                     -p min_known_cells:=200 \
-                     -p blind_enable:=true \
+                     -p stop_topic:=${EXPLORE_STOP_TOPIC} \
+                     -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} \
+                     -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} \
+                     -p blind_enable:=${EXPLORE_BLIND_ENABLE} \
                      -p blind_trigger_cells:=100 \
                      -p blind_step_distance:=0.6 \
                      -p blind_step_speed:=0.12 \
-                     -p coverage_enable:=true \
-                     -p return_to_init:=true \
+                     -p coverage_enable:=${EXPLORE_COVERAGE_ENABLE} \
+                     -p return_to_init:=${EXPLORE_RETURN_TO_INIT} \
                      -p tick_hz:=1.0" \
                 > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
@@ -449,6 +514,17 @@ if [ "${EXPLORE}" = "true" ] && \
     echo " Last 20 lines of frontier.log:"
     echo "================================================================"
     tail -20 "${NAV2_WIFI_DIR}/ws/log/frontier.log"
+    echo
+fi
+
+# ===========================================================================
+# Post-run: camera relay log tail
+# ===========================================================================
+if [ "${CAMERA}" = "true" ]; then
+    echo "================================================================"
+    echo " Last 10 lines of camera_relay.log:"
+    echo "================================================================"
+    docker exec -u root "${CONTAINER_NAME}" tail -10 /tmp/camera_relay.log 2>/dev/null || echo "  (no log)"
     echo
 fi
 
