@@ -74,7 +74,7 @@ git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree
 
 # Apply lab fixes (RPP + velocity smoother + correct lidar mount)
 cd ~/files/go2-nav2-wifi
-bash ~/files/Unitree_GO2_Agricultural/apply-lab-nav-fixes.sh
+bash apply-lab-nav-fixes.sh   # script lives in the go2-nav2-wifi repo
 
 # Create the Docker container
 export GO2_HOST_IP=192.168.1.4 GO2_ROBOT_IP=192.168.1.9
