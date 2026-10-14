@@ -1,4 +1,4 @@
-# Unitree_GO2_Agricultural
+﻿# Unitree_GO2_Agricultural
 
 Autonomous exploration and navigation layer for the **Unitree Go2 EDU** quadruped.
 This repo sits on top of the [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi)
@@ -9,7 +9,7 @@ panel, a live camera relay, and a full set of orchestration scripts.
 **One command to run everything:**
 
 ```bash
-./scripts/wifi_nav.sh
+./scripts/runtime/wifi_nav.sh
 ```
 
 Power on the dog, stand it, run that. The script does the rest.
@@ -93,8 +93,8 @@ export GO2_HOST_IP=192.168.1.4 GO2_ROBOT_IP=192.168.1.9
 ./setup-lidar3d.sh --laptop
 
 # 4. Set up passwordless SSH to the robot (once)
-cd ~/files/Unitree_GO2_Agricultural/scripts
-./wifi_nav.sh --setup-ssh
+cd ~/files/Unitree_GO2_Agricultural
+./scripts/runtime/wifi_nav.sh --setup-ssh
 ```
 
 ### Every session
@@ -103,8 +103,8 @@ cd ~/files/Unitree_GO2_Agricultural/scripts
 # 1. Power on the dog and stand it up
 
 # 2. Run:
-cd ~/files/Unitree_GO2_Agricultural/scripts
-./wifi_nav.sh
+cd ~/files/Unitree_GO2_Agricultural
+./scripts/runtime/wifi_nav.sh
 
 # 3. In RViz (opens automatically):
 #    a. Wait ~12 s for the map to appear
@@ -147,35 +147,48 @@ terminal to end. The physical remote is the emergency stop.
 Every explorer parameter can be overridden with an env var:
 
 ```bash
-EXPLORE_BLIND_ENABLE=true        ./wifi_nav.sh    # turn blind lead-in on
-EXPLORE_MIN_FRONTIER_SIZE=6      ./wifi_nav.sh    # different frontier size
-EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./wifi_nav.sh
-GO2_ROBOT_IP=192.168.1.42        ./wifi_nav.sh    # different robot IP
+EXPLORE_BLIND_ENABLE=true        ./scripts/runtime/wifi_nav.sh   # turn blind lead-in on
+EXPLORE_MIN_FRONTIER_SIZE=6      ./scripts/runtime/wifi_nav.sh   # different frontier size
+EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
+GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh   # different robot IP
 ```
 
 ---
 
 ## Scripts
 
+### Runtime (`scripts/runtime/`)
+
 | Script | Purpose |
 |---|---|
-| `wifi_nav.sh` | **Main entry point.** One command: relay + Nav2 + RViz + explorer + camera |
+| `wifi_nav.sh` | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
 | `wifi_mapping.sh` | Mapping-only wrapper (no explorer) |
+
+### Nodes (`scripts/nodes/`)
+
+| File | Purpose |
+|---|---|
 | `frontier_explorer.py` | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return |
 | `go2_camera_relay.py` | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | `go2_floor_filter.py` | Floor-plane filter, prevents floor being treated as an obstacle |
+
+### Tools (`scripts/tools/`)
+
+| Script | Purpose |
+|---|---|
 | `auto_walk.sh` | Scripted 1 m square patrol via `/goal_pose` — proof the motion path works |
 | `test_goal_cli.sh` | Publish a single `PoseStamped` goal from the CLI |
 | `test_explore.sh` | Diagnose the explorer without the RViz button |
 | `preflight.sh` | Layered verification: container, DDS, packages, nodes, topics, TF |
 | `campus_session.sh` | All-in-one verify → tune → patch → launch → monitor |
 | `tune_costmap.sh` | Change inflation radius and footprint padding at runtime |
+| `verify_costmap.sh` | Confirm the costmap topic exists and publishes |
 
 ---
 
 ## Explorer
 
-The custom explorer (`scripts/frontier_explorer.py`) replaces `explore_lite`.
+The custom explorer (`scripts/nodes/frontier_explorer.py`) replaces `explore_lite`.
 Four phases:
 
 1. **Blind lead-in** — when the map has < `blind_trigger_cells` known cells,
@@ -210,7 +223,7 @@ Four phases:
 ### Running the explorer manually
 
 ```bash
-docker cp ~/files/Unitree_GO2_Agricultural/scripts/frontier_explorer.py \
+docker cp ~/files/Unitree_GO2_Agricultural/scripts/nodes/frontier_explorer.py \
     go2-lidar3d:/tmp/frontier_explorer.py
 
 docker exec -u root -it go2-lidar3d bash -lc '
@@ -254,8 +267,9 @@ Expected states: `IDLE` → `EXPLORING` → goals on `/goal_pose` → `RETURNING
 
 The Go2's front camera publishes on `/frontvideostream` as a custom
 `unitree_go/Go2FrontVideoData` message that RViz can't render. The camera relay
-(`scripts/go2_camera_relay.py`) subscribes to that topic, decodes the H.264/JPEG
-payload, and republishes as standard `sensor_msgs/Image` on `/camera/image_raw`.
+(`scripts/nodes/go2_camera_relay.py`) subscribes to that topic, decodes the
+H.264/JPEG payload, and republishes as standard `sensor_msgs/Image` on
+`/camera/image_raw`.
 
 The relay launches automatically when `wifi_nav.sh` runs (unless `--no-camera`).
 
@@ -287,19 +301,24 @@ Unitree_GO2_Agricultural/
 │   └── README.md                     # will hold tour.rviz when saved
 ├── docs/
 │   ├── STATUS.md                     # session notes
-│   └── tour.md                       # waypoint mode setup guide
+│   ├── tour.md                       # waypoint mode setup guide
+│   └── roadmap.md                    # Phase 1 roadmap
 ├── scripts/
-│   ├── wifi_nav.sh                   # main orchestrator
-│   ├── wifi_mapping.sh               # mapping-only wrapper
-│   ├── frontier_explorer.py          # custom explorer
-│   ├── go2_camera_relay.py           # camera bridge
-│   ├── go2_floor_filter.py           # floor-plane filter
-│   ├── auto_walk.sh                  # scripted square patrol
-│   ├── test_goal_cli.sh              # single goal publisher
-│   ├── test_explore.sh               # explorer diagnostic
-│   ├── preflight.sh                  # full stack verification
-│   ├── campus_session.sh             # all-in-one session runner
-│   └── tune_costmap.sh               # runtime costmap tuner
+│   ├── runtime/                      # Shell entry points
+│   │   ├── wifi_nav.sh               # main orchestrator
+│   │   └── wifi_mapping.sh           # mapping-only wrapper
+│   ├── nodes/                        # ROS 2 Python nodes
+│   │   ├── frontier_explorer.py      # custom explorer
+│   │   ├── go2_camera_relay.py       # camera bridge
+│   │   └── go2_floor_filter.py       # floor-plane filter
+│   └── tools/                        # Diagnostics and tests
+│       ├── auto_walk.sh
+│       ├── test_goal_cli.sh
+│       ├── test_explore.sh
+│       ├── preflight.sh
+│       ├── campus_session.sh
+│       ├── tune_costmap.sh
+│       └── verify_costmap.sh
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used
@@ -320,9 +339,9 @@ costmaps: `inflation_radius` and `footprint_padding`. Recommended values:
 Change at runtime without restarting:
 
 ```bash
-./scripts/tune_costmap.sh --safe              # restore 0.35 / 0.02
-./scripts/tune_costmap.sh 0.30 0.01           # custom
-./scripts/tune_costmap.sh --show              # current values
+./scripts/tools/tune_costmap.sh --safe              # restore 0.35 / 0.02
+./scripts/tools/tune_costmap.sh 0.30 0.01           # custom
+./scripts/tools/tune_costmap.sh --show              # current values
 ```
 
 Or use `rqt_reconfigure` for sliders:
@@ -381,7 +400,7 @@ If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 | `ros2: command not found` on host | ROS runs inside Docker | Use `go2sh` or `docker exec -u root go2-lidar3d bash -lc '…'` |
 | `Invalid frame ID "lidar3d_map"` | Session not up, or Point-LIO not forwarding | Check `mapping.sh --3d --nav` log; check Jetson relay |
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; verify with `ssh unitree@192.168.1.9 'ss -tlnp \| grep 17999'` |
-| Explorer stays `IDLE` | Button not wired, or costmap silent | `./scripts/test_explore.sh` |
+| Explorer stays `IDLE` | Button not wired, or costmap silent | `./scripts/tools/test_explore.sh` |
 | Explorer `state=EXPLORING, goals_sent=0` | Costmap too sparse, or frame mismatch | `ros2 topic hz /global_costmap/costmap`; check explorer log |
 | `SENSOR-ONLY: no cmd_vel TCP server…` in `slam.log` | **Normal** — sensor relay's own banner | Ignore; motion relay is a separate process |
 | Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` |
