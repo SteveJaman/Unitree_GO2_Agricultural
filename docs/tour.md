@@ -1,105 +1,243 @@
-# Visual Waypoint Setup (RViz)
+# RViz Waypoint Mode and Tour Setup
 
-One-time setup to replace 2D Goal Pose with a waypoint queue and
-visual route planning.
+Setup guide to replace the single-goal "2D Goal Pose" tool with a queued
+waypoint system that draws a visible route on the map.
 
-## Why
+The Nav2 RViz panel is already installed in the container. This guide
+wires it up in the RViz layout and saves it to `config/tour.rviz` so it
+loads automatically in future sessions.
 
-The default RViz setup only has "2D Goal Pose" — one goal at a time,
-no queue, no visible route. The Nav2 RViz panel adds:
+---
+
+## What this gives you
 
 - Numbered waypoint markers that persist on the map
 - A waypoint queue you build by clicking
-- "Start Waypoint Following" button to execute the route
+- **Start Waypoint Following** button to execute the route
 - Live path lines from the robot to the next waypoint
+- Optional live camera feed and costmap display in the same layout
+- A single `config/tour.rviz` file the whole team can share
 
-## Setup (once per workstation)
+---
 
-Launch a session as usual:
+## Prerequisites
 
-    cd ~/files/go2-nav2-wifi
-    ./mapping.sh --3d --nav
+- A running session: `./scripts/runtime/wifi_nav.sh`
+- RViz window open with a live map and a valid TF tree
+  (`lidar3d_map → base_link` resolving)
+- The `nav2_rviz_plugins` package installed (it is, by default, in the
+  `go2-lidar3d` container)
 
-Wait for RViz to open with a live map.
+Verify RViz is showing the map before continuing:
+
+```bash
+go2sh
+ros2 topic hz /global_costmap/costmap      # expect ~1 Hz
+ros2 run tf2_ros tf2_echo lidar3d_map base_link
+```
+
+---
+
+## Setup (one-time, in a running RViz)
 
 ### 1. Add the Nav2 panel
 
-In RViz:
+1. Menu: **Panels → Add New Panel**
+2. Select **nav2_rviz_plugins/Navigation 2**
+3. Click OK
 
-1. Menu: **Panels** → **Add New Panel**
-2. Select **nav2_rviz_plugins/Navigation2**
-3. Click **OK**
+The panel appears docked bottom-left. It contains a **Waypoint Mode**
+checkbox at the top, a **Start Waypoint Following** button, and a
+**Reset** button.
 
-The panel appears docked at the bottom-left. It has a
-**"Waypoint Mode"** checkbox at the top.
+### 2. Add the global path
 
-### 2. Add the global path display
-
-1. In the Displays panel (left side), click **Add**
-2. Find **Path** in the list, click OK
-3. Expand the new Path display, set:
+1. In the Displays panel, click **Add**
+2. Select **Path** → OK
+3. Expand the new Path display and set:
    - **Topic**: `/plan`
-   - **Color**: yellow (or anything visible)
+   - **Color**: yellow (`255; 255; 0`)
    - **Line Style**: Lines
+   - **Line Width**: 0.03
 
-### 3. Add the local path display
+The global path is what the planner intends. It updates each time a new
+waypoint becomes the active goal.
 
-Same as above, but:
+### 3. Add the local path
+
+Same as above but:
 - **Topic**: `/local_plan`
-- **Color**: cyan
+- **Color**: cyan (`0; 255; 255`)
 
-The global path is what the planner intends. The local path is
-what the controller is actually following right now. Both visible
-is useful — when they diverge, the controller is avoiding an
-obstacle.
+The local path is what the controller is following *right now*. When the
+global and local paths diverge, the controller is avoiding an obstacle.
 
-### 4. Add the costmap display (optional)
+### 4. Add the costmap (optional)
 
-Same as above, but:
-- Add **Map**
-- **Topic**: `/global_costmap/costmap`
-- **Color Scheme**: costmap
+1. Add **Map** → OK
+2. **Topic**: `/global_costmap/costmap`
+3. **Color Scheme**: `costmap`
 
-This shows the inflated obstacle zones. Useful for understanding
-why the planner avoids certain areas.
+Shows the inflated obstacle zones. Useful for understanding why the
+planner routes the way it does.
 
-### 5. Save the config
+### 5. Add the live camera (optional)
 
-Menu: **File** → **Save Config As**
+1. Add **Image** → OK
+2. **Topic**: `/camera/image_raw`
+3. **Reliability Policy**: `Best Effort`
+
+The `Best Effort` setting is required. The relay publishes with
+`BEST_EFFORT` QoS; RViz defaults to `RELIABLE`. The mismatch silently
+drops every frame.
+
+See `docs/camera.md` for the full camera setup.
+
+### 6. Save the config
+
+**File → Save Config As**
 
 Save to:
 
-    ~/files/Unitree_GO2_Agricultural/config/tour.rviz
+```
+~/files/Unitree_GO2_Agricultural/config/tour.rviz
+```
 
 Then commit:
 
-    cd ~/files/Unitree_GO2_Agricultural
-    git add config/tour.rviz
-    git commit -m "Add RViz config with waypoint mode and path displays"
-    git push origin main
+```bash
+cd ~/files/Unitree_GO2_Agricultural
+git add config/tour.rviz
+git commit -m "Add RViz layout with waypoint panel and path displays"
+git push origin main
+```
 
-## Using it every session
+---
 
-Once saved, load the config with RViz's `-d` flag:
+## Using waypoint mode
 
-    rviz2 -d ~/files/Unitree_GO2_Agricultural/config/tour.rviz
-
-`mapping.sh` currently launches RViz with its own config. To use
-yours instead, either:
-
-- **Manually**: close RViz, relaunch with `-d`
-- **Permanently**: edit `mapping.sh` to pass `-d` (see below)
-
-## Workflow with waypoints
+### Building a route
 
 1. In the Nav2 panel, check **Waypoint Mode**
-2. Select the **Nav2 Goal** tool in the toolbar
-3. Click on the map — a numbered marker appears
-4. Click more points — they queue in order
-5. Watch the yellow path line draw to waypoint 1
-6. Press **Start Waypoint Following** in the Nav2 panel
-7. The dog navigates each waypoint in order
-8. Path line updates as each one is reached
+2. Select the **Nav2 Goal** tool in the RViz toolbar
+3. Click on the map where you want the first waypoint
+   - A numbered marker appears (1)
+   - The yellow path line draws from the robot to waypoint 1
+4. Click a second point
+   - Marker 2 appears
+   - The path line extends to it
+5. Continue adding waypoints in order
 
-To remove a waypoint: select it and press **Delete**.
-To clear the queue: press the **Reset** button in the panel.
+### Executing the route
+
+Press **Start Waypoint Following** in the Nav2 panel.
+
+The robot navigates to waypoint 1, then 2, then 3, in order. Each marker
+turns green as it is reached. When all waypoints are reached, the panel
+returns to idle.
+
+### Editing the route
+
+| Action | How |
+|---|---|
+| Remove one waypoint | Select it in the panel list, press **Delete** |
+| Clear the queue | Press **Reset** in the Nav2 panel |
+| Reorder | Not supported in the standard panel — clear and rebuild |
+| Pause | Press **Stop** or toggle off Waypoint Mode |
+
+### Emergency stop
+
+The waypoint panel doesn't have a stop button that halts the robot
+immediately. Options:
+
+- **Physical remote** — the safest, always works
+- **Ctrl+C** in the terminal running `wifi_nav.sh` — stops everything
+- **STOP button** in the Go2 Explore panel — publishes `Bool(false)`
+  to `/explore/resume`, which stops the explorer but not an in-flight
+  waypoint route
+
+If you need a mid-route stop, the remote is the reliable choice.
+
+---
+
+## Saving and sharing the layout
+
+Once `config/tour.rviz` is committed, every teammate gets the same layout
+on a fresh clone. Launch RViz with it explicitly:
+
+```bash
+go2sh
+rviz2 -d ~/files/Unitree_GO2_Agricultural/config/tour.rviz
+```
+
+Or modify `wifi_nav.sh` to pass `-d` when starting RViz (see the
+`mapping.sh` wrapper, which handles RViz launch internally).
+
+The layout is part of the repo now. If someone edits the panel arrangement
+in RViz, they should **File → Save Config As** to the same path and commit
+the diff.
+
+---
+
+## Helper script
+
+`scripts/tools/save_rviz_config.sh` prints these exact steps in the
+terminal while RViz is open. Useful as a reminder if you forget the order:
+
+```bash
+./scripts/tools/save_rviz_config.sh
+```
+
+The script doesn't modify anything — it's a checklist you run alongside
+RViz.
+
+---
+
+## Combining with the explorer
+
+Waypoint mode and the frontier explorer are independent:
+
+- **Waypoint mode** — you click, the robot goes to each point in order
+- **Explorer** — the robot picks its own frontiers and sends itself goals
+
+Both publish to `/goal_pose`. **Do not run both at once.** The explorer
+will fight your waypoints, and vice versa. If you want to switch:
+
+1. Stop waypoint following (or clear the queue)
+2. Disable the explorer: publish `Bool(false)` to `/explore/resume`
+3. Then start the other
+
+If you want both available in the same session, the cleanest pattern is:
+- Use waypoint mode for a specific route (e.g. a tour capture pass)
+- Use the explorer for open-ended mapping
+
+Pick one per session.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Nav2 panel not in "Add New Panel" list | `nav2_rviz_plugins` not installed | `docker exec -u root go2-lidar3d apt-get install -y ros-humble-nav2-rviz-plugins` |
+| Clicking "Nav2 Goal" adds a goal, not a waypoint | Waypoint Mode unchecked | Check the box at the top of the Nav2 panel |
+| Path line doesn't appear | Path display missing or wrong topic | Add Path on `/plan`; verify `/plan` publishes while a goal is active |
+| Waypoints don't persist on the map | Waypoint panel closed or reset | Re-add the panel; check **File → Save Config As** was done |
+| Robot doesn't start following | Panel didn't receive the click, or the BT navigator is inactive | Check `ros2 lifecycle get /bt_navigator` returns `active` |
+| All waypoints turn red at once | Planner rejected them (goal inside an inflated obstacle) | Move waypoints away from walls; run `./scripts/tools/tune_costmap.sh --safe` |
+| Saved `tour.rviz` doesn't load | Version mismatch or a plugin missing | Open RViz without `-d`, redo the setup, save again |
+
+---
+
+## What's next after waypoints work
+
+Waypoint mode is Milestone 1 in `docs/roadmap.md`. Once a 3-waypoint
+route executes cleanly, the next steps are:
+
+1. **Milestone 2** — verify the explorer produces goals on a live map
+2. **Milestone 3** — camera backend fix on the Jetson
+3. **Milestone 4** — RTAB-Map reconstruction (dense 3D tour)
+4. **Milestone 5** — spin-on-goal capture (`-p spin_on_goal:=true`)
+5. **Milestone 6** — one-command end-to-end tour capture
+
+See `docs/roadmap.md` for the full list and status.
