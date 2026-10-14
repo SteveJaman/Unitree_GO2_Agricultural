@@ -2,15 +2,11 @@
 """
 d1_arm_control.py
 
-Control the Unitree D1-T arm via DDS without relying on
-unitree_sdk2py.idl.unitree_arm (which doesn't exist in the public Python SDK).
-
-Defines the missing DDS types manually using cyclonedds.idl and talks to the
-arm's DDS topics directly.
+Control the Unitree D1-T arm via DDS.
 
 DDS topics:
   rt/arm_Command        — command bus (ArmString_, JSON payload)
-  current_servo_angle   — joint telemetry (PubServoInfo_, float array)
+  current_servo_angle   — joint telemetry (PubServoInfo_, 7 floats)
 
 Requires:
     pip install cyclonedds
@@ -22,32 +18,24 @@ Usage:
     python3 d1_arm_control.py --iface enp0s8 joint 0 1.57
     python3 d1_arm_control.py --iface enp0s8 joints 0 0.5 0.5 0 0 0
     python3 d1_arm_control.py --iface enp0s8 feedback
-    python3 d1_arm_control.py --iface enp0s8 sequence enable sleep 1 home
-
-    # Debug output showing the exact DDS config
     python3 d1_arm_control.py --iface enp0s8 --verbose feedback
-
-    # Fallback if multicast is blocked: add a unicast peer
-    python3 d1_arm_control.py --iface enp0s8 --peer 192.168.123.100 feedback
+    python3 d1_arm_control.py --iface enp0s8 --peer 192.168.123.161 feedback
 """
 import argparse
 import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, List
 
-# ---------------------------------------------------------------------------
-# DDS type definitions matching the D1 arm's IDL
-# ---------------------------------------------------------------------------
 try:
     from cyclonedds.domain import DomainParticipant
     from cyclonedds.pub import DataWriter
     from cyclonedds.sub import DataReader
     from cyclonedds.topic import Topic
     from cyclonedds.idl import IdlStruct
-    from cyclonedds.idl.types import sequence, float32
+    from cyclonedds.idl.types import float32
     from cyclonedds.core import SampleInfo
 except ImportError:
     sys.exit(
@@ -57,46 +45,55 @@ except ImportError:
     )
 
 
+# ---------------------------------------------------------------------------
+# DDS type definitions matching the D1 arm's IDL
+# ---------------------------------------------------------------------------
+# The public unitree_sdk2_python does NOT ship the unitree_arm namespace.
+# Field layout for PubServoInfo_ follows the C++ reference in
+# chen37058/Grasp-with-the-Unitree-D1: 7 separate float fields (6 joints +
+# gripper), NOT a sequence.
+# ---------------------------------------------------------------------------
+
 @dataclass
 class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
-    """D1 arm command message. The data field holds a JSON string.
-
-    Command JSON format:
-      {"seq": N, "address": A, "funcode": F, "data": ...}
-
-    funcode values:
-      1  — single joint move
-      2  — multi joint move
-      5  — enable / release motors
-      7  — return to zero (home)
-    """
+    """D1 arm command message. data holds a JSON string."""
     data: str = ""
 
 
 @dataclass
 class PubServoInfo_(IdlStruct, typename="unitree_arm::msg::dds_::PubServoInfo_"):
-    """D1 arm joint telemetry.
-
-    Carries an array of float joint angles. Field name is best-effort based
-    on the C++ reference; adjust if the arm's IDL differs.
-    """
-    servo_angle: sequence[float32] = field(default_factory=list)
+    """D1 arm joint telemetry: 6 joints + gripper as separate float fields."""
+    servo0_data: float32 = 0.0
+    servo1_data: float32 = 0.0
+    servo2_data: float32 = 0.0
+    servo3_data: float32 = 0.0
+    servo4_data: float32 = 0.0
+    servo5_data: float32 = 0.0
+    servo6_data: float32 = 0.0
 
 
 # ---------------------------------------------------------------------------
-# DDS URI construction
+# DDS URI construction — MUST include namespace and Domain id
 # ---------------------------------------------------------------------------
 
 def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
     """Build a CycloneDDS config URI.
 
-    Binds discovery and data traffic to a single interface. Optionally adds
-    a unicast peer address for cases where multicast is unavailable.
+    The namespace and Domain id attributes are REQUIRED. Without them,
+    CycloneDDS silently ignores the config and binds to the default
+    interface (wrong NIC), so discovery never reaches the arm.
     """
     parts = [
-        "<CycloneDDS><Domain><General>",
+        '<CycloneDDS xmlns="https://cdds.io/config" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        'xsi:schemaLocation="https://cdds.io/config '
+        'https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/'
+        'master/etc/cyclonedds.xsd">',
+        '<Domain id="any">',
+        "<General>",
         "<Interfaces>",
-        f"<NetworkInterface name='{iface}'/>",
+        f'<NetworkInterface name="{iface}" '
+        f'priority="default" multicast="default"/>',
         "</Interfaces>",
     ]
     if peer:
@@ -105,15 +102,15 @@ def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
     if peer:
         parts.extend([
             "<Discovery><Peers>",
-            f"<Peer address='{peer}'/>",
+            f'<Peer address="{peer}"/>',
             "</Peers></Discovery>",
         ])
-    parts.append("</Domain></CycloneDDS>")
+    parts.extend(["</Domain>", "</CycloneDDS>"])
     return "".join(parts)
 
 
 def diagnose_interface(iface: str, verbose: bool) -> bool:
-    """Check the interface exists. List alternatives if not."""
+    """Check the interface exists and has an IPv4 address."""
     import subprocess
     try:
         result = subprocess.run(
@@ -131,6 +128,9 @@ def diagnose_interface(iface: str, verbose: bool) -> bool:
             return False
         if verbose:
             print(f"[d1] interface {iface}: {result.stdout.strip()}")
+        if "inet " not in result.stdout:
+            print(f"[d1] WARNING: {iface} has no IPv4 address — "
+                  f"DDS will not find the arm", file=sys.stderr)
         return True
     except Exception as e:
         if verbose:
@@ -204,7 +204,11 @@ class D1Arm:
             for sample in self.fb_reader.take():
                 if isinstance(sample, SampleInfo):
                     continue
-                return list(sample.servo_angle)
+                return [
+                    sample.servo0_data, sample.servo1_data, sample.servo2_data,
+                    sample.servo3_data, sample.servo4_data, sample.servo5_data,
+                    sample.servo6_data,
+                ]
             time.sleep(0.05)
         return None
 
@@ -219,13 +223,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--iface", default="enp0s8",
-                    help="network interface the arm is reachable on "
-                         "(default: enp0s8)")
+                    help="network interface (default: enp0s8)")
     ap.add_argument("--domain", type=int, default=0,
                     help="DDS domain ID (default: 0)")
     ap.add_argument("--peer", default=None,
-                    help="unicast peer IP for discovery when multicast is "
-                         "blocked (e.g. 192.168.123.100)")
+                    help="unicast peer IP when multicast is blocked")
     ap.add_argument("--verbose", "-v", action="store_true",
                     help="print DDS config and interface details")
     ap.add_argument("commands", nargs="+",

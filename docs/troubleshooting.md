@@ -348,7 +348,7 @@ Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) and
 4. **Verify the SDK2 is installed:**
 
    ```bash
-   docker exec -u root go2-lidar3d bash -lc 'python3 -c "import unitree_sdk2py; print(\"ok\")"'
+   docker exec -u root go2-lidar3d python3 -c "import cyclonedds; print('ok')"
    ```
 
 5. **Read joint feedback:**
