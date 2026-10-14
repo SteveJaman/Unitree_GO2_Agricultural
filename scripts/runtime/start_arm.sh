@@ -4,21 +4,18 @@
 # Usage:
 #   ./scripts/runtime/start_arm.sh              # enable + home
 #   ./scripts/runtime/start_arm.sh --no-home    # enable only
-#   ARM_IFACE=enp0s8 ./scripts/runtime/start_arm.sh    # VM Ethernet (default)
-#   ARM_IFACE=enp0s3 ./scripts/runtime/start_arm.sh    # VM Wi-Fi
+#   ARM_IFACE=enp0s3 ./scripts/runtime/start_arm.sh    # VM Wi-Fi (default)
+#   ARM_IFACE=enp0s8 ./scripts/runtime/start_arm.sh    # VM Ethernet
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODES_DIR="$(dirname "$SCRIPT_DIR")/nodes"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
-ARM_IFACE="${ARM_IFACE:-enp0s8}"
+ARM_IFACE="${ARM_IFACE:-enp0s3}"
 
 HOME_ARM="true"
 [ "${1:-}" = "--no-home" ] && HOME_ARM="false"
 
-# ---------------------------------------------------------------------------
-# Preflight
-# ---------------------------------------------------------------------------
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     echo "ERROR: container $CONTAINER_NAME not running." >&2
     echo "  Start it with: docker start $CONTAINER_NAME" >&2
@@ -47,9 +44,6 @@ if ! docker exec -u root "$CONTAINER_NAME" \
     docker exec -u root "$CONTAINER_NAME" pip3 install cyclonedds
 fi
 
-# ---------------------------------------------------------------------------
-# Enable motors
-# ---------------------------------------------------------------------------
 echo "[arm] Enabling motors..."
 docker exec -u root "$CONTAINER_NAME" bash -c "
     source /opt/ros/humble/setup.bash 2>/dev/null
@@ -60,9 +54,6 @@ docker exec -u root "$CONTAINER_NAME" bash -c "
     exit 1
 }
 
-# ---------------------------------------------------------------------------
-# Home (optional)
-# ---------------------------------------------------------------------------
 if [ "$HOME_ARM" = "true" ]; then
     echo "[arm] Homing..."
     docker exec -u root "$CONTAINER_NAME" bash -c "
@@ -75,9 +66,6 @@ if [ "$HOME_ARM" = "true" ]; then
     }
 fi
 
-# ---------------------------------------------------------------------------
-# Ready
-# ---------------------------------------------------------------------------
 echo
 echo "[arm] Ready."
 echo

@@ -12,14 +12,14 @@ Requires:
     pip install cyclonedds
 
 Usage:
-    python3 d1_arm_control.py --iface enp0s8 home
-    python3 d1_arm_control.py --iface enp0s8 enable
-    python3 d1_arm_control.py --iface enp0s8 release
-    python3 d1_arm_control.py --iface enp0s8 joint 0 1.57
-    python3 d1_arm_control.py --iface enp0s8 joints 0 0.5 0.5 0 0 0
-    python3 d1_arm_control.py --iface enp0s8 feedback
-    python3 d1_arm_control.py --iface enp0s8 --verbose feedback
-    python3 d1_arm_control.py --iface enp0s8 --peer 192.168.123.161 feedback
+    python3 d1_arm_control.py --iface enp0s3 home
+    python3 d1_arm_control.py --iface enp0s3 enable
+    python3 d1_arm_control.py --iface enp0s3 release
+    python3 d1_arm_control.py --iface enp0s3 joint 0 1.57
+    python3 d1_arm_control.py --iface enp0s3 joints 0 0.5 0.5 0 0 0
+    python3 d1_arm_control.py --iface enp0s3 feedback
+    python3 d1_arm_control.py --iface enp0s3 --verbose feedback
+    python3 d1_arm_control.py --iface enp0s3 --peer 192.168.1.100 feedback
 """
 import argparse
 import json
@@ -48,11 +48,6 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # DDS type definitions matching the D1 arm's IDL
 # ---------------------------------------------------------------------------
-# The public unitree_sdk2_python does NOT ship the unitree_arm namespace.
-# Field layout for PubServoInfo_ follows the C++ reference in
-# chen37058/Grasp-with-the-Unitree-D1: 7 separate float fields (6 joints +
-# gripper), NOT a sequence.
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
@@ -73,7 +68,7 @@ class PubServoInfo_(IdlStruct, typename="unitree_arm::msg::dds_::PubServoInfo_")
 
 
 # ---------------------------------------------------------------------------
-# DDS URI construction — MUST include namespace and Domain id
+# DDS URI construction
 # ---------------------------------------------------------------------------
 
 def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
@@ -81,7 +76,7 @@ def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
 
     The namespace and Domain id attributes are REQUIRED. Without them,
     CycloneDDS silently ignores the config and binds to the default
-    interface (wrong NIC), so discovery never reaches the arm.
+    interface (wrong NIC).
     """
     parts = [
         '<CycloneDDS xmlns="https://cdds.io/config" '
@@ -143,7 +138,7 @@ def diagnose_interface(iface: str, verbose: bool) -> bool:
 # ---------------------------------------------------------------------------
 
 class D1Arm:
-    def __init__(self, iface: str = "enp0s8", domain_id: int = 0,
+    def __init__(self, iface: str = "enp0s3", domain_id: int = 0,
                  peer: Optional[str] = None, verbose: bool = False):
 
         uri = build_cyclonedds_uri(iface, peer)
@@ -222,8 +217,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--iface", default="enp0s8",
-                    help="network interface (default: enp0s8)")
+    ap.add_argument("--iface", default="enp0s3",
+                    help="network interface (default: enp0s3)")
     ap.add_argument("--domain", type=int, default=0,
                     help="DDS domain ID (default: 0)")
     ap.add_argument("--peer", default=None,
