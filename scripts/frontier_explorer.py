@@ -53,7 +53,7 @@ DEFAULTS = {
     # The old default caused TF lookups to throw silently and blocked
     # every goal publication (goals_sent stayed 0 forever).
     'map_frame':        'lidar3d_map',
-    'map_topic':        '/map',
+    'map_topic':        '/global_costmap/costmap_raw',
     'resume_topic':     '/explore/resume',
     'status_topic':     '/explore/status',
     'goal_topic':       '/goal_pose',
@@ -169,8 +169,8 @@ class FrontierExplorer(Node):
 
         # QoS for /map: match slam_toolbox
         map_qos = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
             depth=1)
 
