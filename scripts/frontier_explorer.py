@@ -49,7 +49,10 @@ from tf2_ros import Buffer, TransformListener
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     'robot_base_frame': 'base_link',
-    'map_frame':        'map',
+    # FIX: the go2-nav2-wifi stack publishes lidar3d_map, not map.
+    # The old default caused TF lookups to throw silently and blocked
+    # every goal publication (goals_sent stayed 0 forever).
+    'map_frame':        'lidar3d_map',
     'map_topic':        '/map',
     'resume_topic':     '/explore/resume',
     'status_topic':     '/explore/status',
@@ -192,6 +195,7 @@ class FrontierExplorer(Node):
         self.get_logger().info(
             f'frontier_explorer ready: goal_topic={self.goal_topic} '
             f'cmd_vel_topic={self.cmd_vel_topic} '
+            f'map_frame={self.map_frame} '
             f'min_known_cells={self.min_known_cells} '
             f'blind_trigger_cells={self.blind_trigger_cells} '
             f'blind={self.blind_enable} coverage={self.coverage_enable}')
@@ -350,8 +354,14 @@ class FrontierExplorer(Node):
                 f'FRONTIER: ({best.cx:.2f}, {best.cy:.2f}) '
                 f'size={best.size} dist={best.distance:.2f}m '
                 f'({len(frontiers)} candidates)')
-            tag = (int(best.cx / self.map.info.resolution),
-                   int(best.cy / self.map.info.resolution))
+            # FIX: blacklist tags must be in the same pixel-space that
+            # detect_frontiers() uses when comparing cluster_pts.
+            # The old formula omitted the map origin offset, so tags and
+            # cluster points never matched and blacklisting was a no-op.
+            tag = (int((best.cx - self.map.info.origin.position.x)
+                       / self.map.info.resolution),
+                   int((best.cy - self.map.info.origin.position.y)
+                       / self.map.info.resolution))
             self.publish_goal(best.cx, best.cy, tag=tag)
             return
 
@@ -557,7 +567,7 @@ class FrontierExplorer(Node):
         free = (grid == 0)
         unknown = (grid == -1)
 
-        # BUG FIX: use np.pad instead of np.roll to avoid wrap-around.
+        # Use np.pad instead of np.roll to avoid wrap-around.
         # np.roll treats the top row as adjacent to the bottom row, which
         # creates phantom frontiers at the map boundaries.
         padded = np.pad(unknown, 1, mode='constant', constant_values=False)
@@ -603,6 +613,7 @@ class FrontierExplorer(Node):
             cxw = px.mean() * res + ox + res / 2
             cyw = py.mean() * res + oy + res / 2
 
+            # Blacklist keys are now in pixel space (see step_explore()).
             if any((bx, by) in self.blacklist
                    for bx, by in cluster_pts[:min(len(cluster_pts), 10)]):
                 continue
