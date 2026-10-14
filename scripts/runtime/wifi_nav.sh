@@ -3,33 +3,34 @@
 # wifi_nav.sh
 #
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
-# using the go2-nav2-wifi stack, with a CUSTOM frontier explorer (no
-# explore_lite dependency).
+# using the go2-nav2-wifi stack, with a CUSTOM frontier explorer.
 #
-# Architecture:
-#   Robot (Jetson) : Point-LIO onboard. Raw LiDAR never leaves the robot.
-#                    Bidirectional relay: sensors up, /cmd_vel down.
-#   VM (this host) : Docker container runs RViz + Nav2 + custom explorer.
+# One-command workflow:
+#   1. Power on the dog and stand it
+#   2. Run:  ./wifi_nav.sh
+#   3. In RViz: wait ~12 s, set 2D Pose Estimate, click "Auto Explore: START"
+#
+# Bare invocation turns ON explore + camera. Use flags to turn them off:
+#   --no-explore    manual waypoint mode (2D Goal Pose only)
+#   --no-camera     skip the camera relay
+#   --plan          preview only, no motion, no explore, no camera
 #
 # Network (Wi-Fi):
 #   VM      : 192.168.1.4
 #   Robot   : 192.168.1.9
 #
 # Usage:
-#   ./wifi_nav.sh                  # manual waypoint navigation
-#   ./wifi_nav.sh --explore        # autonomous frontier exploration
-#   ./wifi_nav.sh --explore --floor-filter  # exploration + floor filter
-#   ./wifi_nav.sh --plan           # preview plans only (no motion)
-#   ./wifi_nav.sh --record         # also save input data for replay
-#   ./wifi_nav.sh --clean          # clean both ends and exit
-#   ./wifi_nav.sh --check          # verify prerequisites only
-#   ./wifi_nav.sh --setup-ssh      # one-time passwordless SSH setup
-#
-# In RViz with --explore:
-#   1. Wait ~12 s for Nav2 lifecycle
-#   2. 2D Pose Estimate — set robot's current position
-#   3. Click "Auto Explore: START" in the Go2 Explore panel
-#   4. Robot explores autonomously; click STOP to end
+#   ./wifi_nav.sh                            # explore + camera (default)
+#   ./wifi_nav.sh --no-camera                # explore only
+#   ./wifi_nav.sh --no-explore               # camera only, manual goals
+#   ./wifi_nav.sh --explore --floor-filter   # + floor plane filter
+#   ./wifi_nav.sh --nav                      # manual waypoint navigation
+#   ./wifi_nav.sh --plan                     # preview only (no motion)
+#   ./wifi_nav.sh --record                   # also save input data for replay
+#   ./wifi_nav.sh --clean                    # clean both ends and exit
+#   ./wifi_nav.sh --check                    # verify prerequisites only
+#   ./wifi_nav.sh --setup-ssh                # one-time passwordless SSH setup
+#   ./wifi_nav.sh --no-relay                 # skip auto relay startup
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -38,9 +39,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # --- Configuration ---------------------------------------------------------
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
 
-# Network — Wi-Fi only
-GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.4}"       # VM (this laptop)
-GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"     # Go2 Jetson over Wi-Fi
+GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.4}"
+GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"
 
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
 GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
@@ -49,6 +49,7 @@ ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${SCRIPT_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${SCRIPT_DIR}/frontier_explorer.py"
+CAMERA_RELAY_SCRIPT="${SCRIPT_DIR}/go2_camera_relay.py"
 
 # --- SAFETY thresholds -----------------------------------------------------
 SAFETY_STOP_DISTANCE="${SAFETY_STOP_DISTANCE:-0.45}"
@@ -57,24 +58,41 @@ SAFETY_MAX_VEL_X="${SAFETY_MAX_VEL_X:-0.20}"
 SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
 SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
+# --- Explore runtime overrides --------------------------------------------
+EXPLORE_MAP_FRAME="${EXPLORE_MAP_FRAME:-lidar3d_map}"
+EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
+EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
+EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
+EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
+EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
+EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
+EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
+
 # --- Parse args ------------------------------------------------------------
+# Default: explore + camera ON.
 MODE="--nav"
 ACTION="run"
-EXPLORE="false"
+EXPLORE="true"
 FLOOR_FILTER="false"
+CAMERA="true"
+START_RELAY="true"
 export GO2_RECORD="${GO2_RECORD:-0}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --explore)      EXPLORE="true" ;;
+        --no-explore)   EXPLORE="false" ;;
+        --camera)       CAMERA="true" ;;
+        --no-camera)    CAMERA="false" ;;
         --floor-filter) FLOOR_FILTER="true" ;;
-        --plan)         MODE="--plan" ;;
-        --nav)          MODE="--nav" ;;
+        --plan)         MODE="--plan"; EXPLORE="false"; CAMERA="false" ;;
+        --nav)          MODE="--nav";  EXPLORE="false" ;;
         --record)       export GO2_RECORD=1 ;;
         --clean)        ACTION="clean" ;;
         --check)        ACTION="check" ;;
         --setup-ssh)    ACTION="setup-ssh" ;;
-        -h|--help)      sed -n '2,32p' "$0"; exit 0 ;;
+        --no-relay)     START_RELAY="false" ;;
+        -h|--help)      sed -n '2,42p' "$0"; exit 0 ;;
         *)              echo "Unknown option: $1" >&2; exit 1 ;;
     esac
     shift
@@ -88,9 +106,7 @@ kill_explore_inside_container() {
         pids=$(ps -eo pid,cmd | grep -E "frontier_explorer|explore_lite|ros2 run explore" \
                | grep -v grep | awk "{print \$1}")
         if [ -n "$pids" ]; then
-            for pid in $pids; do
-                kill -9 "$pid" 2>/dev/null || true
-            done
+            for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
         fi
         sleep 1
     ' 2>/dev/null || true
@@ -101,9 +117,17 @@ kill_floor_filter_inside_container() {
         pids=$(ps -eo pid,cmd | grep -E "go2_floor_filter" \
                | grep -v grep | awk "{print \$1}")
         if [ -n "$pids" ]; then
-            for pid in $pids; do
-                kill -9 "$pid" 2>/dev/null || true
-            done
+            for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+        fi
+    ' 2>/dev/null || true
+}
+
+kill_camera_relay_inside_container() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c '
+        pids=$(ps -eo pid,cmd | grep -E "go2_camera_relay" \
+               | grep -v grep | awk "{print \$1}")
+        if [ -n "$pids" ]; then
+            for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
         fi
     ' 2>/dev/null || true
 }
@@ -116,6 +140,70 @@ stop_exploration() {
     ' 2>/dev/null || true
 }
 
+start_robot_relay() {
+    if [ "${START_RELAY}" != "true" ]; then
+        echo "[relay] Skipping (--no-relay)"
+        return 0
+    fi
+
+    echo "[relay] Reaching robot at ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}..."
+
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
+            "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "true" >/dev/null 2>&1; then
+        echo "[relay] ERROR: cannot SSH to robot."
+        echo "         Run:  ./wifi_nav.sh --setup-ssh"
+        return 1
+    fi
+
+    echo "[relay] Killing stale relay processes and starting FULL mode..."
+
+    ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" bash -lc "
+        set -e
+        pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
+        rm -f /tmp/go2-relay-wifi.sock*
+        sleep 3
+
+        if ss -tlnp 2>/dev/null | grep -q ':17999'; then
+            echo '[relay] ERROR: port 17999 still held after pkill'
+            ss -tlnp 2>/dev/null | grep ':17999'
+            exit 1
+        fi
+
+        export GO2_HOST_IP=${GO2_HOST_IP}
+        nohup bash ~/robot-relay-wifi.sh > /tmp/robot-relay.log 2>&1 &
+        echo \$! > /tmp/robot-relay.pid
+
+        for i in \$(seq 1 20); do
+            if ss -tlnp 2>/dev/null | grep -q ':17999'; then
+                echo '[relay] FULL mode confirmed on port 17999'
+                exit 0
+            fi
+            sleep 1
+        done
+
+        echo '[relay] ERROR: port 17999 never bound. Last 30 lines:'
+        tail -30 /tmp/robot-relay.log 2>/dev/null || true
+        exit 1
+    " || {
+        echo "[relay] ERROR: relay start failed."
+        echo "[relay] Debug: ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP} 'cat /tmp/robot-relay.log'"
+        return 1
+    }
+
+    return 0
+}
+
+stop_robot_relay() {
+    if [ "${START_RELAY}" != "true" ]; then
+        return 0
+    fi
+    ssh -o BatchMode=yes -o ConnectTimeout=3 \
+        "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true" \
+        >/dev/null 2>&1 || true
+}
+
 do_clean() {
     echo "[clean] Killing local stale processes..."
     pkill -9 -f "rviz2"             2>/dev/null || true
@@ -123,12 +211,14 @@ do_clean() {
     pkill -9 -f "pointlio_mapping"  2>/dev/null || true
     pkill -9 -f "go2_cloud_stamp"   2>/dev/null || true
     pkill -9 -f "frontier_explorer" 2>/dev/null || true
+    pkill -9 -f "go2_camera_relay"  2>/dev/null || true
     pkill -9 -f "safety_watchdog"   2>/dev/null || true
 
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
-        echo "[clean] Killing stale explore + floor filter inside container..."
+        echo "[clean] Killing stale helpers inside container..."
         kill_explore_inside_container
         kill_floor_filter_inside_container
+        kill_camera_relay_inside_container
     fi
 
     echo "[clean] Stopping local Docker containers..."
@@ -146,8 +236,10 @@ do_clean() {
     ssh -o BatchMode=yes "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" '
         pkill -9 -f robot_relay_wifi   2>/dev/null || true
         pkill -9 -f robot-relay-wifi   2>/dev/null || true
+        pkill -9 -f robot-motion-wifi  2>/dev/null || true
         pkill -9 -f go2_cmd_vel_tcp    2>/dev/null || true
         pkill -9 -f robot_sport_bridge 2>/dev/null || true
+        rm -f /tmp/robot-relay.pid
         sleep 1
     ' >/dev/null 2>&1 || true
 
@@ -195,12 +287,14 @@ fi
 # Banner
 # ===========================================================================
 echo "================================================================"
-echo " Go2 Nav2 Wi-Fi navigation (custom frontier explorer)"
+echo " Go2 Nav2 Wi-Fi navigation"
 echo "================================================================"
 echo "  Action      : ${ACTION}"
 echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
+echo "  Camera      : ${CAMERA}"
+echo "  Auto relay  : ${START_RELAY}"
 echo "  GO2_RECORD  : ${GO2_RECORD}"
 echo "  Host IP     : ${GO2_HOST_IP}"
 echo "  Robot       : ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
@@ -227,6 +321,10 @@ if ssh -o BatchMode=yes -o ConnectTimeout=3 \
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
+    if [ "${START_RELAY}" = "true" ] && [ "${MODE}" != "--plan" ]; then
+        echo "[checks] ERROR: auto relay requires SSH. Use --no-relay to skip."
+        exit 1
+    fi
 fi
 
 if [ "${EXPLORE}" = "true" ]; then
@@ -234,7 +332,6 @@ if [ "${EXPLORE}" = "true" ]; then
         echo "[checks] frontier_explorer.py present ............ OK"
     else
         echo "[checks] frontier_explorer.py present ............ MISSING"
-        echo "         Expected at: ${EXPLORER_SCRIPT}"
         EXPLORE="false"
     fi
 
@@ -259,6 +356,15 @@ if [ "${FLOOR_FILTER}" = "true" ]; then
     fi
 fi
 
+if [ "${CAMERA}" = "true" ]; then
+    if [ -f "${CAMERA_RELAY_SCRIPT}" ]; then
+        echo "[checks] camera relay script present .............. OK"
+    else
+        echo "[checks] camera relay script present .............. MISSING"
+        CAMERA="false"
+    fi
+fi
+
 # ===========================================================================
 # Pre-flight cleanup
 # ===========================================================================
@@ -270,35 +376,29 @@ if [ "${ACTION}" != "check" ]; then
 fi
 
 if [ "${ACTION}" = "check" ]; then
-    echo
-    echo "All checks done. Run without --check to launch."
-    echo
-    echo "Workflow:"
-    echo "  1. Start robot relay in FULL mode (separate terminal):"
-    echo "       ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
-    echo "       export GO2_HOST_IP=${GO2_HOST_IP}"
-    echo "       bash ~/robot-relay-wifi.sh"
-    echo
-    echo "  2. Then run:  ./wifi_nav.sh [--explore] [--floor-filter]"
+    echo "All checks done."
     exit 0
 fi
 
 # ===========================================================================
-# Reminder
+# Start robot relay (automated)
 # ===========================================================================
-echo "================================================================"
-echo " REMINDER — robot relay must be running in FULL mode"
-echo "================================================================"
-echo
-echo "     ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
-echo "     export GO2_HOST_IP=${GO2_HOST_IP}"
-echo "     bash ~/robot-relay-wifi.sh"
-echo
-echo " Watch for:  'Relay running: onboard domain 0 -> Wi-Fi domain 64'"
-echo " Do NOT run with --sensors-only (blocks /cmd_vel)."
-echo "================================================================"
-echo
+if [ "${MODE}" != "--plan" ] && [ "${START_RELAY}" = "true" ]; then
+    echo "================================================================"
+    echo " Starting robot relay (FULL mode)"
+    echo "================================================================"
+    if ! start_robot_relay; then
+        echo
+        echo "ERROR: could not start robot relay."
+        echo "  Check: ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP} 'cat /tmp/robot-relay.log'"
+        exit 1
+    fi
+    echo
+fi
 
+# ===========================================================================
+# Explore-mode banner
+# ===========================================================================
 if [ "${EXPLORE}" = "true" ]; then
     echo "================================================================"
     echo " EXPLORE MODE — the robot will move autonomously"
@@ -322,7 +422,6 @@ cd "${NAV2_WIFI_DIR}"
 export GO2_HOST_IP GO2_ROBOT_IP GO2_RELAY_DOMAIN_ID
 
 EXPLORE_HOST_PID=""
-WATCHDOG_PID=""
 
 cleanup() {
     echo
@@ -331,17 +430,16 @@ cleanup() {
         echo "[wifi_nav] SAFETY: publishing stop to /explore/resume"
         stop_exploration
     fi
-    if [ -n "${WATCHDOG_PID}" ]; then
-        kill "${WATCHDOG_PID}" 2>/dev/null || true
-    fi
     if [ -n "${EXPLORE_HOST_PID}" ]; then
         kill "${EXPLORE_HOST_PID}" 2>/dev/null || true
     fi
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
         kill_explore_inside_container
         kill_floor_filter_inside_container
+        kill_camera_relay_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
+    stop_robot_relay
     echo "[wifi_nav] Done."
 }
 trap cleanup EXIT INT TERM
@@ -349,7 +447,7 @@ trap cleanup EXIT INT TERM
 echo "Launching: ./mapping.sh --3d ${MODE}"
 echo
 
-if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
+if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ]; then
     (
         sleep 20
 
@@ -378,6 +476,27 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                 2>/dev/null || true
         fi
 
+        # ---------- Camera relay ----------
+        if [ "${CAMERA}" = "true" ]; then
+            echo "[camera] Killing stale camera relay instances..."
+            kill_camera_relay_inside_container
+            echo "[camera] Copying go2_camera_relay.py into container..."
+            docker cp "${CAMERA_RELAY_SCRIPT}" \
+                "${CONTAINER_NAME}:/tmp/go2_camera_relay.py" 2>/dev/null || true
+            echo "[camera] Starting camera relay..."
+            docker exec -u root "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && \
+                 source /ws/install/setup.bash 2>/dev/null; \
+                 nohup python3 /tmp/go2_camera_relay.py \
+                     --ros-args \
+                     -p source_topic:=/frontvideostream \
+                     -p output_topic:=/camera/image_raw \
+                     -p frame_id:=camera_link \
+                     -p resolution:=720p \
+                     > /tmp/camera_relay.log 2>&1 &" \
+                2>/dev/null || true
+        fi
+
         # ---------- Custom frontier explorer ----------
         if [ "${EXPLORE}" = "true" ]; then
             echo "[explore] Killing stale explorer instances..."
@@ -401,17 +520,19 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ]; then
                  exec python3 /tmp/frontier_explorer.py \
                      --ros-args \
                      -p robot_base_frame:=base_link \
-                     -p map_frame:=map \
+                     -p map_frame:=${EXPLORE_MAP_FRAME} \
+                     -p map_topic:=${EXPLORE_MAP_TOPIC} \
                      -p goal_topic:=/goal_pose \
                      -p cmd_vel_topic:=/cmd_vel_nav \
-                     -p min_frontier_size:=8 \
-                     -p min_known_cells:=200 \
-                     -p blind_enable:=true \
+                     -p stop_topic:=${EXPLORE_STOP_TOPIC} \
+                     -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} \
+                     -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} \
+                     -p blind_enable:=${EXPLORE_BLIND_ENABLE} \
                      -p blind_trigger_cells:=100 \
                      -p blind_step_distance:=0.6 \
                      -p blind_step_speed:=0.12 \
-                     -p coverage_enable:=true \
-                     -p return_to_init:=true \
+                     -p coverage_enable:=${EXPLORE_COVERAGE_ENABLE} \
+                     -p return_to_init:=${EXPLORE_RETURN_TO_INIT} \
                      -p tick_hz:=1.0" \
                 > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
@@ -449,6 +570,18 @@ if [ "${EXPLORE}" = "true" ] && \
     echo " Last 20 lines of frontier.log:"
     echo "================================================================"
     tail -20 "${NAV2_WIFI_DIR}/ws/log/frontier.log"
+    echo
+fi
+
+# ===========================================================================
+# Post-run: camera relay log tail
+# ===========================================================================
+if [ "${CAMERA}" = "true" ] && \
+   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+    echo "================================================================"
+    echo " Last 10 lines of camera_relay.log:"
+    echo "================================================================"
+    docker exec -u root "${CONTAINER_NAME}" tail -10 /tmp/camera_relay.log 2>/dev/null || echo "  (no log)"
     echo
 fi
 

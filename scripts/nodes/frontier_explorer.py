@@ -7,7 +7,7 @@ Custom three-phase exploration node. Replaces explore_lite.
 Phases:
   1. BLIND LEAD-IN (Roomba-style)
        When the map has < min_known_cells, drive forward directly
-       via cmd_vel for a short distance. This forces new sensor data
+       via cmd_vel for a short distance. Forces new sensor data
        so the map can grow.
 
   2. FRONTIER EXPLORATION (Yamauchi 1997)
@@ -23,12 +23,14 @@ Phases:
 
 Communication:
   Publishes PoseStamped goals to /goal_pose, which goal_pose_nav.py
-  picks up and forwards to the Nav2 planner and controller. We do
-  NOT use the /navigate_to_pose action server directly — the
-  go2-nav2-wifi stack expects /goal_pose instead.
+  picks up and forwards to the Nav2 planner and controller.
 
-  Blind lead-in publishes geometry_msgs/Twist on /cmd_vel_nav
-  directly (bypasses Nav2 for cold start).
+  Blind lead-in publishes Twist on /cmd_vel_nav (through the smoother).
+  Emergency stop publishes Twist on /cmd_vel (bypasses the smoother so
+  it overrides Nav2's controller).
+
+  Optional spin-on-goal rotates the robot 360 degrees after each
+  successful goal, for tour capture.
 """
 import math
 import time
@@ -51,26 +53,27 @@ from tf2_ros import Buffer, TransformListener
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     'robot_base_frame': 'base_link',
-    'map_frame':        'map',
-    'map_topic':        '/map',
+    'map_frame':        'lidar3d_map',
+    'map_topic':        '/global_costmap/costmap',
     'resume_topic':     '/explore/resume',
     'status_topic':     '/explore/status',
     'goal_topic':       '/goal_pose',
-    'cmd_vel_topic':    '/cmd_vel_nav',    # goes through velocity smoother
+    'cmd_vel_topic':    '/cmd_vel_nav',
+    'stop_topic':       '/cmd_vel',
 
     # Frontier detection
-    'min_frontier_size':     8,
+    'min_frontier_size':     4,
     'min_known_cells':       200,
     'frontier_blacklist_s':  30.0,
 
-    # Goal tracking (since we don't get action feedback)
+    # Goal tracking
     'goal_xy_tolerance':     0.35,
     'goal_timeout_s':        60.0,
     'progress_timeout_s':    20.0,
     'progress_min_m':        0.15,
 
     # Blind lead-in
-    'blind_enable':          True,
+    'blind_enable':          False,
     'blind_trigger_cells':   100,
     'blind_step_distance':   0.6,
     'blind_step_speed':      0.12,
@@ -78,17 +81,21 @@ DEFAULTS = {
     'blind_max_attempts':    4,
 
     # Coverage
-    'coverage_enable':       True,
+    'coverage_enable':       False,
     'coverage_min_dist':     0.6,
     'visited_radius_m':      0.4,
 
-    # Loop timing
-    'tick_hz':               1.0,
-
     # Return-to-init
-    'return_to_init':        True,
+    'return_to_init':        False,
     'return_xy_tolerance':   0.3,
     'return_timeout_s':      120.0,
+
+    # Spin-on-goal capture (Phase 1 tour)
+    'spin_on_goal':          False,
+    'spin_rate_rad_s':       0.4,
+
+    # Loop timing
+    'tick_hz':               1.0,
 }
 
 
@@ -111,8 +118,10 @@ class FrontierExplorer(Node):
         p = lambda name: self.get_parameter(name).value
         self.robot_frame = p('robot_base_frame')
         self.map_frame = p('map_frame')
+        self.map_topic = p('map_topic')
         self.goal_topic = p('goal_topic')
         self.cmd_vel_topic = p('cmd_vel_topic')
+        self.stop_topic = p('stop_topic')
 
         self.min_frontier_size = int(p('min_frontier_size'))
         self.min_known_cells = int(p('min_known_cells'))
@@ -134,15 +143,19 @@ class FrontierExplorer(Node):
         self.coverage_min_dist = float(p('coverage_min_dist'))
         self.visited_radius = float(p('visited_radius_m'))
 
-        self.tick_hz = float(p('tick_hz'))
         self.return_to_init = bool(p('return_to_init'))
         self.return_tol = float(p('return_xy_tolerance'))
         self.return_timeout = float(p('return_timeout_s'))
 
+        self.spin_on_goal = bool(p('spin_on_goal'))
+        self.spin_rate_rad_s = float(p('spin_rate_rad_s'))
+
+        self.tick_hz = float(p('tick_hz'))
+
         # State
         self.map: Optional[OccupancyGrid] = None
         self.enabled = False
-        self.state = 'IDLE'         # IDLE | EXPLORING | RETURNING | DONE
+        self.state = 'IDLE'
         self.origin_xy: Optional[Tuple[float, float]] = None
         self.blacklist = {}
         self.empty_frontier_ticks = 0
@@ -151,7 +164,7 @@ class FrontierExplorer(Node):
         self.goals_failed = 0
         self.blind_attempts = 0
 
-        # Active goal tracking (no action feedback with /goal_pose)
+        # Active goal tracking
         self.active_goal_xy: Optional[Tuple[float, float]] = None
         self.active_goal_tag = None
         self.active_goal_start = 0.0
@@ -163,10 +176,10 @@ class FrontierExplorer(Node):
         self.blind_start_xy: Optional[Tuple[float, float]] = None
         self.blind_start_time = 0.0
 
-        # Visited grid (for coverage phase)
+        # Visited grid
         self.visited: Optional[np.ndarray] = None
 
-        # QoS for /map: match slam_toolbox
+        # QoS for costmap: match Nav2's costmap publisher
         map_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -175,7 +188,7 @@ class FrontierExplorer(Node):
 
         # Subscribers
         self.map_sub = self.create_subscription(
-            OccupancyGrid, p('map_topic'), self.on_map, map_qos)
+            OccupancyGrid, self.map_topic, self.on_map, map_qos)
         self.resume_sub = self.create_subscription(
             Bool, p('resume_topic'), self.on_resume, 10)
 
@@ -183,6 +196,9 @@ class FrontierExplorer(Node):
         self.status_pub = self.create_publisher(String, p('status_topic'), 10)
         self.goal_pub = self.create_publisher(PoseStamped, self.goal_topic, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
+        # Separate publisher for emergency stop, on /cmd_vel, so it
+        # overrides Nav2's controller output on /cmd_vel_nav.
+        self.stop_pub = self.create_publisher(Twist, self.stop_topic, 10)
 
         # TF
         self.tf_buffer = Buffer()
@@ -192,9 +208,14 @@ class FrontierExplorer(Node):
         self.create_timer(1.0 / self.tick_hz, self.tick)
 
         self.get_logger().info(
-            f'frontier_explorer ready: goal_topic={self.goal_topic} '
-            f'cmd_vel_topic={self.cmd_vel_topic} '
-            f'blind={self.blind_enable} coverage={self.coverage_enable}')
+            f'frontier_explorer ready: '
+            f'goal={self.goal_topic} cmd_vel={self.cmd_vel_topic} '
+            f'stop={self.stop_topic} '
+            f'map_topic={self.map_topic} map_frame={self.map_frame} '
+            f'min_frontier_size={self.min_frontier_size} '
+            f'blind={self.blind_enable} coverage={self.coverage_enable} '
+            f'return_to_init={self.return_to_init} '
+            f'spin_on_goal={self.spin_on_goal}')
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -220,7 +241,8 @@ class FrontierExplorer(Node):
                 self.empty_frontier_ticks = 0
                 self.blind_attempts = 0
         else:
-            self.get_logger().info('Exploration DISABLED')
+            self.get_logger().info('Exploration DISABLED — stopping robot')
+            self.emergency_stop()
             self.cancel_active_goal()
             self.stop_blind()
             self.state = 'IDLE'
@@ -235,21 +257,33 @@ class FrontierExplorer(Node):
         if self.map is None:
             return
 
-        # Blind step takes priority
         if self.blind_active:
             self.tick_blind()
             return
 
-        # Active goal: just monitor it
         if self.active_goal_xy is not None:
             self.tick_active_goal()
             return
 
-        # Otherwise: pick next action
         if self.state == 'EXPLORING':
             self.step_explore()
         elif self.state == 'RETURNING':
             self.step_return()
+
+    # ------------------------------------------------------------------
+    # Emergency stop
+    # ------------------------------------------------------------------
+    def emergency_stop(self):
+        """Publish zero velocity on /cmd_vel (bypasses the smoother).
+
+        Nav2's controller publishes on /cmd_vel_nav, which the smoother
+        relays to /cmd_vel. Publishing here at a high rate briefly
+        dominates the wire and brings the robot to a stop.
+        """
+        stop = Twist()
+        for _ in range(10):
+            self.stop_pub.publish(stop)
+            time.sleep(0.05)
 
     # ------------------------------------------------------------------
     # Phase 1: Blind lead-in
@@ -260,7 +294,8 @@ class FrontierExplorer(Node):
         self.blind_start_time = time.time()
         self.get_logger().info(
             f'BLIND step {self.blind_attempts + 1}/{self.blind_max_attempts}: '
-            f'driving {self.blind_step_distance} m at {self.blind_step_speed} m/s')
+            f'driving {self.blind_step_distance} m at '
+            f'{self.blind_step_speed} m/s')
 
     def tick_blind(self):
         if self.blind_start_xy is None:
@@ -276,14 +311,14 @@ class FrontierExplorer(Node):
         travelled = math.hypot(pose[0] - self.blind_start_xy[0],
                                pose[1] - self.blind_start_xy[1])
 
-        if travelled >= self.blind_step_distance or elapsed >= self.blind_step_timeout:
+        if (travelled >= self.blind_step_distance
+                or elapsed >= self.blind_step_timeout):
             self.get_logger().info(
                 f'BLIND step done: {travelled:.2f} m in {elapsed:.1f}s')
             self.blind_attempts += 1
             self.stop_blind()
             return
 
-        # Publish forward velocity
         twist = Twist()
         twist.linear.x = self.blind_step_speed
         twist.angular.z = 0.0
@@ -292,9 +327,7 @@ class FrontierExplorer(Node):
     def stop_blind(self):
         if not self.blind_active:
             return
-        # Send a stop command
-        stop = Twist()
-        self.cmd_vel_pub.publish(stop)
+        self.cmd_vel_pub.publish(Twist())
         self.blind_active = False
         self.blind_start_xy = None
         self.blind_start_time = 0.0
@@ -309,7 +342,6 @@ class FrontierExplorer(Node):
                 'Robot pose unavailable', throttle_duration_sec=5.0)
             return
 
-        # Mark current location as visited
         self.mark_visited(robot_pose)
 
         grid = self.to_numpy(self.map)
@@ -325,8 +357,21 @@ class FrontierExplorer(Node):
             self.start_blind_step(robot_pose)
             return
 
+        # Require a minimum number of known cells before trusting
+        # frontier detection.
+        if known_cells < self.min_known_cells:
+            self.get_logger().info(
+                f'Waiting for map to grow: {known_cells}/{self.min_known_cells}',
+                throttle_duration_sec=5.0)
+            return
+
         # PHASE 2: Frontier exploration
         frontiers = self.detect_frontiers(grid, robot_pose)
+        self.get_logger().info(
+            f'detect_frontiers: known={known_cells} '
+            f'frontiers={len(frontiers)}',
+            throttle_duration_sec=5.0)
+
         if frontiers:
             self.empty_frontier_ticks = 0
             frontiers.sort(
@@ -336,17 +381,17 @@ class FrontierExplorer(Node):
                 f'FRONTIER: ({best.cx:.2f}, {best.cy:.2f}) '
                 f'size={best.size} dist={best.distance:.2f}m '
                 f'({len(frontiers)} candidates)')
-            tag = (int(best.cx / self.map.info.resolution),
-                   int(best.cy / self.map.info.resolution))
+            tag = (int((best.cx - self.map.info.origin.position.x)
+                       / self.map.info.resolution),
+                   int((best.cy - self.map.info.origin.position.y)
+                       / self.map.info.resolution))
             self.publish_goal(best.cx, best.cy, tag=tag)
             return
 
         # No frontiers
         self.empty_frontier_ticks += 1
 
-        # PHASE 3: Visited-cell coverage (only after frontiers have been
-        # gone for a few ticks, to avoid flickering when a cluster briefly
-        # disappears during replanning)
+        # PHASE 3: Visited-cell coverage
         if self.coverage_enable and self.empty_frontier_ticks >= 2:
             target = self.nearest_unvisited(robot_pose)
             if target is not None:
@@ -354,15 +399,14 @@ class FrontierExplorer(Node):
                                   target[1] - robot_pose[1])
                 if dist >= self.coverage_min_dist:
                     self.get_logger().info(
-                        f'COVERAGE: nearest unvisited ({target[0]:.2f}, '
-                        f'{target[1]:.2f}) dist={dist:.2f}m')
+                        f'COVERAGE: ({target[0]:.2f}, {target[1]:.2f}) '
+                        f'dist={dist:.2f}m')
                     self.publish_goal(target[0], target[1], tag=None)
                     return
 
         # PHASE 4: Nothing left to do
         if self.empty_frontier_ticks >= 5:
-            self.get_logger().info(
-                'Nothing left to explore — exploration complete')
+            self.get_logger().info('Exploration complete')
             self.state = 'RETURNING' if self.return_to_init else 'DONE'
             self.empty_frontier_ticks = 0
             self.publish_status()
@@ -383,8 +427,7 @@ class FrontierExplorer(Node):
         dist = math.hypot(pose[0] - self.origin_xy[0],
                           pose[1] - self.origin_xy[1])
         if dist < self.return_tol:
-            self.get_logger().info(
-                f'Returned to origin (dist={dist:.2f}m) — DONE')
+            self.get_logger().info('Returned to origin — DONE')
             self.state = 'DONE'
             self.publish_status()
             return
@@ -424,7 +467,6 @@ class FrontierExplorer(Node):
             return
         now = time.time()
 
-        # Success: robot is within tolerance of the goal
         dist = math.hypot(pose[0] - self.active_goal_xy[0],
                           pose[1] - self.active_goal_xy[1])
         if dist < self.goal_xy_tol:
@@ -433,9 +475,10 @@ class FrontierExplorer(Node):
                 f'Goal reached: ({self.active_goal_xy[0]:.2f}, '
                 f'{self.active_goal_xy[1]:.2f})')
             self.clear_active_goal()
+            if self.spin_on_goal:
+                self.spin_360()
             return
 
-        # Progress tracking
         if self.active_goal_last_progress_xy is None:
             self.active_goal_last_progress_xy = pose
             self.active_goal_last_progress_time = now
@@ -447,19 +490,15 @@ class FrontierExplorer(Node):
                 self.active_goal_last_progress_xy = pose
                 self.active_goal_last_progress_time = now
 
-        # Timeout without progress
         if now - self.active_goal_last_progress_time > self.progress_timeout:
-            self.get_logger().warn(
-                f'No progress for {self.progress_timeout:.0f}s — abandoning goal')
+            self.get_logger().warn('No progress — abandoning goal')
             self.blacklist_tag()
             self.goals_failed += 1
             self.clear_active_goal()
             return
 
-        # Absolute timeout
         if now - self.active_goal_start > self.goal_timeout:
-            self.get_logger().warn(
-                f'Goal timeout ({self.goal_timeout:.0f}s) — abandoning')
+            self.get_logger().warn('Goal timeout — abandoning')
             self.blacklist_tag()
             self.goals_failed += 1
             self.clear_active_goal()
@@ -474,8 +513,41 @@ class FrontierExplorer(Node):
         self.active_goal_tag = None
         self.active_goal_last_progress_xy = None
 
+    # ------------------------------------------------------------------
+    # Spin-on-goal capture
+    # ------------------------------------------------------------------
+    def spin_360(self, rate=None):
+        """Rotate 360 degrees in place for tour capture.
+
+        Publishes continuous Twist on /cmd_vel_nav for the duration
+        required to complete one full revolution at the given rate.
+        Honours spin_rate_rad_s parameter when rate is None.
+        """
+        if rate is None:
+            rate = self.spin_rate_rad_s
+        if rate <= 0:
+            self.get_logger().warn('spin_360: rate must be > 0, skipping')
+            return
+
+        duration = 2.0 * math.pi / rate
+        self.get_logger().info(
+            f'spin_360: starting, rate={rate:.2f} rad/s, '
+            f'duration={duration:.1f}s')
+
+        t0 = time.time()
+        twist = Twist()
+        twist.angular.z = rate
+        while time.time() - t0 < duration:
+            self.cmd_vel_pub.publish(twist)
+            time.sleep(0.1)
+        self.cmd_vel_pub.publish(Twist())
+
+        self.get_logger().info('spin_360: complete')
+
     def cancel_active_goal(self):
         if self.active_goal_xy is not None:
+            self.get_logger().info('Cancelling active goal')
+            self.emergency_stop()
             self.clear_active_goal()
 
     # ------------------------------------------------------------------
@@ -488,11 +560,9 @@ class FrontierExplorer(Node):
         if grid is None:
             return
 
-        # Initialize/resize visited to match the current map
         if self.visited is None or self.visited.shape != grid.shape:
             new_visited = np.zeros(grid.shape, dtype=bool)
             if self.visited is not None:
-                # Copy overlap (bottom-left anchored)
                 h = min(self.visited.shape[0], grid.shape[0])
                 w = min(self.visited.shape[1], grid.shape[1])
                 new_visited[:h, :w] = self.visited[:h, :w]
@@ -501,7 +571,6 @@ class FrontierExplorer(Node):
         res = self.map.info.resolution
         ox = self.map.info.origin.position.x
         oy = self.map.info.origin.position.y
-
         cx = int((world_xy[0] - ox) / res)
         cy = int((world_xy[1] - oy) / res)
         r = max(1, int(self.visited_radius / res))
@@ -548,9 +617,14 @@ class FrontierExplorer(Node):
     def detect_frontiers(self, grid, robot_xy):
         free = (grid == 0)
         unknown = (grid == -1)
+
+        # Use np.pad instead of np.roll to avoid wrap-around.
+        # np.roll treats the top row as adjacent to the bottom row,
+        # which creates phantom frontiers at the map boundaries.
+        padded = np.pad(unknown, 1, mode='constant', constant_values=False)
         unknown_d = (
-            np.roll(unknown, 1, 0) | np.roll(unknown, -1, 0) |
-            np.roll(unknown, 1, 1) | np.roll(unknown, -1, 1))
+            padded[:-2, 1:-1] | padded[2:, 1:-1] |
+            padded[1:-1, :-2] | padded[1:-1, 2:])
         frontier_mask = free & unknown_d
 
         now = time.time()
@@ -590,7 +664,7 @@ class FrontierExplorer(Node):
             cxw = px.mean() * res + ox + res / 2
             cyw = py.mean() * res + oy + res / 2
 
-            # Blacklist check
+            # Blacklist keys are in pixel space (see step_explore).
             if any((bx, by) in self.blacklist
                    for bx, by in cluster_pts[:min(len(cluster_pts), 10)]):
                 continue
@@ -631,7 +705,7 @@ def main(args=None):
         pass
     finally:
         node.stop_blind()
-        node.cancel_active_goal()
+        node.emergency_stop()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
