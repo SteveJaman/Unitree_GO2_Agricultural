@@ -4,8 +4,7 @@
 # Usage:
 #   ./scripts/runtime/start_arm.sh              # enable + home
 #   ./scripts/runtime/start_arm.sh --no-home    # enable only
-#   ARM_IFACE=enp0s3 ./scripts/runtime/start_arm.sh    # VM Wi-Fi (default)
-#   ARM_IFACE=enp0s8 ./scripts/runtime/start_arm.sh    # VM Ethernet
+#   ARM_IFACE=enp0s8 ./scripts/runtime/start_arm.sh    # specify wired interface
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,12 +13,13 @@ CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 ARM_IFACE="${ARM_IFACE:-enp0s3}"
 
 HOME_ARM="true"
-[ "${1:-}" = "--no-home" ] && HOME_ARM="false"
+if [ "${1:-}" = "--no-home" ]; then
+    HOME_ARM="false"
+fi
 
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     echo "ERROR: container $CONTAINER_NAME not running." >&2
     echo "  Start it with: docker start $CONTAINER_NAME" >&2
-    echo "  Or create it:  cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop" >&2
     exit 1
 fi
 
@@ -46,8 +46,8 @@ fi
 
 echo "[arm] Enabling motors..."
 docker exec -u root "$CONTAINER_NAME" bash -c "
-    source /opt/ros/humble/setup.bash 2>/dev/null
-    source /ws/install/setup.bash 2>/dev/null
+    source /opt/ros/humble/setup.bash 2>/dev/null || true
+    source /ws/install/setup.bash 2>/dev/null || true
     python3 /tmp/d1_arm_control.py --iface ${ARM_IFACE} enable
 " || {
     echo "ERROR: enable failed" >&2
@@ -57,8 +57,8 @@ docker exec -u root "$CONTAINER_NAME" bash -c "
 if [ "$HOME_ARM" = "true" ]; then
     echo "[arm] Homing..."
     docker exec -u root "$CONTAINER_NAME" bash -c "
-        source /opt/ros/humble/setup.bash 2>/dev/null
-        source /ws/install/setup.bash 2>/dev/null
+        source /opt/ros/humble/setup.bash 2>/dev/null || true
+        source /ws/install/setup.bash 2>/dev/null || true
         python3 /tmp/d1_arm_control.py --iface ${ARM_IFACE} home
     " || {
         echo "ERROR: home failed" >&2
@@ -76,7 +76,3 @@ echo
 echo "Read joint feedback:"
 echo "  docker exec -u root ${CONTAINER_NAME} bash -c \\"
 echo "    'python3 /tmp/d1_arm_control.py --iface ${ARM_IFACE} feedback'"
-echo
-echo "Release motors (drag-teach mode):"
-echo "  docker exec -u root ${CONTAINER_NAME} bash -c \\"
-echo "    'python3 /tmp/d1_arm_control.py --iface ${ARM_IFACE} release'"

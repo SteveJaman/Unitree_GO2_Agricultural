@@ -2,24 +2,19 @@
 """
 d1_arm_control.py
 
-Control the Unitree D1-T arm via DDS.
+Control the Unitree D1-T arm via DDS based on official D1Arm services.
 
 DDS topics:
-  rt/arm_Command        — command bus (ArmString_, JSON payload)
-  current_servo_angle   — joint telemetry (PubServoInfo_, 7 floats)
-
-Requires:
-    pip install cyclonedds
+  rt/arm_Command  — command bus (ArmString_, JSON payload)
+  rt/arm_Feedback — feedback bus (ArmString_, JSON payload)
 
 Usage:
-    python3 d1_arm_control.py --iface enp0s3 home
-    python3 d1_arm_control.py --iface enp0s3 enable
-    python3 d1_arm_control.py --iface enp0s3 release
-    python3 d1_arm_control.py --iface enp0s3 joint 0 1.57
-    python3 d1_arm_control.py --iface enp0s3 joints 0 0.5 0.5 0 0 0
-    python3 d1_arm_control.py --iface enp0s3 feedback
-    python3 d1_arm_control.py --iface enp0s3 --verbose feedback
-    python3 d1_arm_control.py --iface enp0s3 --peer 192.168.1.100 feedback
+    python3 d1_arm_control.py --iface enp0s8 home
+    python3 d1_arm_control.py --iface enp0s8 enable
+    python3 d1_arm_control.py --iface enp0s8 release
+    python3 d1_arm_control.py --iface enp0s8 joint 0 1.57
+    python3 d1_arm_control.py --iface enp0s8 joints 0 0.5 0.5 0 0 0
+    python3 d1_arm_control.py --iface enp0s8 feedback
 """
 import argparse
 import json
@@ -27,7 +22,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional
 
 try:
     from cyclonedds.domain import DomainParticipant
@@ -35,15 +30,8 @@ try:
     from cyclonedds.sub import DataReader
     from cyclonedds.topic import Topic
     from cyclonedds.idl import IdlStruct
-    from cyclonedds.idl.types import float32
-    from cyclonedds.core import SampleInfo
 except ImportError:
-    sys.exit(
-        "cyclonedds Python bindings not installed.\n"
-        "Install with:\n"
-        "    pip3 install cyclonedds\n"
-    )
-
+    sys.exit("cyclonedds Python bindings not installed. Install with: pip3 install cyclonedds")
 
 # ---------------------------------------------------------------------------
 # DDS type definitions matching the D1 arm's IDL
@@ -51,44 +39,24 @@ except ImportError:
 
 @dataclass
 class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
-    """D1 arm command message. data holds a JSON string."""
+    """D1 arm message. data holds a JSON string for both commands and feedback."""
     data: str = ""
-
-
-@dataclass
-class PubServoInfo_(IdlStruct, typename="unitree_arm::msg::dds_::PubServoInfo_"):
-    """D1 arm joint telemetry: 6 joints + gripper as separate float fields."""
-    servo0_data: float32 = 0.0
-    servo1_data: float32 = 0.0
-    servo2_data: float32 = 0.0
-    servo3_data: float32 = 0.0
-    servo4_data: float32 = 0.0
-    servo5_data: float32 = 0.0
-    servo6_data: float32 = 0.0
-
 
 # ---------------------------------------------------------------------------
 # DDS URI construction
 # ---------------------------------------------------------------------------
 
 def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
-    """Build a CycloneDDS config URI.
-
-    The namespace and Domain id attributes are REQUIRED. Without them,
-    CycloneDDS silently ignores the config and binds to the default
-    interface (wrong NIC).
-    """
+    """Build a CycloneDDS config URI to bind to the correct network interface."""
     parts = [
-        '<CycloneDDS xmlns="https://cdds.io/config" '
-        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        'xsi:schemaLocation="https://cdds.io/config '
-        'https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/'
-        'master/etc/cyclonedds.xsd">',
+        '<CycloneDDS xmlns="https://cdds.io/config" ',
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ',
+        'xsi:schemaLocation="https://cdds.io/config ',
+        'https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">',
         '<Domain id="any">',
         "<General>",
         "<Interfaces>",
-        f'<NetworkInterface name="{iface}" '
-        f'priority="default" multicast="default"/>',
+        f'<NetworkInterface name="{iface}" multicast="default"/>',
         "</Interfaces>",
     ]
     if peer:
@@ -103,7 +71,6 @@ def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
     parts.extend(["</Domain>", "</CycloneDDS>"])
     return "".join(parts)
 
-
 def diagnose_interface(iface: str, verbose: bool) -> bool:
     """Check the interface exists and has an IPv4 address."""
     import subprocess
@@ -114,48 +81,40 @@ def diagnose_interface(iface: str, verbose: bool) -> bool:
         )
         if result.returncode != 0:
             print(f"[d1] WARNING: interface '{iface}' not found", file=sys.stderr)
-            print(f"[d1] available interfaces:", file=sys.stderr)
-            all_ifaces = subprocess.run(
-                ["ip", "-brief", "link"], capture_output=True, text=True
-            ).stdout
-            for line in all_ifaces.strip().splitlines():
-                print(f"       {line}", file=sys.stderr)
             return False
         if verbose:
             print(f"[d1] interface {iface}: {result.stdout.strip()}")
         if "inet " not in result.stdout:
-            print(f"[d1] WARNING: {iface} has no IPv4 address — "
-                  f"DDS will not find the arm", file=sys.stderr)
+            print(f"[d1] WARNING: {iface} has no IPv4 address — DDS will fail", file=sys.stderr)
         return True
     except Exception as e:
         if verbose:
             print(f"[d1] interface check skipped: {e}")
         return True
 
-
 # ---------------------------------------------------------------------------
 # Arm controller
 # ---------------------------------------------------------------------------
 
 class D1Arm:
-    def __init__(self, iface: str = "enp0s3", domain_id: int = 0,
-                 peer: Optional[str] = None, verbose: bool = False):
-
+    def __init__(self, iface: str = "enp0s3", domain_id: int = 0, peer: Optional[str] = None, verbose: bool = False):
         uri = build_cyclonedds_uri(iface, peer)
         os.environ["CYCLONEDDS_URI"] = uri
 
         if verbose:
             print(f"[d1] CYCLONEDDS_URI = {uri}")
             print(f"[d1] DDS domain id  = {domain_id}")
-
+        
         self.participant = DomainParticipant(domain_id)
 
+        # Command Writer
         self.cmd_topic = Topic(self.participant, "rt/arm_Command", ArmString_)
         self.cmd_writer = DataWriter(self.participant, self.cmd_topic)
 
-        self.fb_topic = Topic(self.participant, "current_servo_angle", PubServoInfo_)
+        # Feedback Reader
+        self.fb_topic = Topic(self.participant, "rt/arm_Feedback", ArmString_)
         self.fb_reader = DataReader(self.participant, self.fb_topic)
-
+        
         self._seq = 0
 
     def _next_seq(self) -> int:
@@ -167,71 +126,54 @@ class D1Arm:
         msg = ArmString_(data=json.dumps(payload))
         for _ in range(repeat):
             self.cmd_writer.write(msg)
-            time.sleep(0.5)
+            time.sleep(0.1)
 
     def home(self):
-        self._send({"seq": self._next_seq(), "address": 0,
-                    "funcode": 7, "data": ""})
+        self._send({"seq": self._next_seq(), "address": 0, "funcode": 7, "data": ""})
 
     def enable(self):
-        self._send({"seq": self._next_seq(), "address": 0,
-                    "funcode": 5, "data": ""})
+        self._send({"seq": self._next_seq(), "address": 0, "funcode": 5, "data": ""})
 
     def release(self):
-        self._send({"seq": self._next_seq(), "address": 0,
-                    "funcode": 5, "data": "release"})
+        self._send({"seq": self._next_seq(), "address": 0, "funcode": 5, "data": "release"})
 
     def joint(self, joint_id: int, angle_rad: float):
-        self._send({"seq": self._next_seq(), "address": joint_id,
-                    "funcode": 1, "data": str(angle_rad)})
+        self._send({"seq": self._next_seq(), "address": joint_id, "funcode": 1, "data": str(angle_rad)})
 
     def joints(self, angles):
-        if len(angles) != 6:
-            raise ValueError("expected 6 joint angles")
-        data = "[" + ",".join(f"{a:.4f}" for a in angles) + "]"
-        self._send({"seq": self._next_seq(), "address": 0,
-                    "funcode": 2, "data": data})
+        if len(angles) not in (6, 7):
+            raise ValueError(f"expected 6 or 7 joint angles, got {len(angles)}")
+        
+        # Formatted exactly as Unitree's arm parser expects
+        data_str = "[" + ",".join(f"{a:.4f}" for a in angles) + "]"
+        self._send({"seq": self._next_seq(), "address": 0, "funcode": 2, "data": data_str})
 
-    def feedback(self, timeout: float = 2.0) -> Optional[List[float]]:
-        """Read current joint angles. Returns None if no message arrives."""
+    def feedback(self, timeout: float = 2.0) -> Optional[dict]:
+        """Read current telemetry from rt/arm_Feedback."""
         t0 = time.time()
         while time.time() - t0 < timeout:
             for sample in self.fb_reader.take():
-                if isinstance(sample, SampleInfo):
+                if sample is None or not sample.data:
                     continue
-                return [
-                    sample.servo0_data, sample.servo1_data, sample.servo2_data,
-                    sample.servo3_data, sample.servo4_data, sample.servo5_data,
-                    sample.servo6_data,
-                ]
+                try:
+                    return json.loads(sample.data)
+                except json.JSONDecodeError:
+                    return {"raw_data": sample.data}
             time.sleep(0.05)
         return None
-
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    ap.add_argument("--iface", default="enp0s3",
-                    help="network interface (default: enp0s3)")
-    ap.add_argument("--domain", type=int, default=0,
-                    help="DDS domain ID (default: 0)")
-    ap.add_argument("--peer", default=None,
-                    help="unicast peer IP when multicast is blocked")
-    ap.add_argument("--verbose", "-v", action="store_true",
-                    help="print DDS config and interface details")
-    ap.add_argument("commands", nargs="+",
-                    help="home | enable | release | joint <id> <rad> | "
-                         "joints <a0..a5> | feedback | sleep <s>")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--iface", default="enp0s3", help="network interface")
+    ap.add_argument("--domain", type=int, default=0, help="DDS domain ID")
+    ap.add_argument("--peer", default=None, help="unicast peer IP")
+    ap.add_argument("--verbose", "-v", action="store_true", help="verbose output")
+    ap.add_argument("commands", nargs="+", help="home | enable | release | joint <id> <rad> | joints <a0..a5> | feedback | sleep <s>")
     args = ap.parse_args()
-
-    print(f"[d1] initializing on interface {args.iface}, "
-          f"domain {args.domain}")
 
     diagnose_interface(args.iface, args.verbose)
 
@@ -240,8 +182,6 @@ def main():
     except Exception as e:
         print(f"[d1] ERROR: failed to initialize DDS: {e}", file=sys.stderr)
         return 1
-
-    print("[d1] DDS participant created; command topic rt/arm_Command")
 
     cmds = args.commands
     i = 0
@@ -259,12 +199,12 @@ def main():
                 print(f"[d1] joint {jid} -> {ang:.3f} rad")
                 arm.joint(jid, ang); i += 3
             elif c == "joints":
-                angles = [float(x) for x in cmds[i + 1:i + 7]]
+                angles = [float(x) for x in cmds[i + 1:i + 8] if x.replace('.', '', 1).lstrip('-').isdigit()]
                 print(f"[d1] joints -> {angles}")
-                arm.joints(angles); i += 7
+                arm.joints(angles); i += 1 + len(angles)
             elif c == "feedback":
                 fb = arm.feedback()
-                print(f"[d1] joint feedback: {fb}"); i += 1
+                print(f"[d1] joint feedback: {json.dumps(fb, indent=2) if fb else 'None'}"); i += 1
             elif c == "sleep":
                 s = float(cmds[i + 1])
                 print(f"[d1] sleep {s}s"); time.sleep(s); i += 2
@@ -273,10 +213,7 @@ def main():
         except (IndexError, ValueError) as e:
             print(f"[d1] ERROR parsing command {c!r}: {e}", file=sys.stderr)
             return 1
-
-    print("[d1] done")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
