@@ -1,95 +1,57 @@
 #!/usr/bin/env python3
 """
 direct_test_movement.py
-Standalone test sequence for a directly connected Unitree D1 arm.
+
+Small, safe movement test for a Unitree D1 arm. Needs d1_arm_control.py in the
+same folder. Angles are DEGREES.
+
+    python3 direct_test_movement.py --iface enp0s8
+    python3 direct_test_movement.py --iface enp0s8 --peer 192.168.123.100
+    python3 direct_test_movement.py --iface enp0s8 --release   # go limp at the end
 """
 import argparse
-import json
 import os
 import sys
 import time
-from dataclasses import dataclass
 
-try:
-    from cyclonedds.domain import DomainParticipant
-    from cyclonedds.pub import DataWriter
-    from cyclonedds.topic import Topic
-    from cyclonedds.idl import IdlStruct
-except ImportError:
-    sys.exit("CycloneDDS Python bindings not installed. Run: pip3 install cyclonedds")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_arm_control import D1Arm, ADDR_TELEMETRY, diagnose_interface  # noqa: E402
 
 
-@dataclass
-class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
-    data: str = ""
-
-
-def build_cyclonedds_uri(iface: str) -> str:
-    """Force CycloneDDS to bind exclusively to the direct ethernet interface."""
-    return f"""<CycloneDDS xmlns="https://cdds.io/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
-        <Domain id="any">
-            <General>
-                <Interfaces>
-                    <NetworkInterface name="{iface}" multicast="default"/>
-                </Interfaces>
-            </General>
-        </Domain>
-    </CycloneDDS>"""
-
-
-class DirectD1Test:
-    def __init__(self, iface: str):
-        os.environ["CYCLONEDDS_URI"] = build_cyclonedds_uri(iface)
-        print(f"[test] Binding CycloneDDS to {iface}...")
-        
-        self.participant = DomainParticipant(0)
-        self.cmd_topic = Topic(self.participant, "rt/arm_Command", ArmString_)
-        self.cmd_writer = DataWriter(self.participant, self.cmd_topic)
-        self._seq = 0
-        
-        # Give DDS discovery a moment to find the arm on the direct link
-        time.sleep(1.0)
-
-    def send_cmd(self, payload: dict, repeat: int = 2):
-        self._seq += 1
-        payload["seq"] = self._seq
-        msg = ArmString_(data=json.dumps(payload))
-        for _ in range(repeat):
-            self.cmd_writer.write(msg)
-            time.sleep(0.1)
-
-    def run_test_sequence(self):
-        print("\n[test] 1. Enabling motors...")
-        self.send_cmd({"address": 0, "funcode": 5, "data": ""})
-        time.sleep(2.0)
-
-        print("[test] 2. Homing arm (returning to zero position)...")
-        self.send_cmd({"address": 0, "funcode": 7, "data": ""})
-        print("       Waiting 6 seconds for homing to complete...")
-        time.sleep(6.0)
-
-        print("[test] 3. Moving Joint 0 (base) to 0.5 radians...")
-        # funcode 1 targets a specific joint address with a radian float
-        self.send_cmd({"address": 0, "funcode": 1, "data": "0.5"})
-        time.sleep(3.0)
-
-        print("[test] 4. Releasing motors (entering drag-teach mode)...")
-        self.send_cmd({"address": 0, "funcode": 5, "data": "release"})
-        print("[test] Sequence complete. The arm should now be limp.")
-
-
-def main():
-    ap = argparse.ArgumentParser(description="Direct movement test for Unitree D1 Arm")
-    ap.add_argument("--iface", required=True, help="The wired network interface (e.g., enp0s8, eth0)")
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Direct movement test for Unitree D1 arm")
+    ap.add_argument("--iface", required=True, help="wired interface (e.g. enp0s8)")
+    ap.add_argument("--peer", default=None, help="unicast arm IP, e.g. 192.168.123.100")
+    ap.add_argument("--angle", type=float, default=20.0, help="test angle for joint 0 (deg)")
+    ap.add_argument("--release", action="store_true",
+                    help="release motors at the end (arm will go limp)")
+    ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args()
 
-    try:
-        tester = DirectD1Test(args.iface)
-        tester.run_test_sequence()
-    except Exception as e:
-        print(f"[test] ERROR: {e}", file=sys.stderr)
-        return 1
-    return 0
+    diagnose_interface(args.iface, args.verbose)
+    arm = D1Arm(args.iface, peer=args.peer, verbose=args.verbose)
+    if not arm.connected:
+        print("[test] DDS match with arm: NO. Arm not discovered.", file=sys.stderr)
+        return 2
+    print("[test] DDS match with arm: YES")
+
+    fb = arm.read(ADDR_TELEMETRY, 1, timeout=3.0)
+    print(f"[test] initial joint angles: {fb['data'] if fb else 'no feedback'}")
+
+    print("[test] 1. enable motors");           arm.enable();        time.sleep(2.0)
+    print("[test] 2. home (go to zero)");       arm.home();          time.sleep(6.0)
+    print(f"[test] 3. joint 0 -> {args.angle} deg"); arm.joint(0, args.angle); time.sleep(3.0)
+    print("[test] 4. joint 0 -> 0 deg");        arm.joint(0, 0.0);   time.sleep(3.0)
+
+    fb = arm.read(ADDR_TELEMETRY, 1, timeout=3.0)
+    print(f"[test] final joint angles: {fb['data'] if fb else 'no feedback'}")
+
+    if args.release:
+        print("[test] 5. release motors (arm goes limp)")
+        arm.release()
+    print("[test] done")
+    return 3 if arm.missing_acks else 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
