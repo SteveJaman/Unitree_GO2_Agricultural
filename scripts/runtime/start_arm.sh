@@ -70,9 +70,12 @@ docker cp "$NODES_DIR/d1_arm_control.py" "${CONTAINER_NAME}:/tmp/d1_arm_control.
 
 if ! docker exec -u root "$CONTAINER_NAME" python3 -c "import cyclonedds" >/dev/null 2>&1; then
     echo "[arm] cyclonedds missing, installing..."
-    docker exec -u root "$CONTAINER_NAME" pip3 install cyclonedds \
-        || die "pip install failed. If it needs CYCLONEDDS_HOME, try: pip3 install cyclonedds==0.10.2"
+    # 0.10.2 is the version Unitree's own SDK is built and tested against.
+    docker exec -u root "$CONTAINER_NAME" pip3 install cyclonedds==0.10.2 \
+        || die "pip install cyclonedds==0.10.2 failed (no wheel? build CycloneDDS from source and set CYCLONEDDS_HOME)"
 fi
+CDDS_VER="$(docker exec -u root "$CONTAINER_NAME" pip3 show cyclonedds 2>/dev/null | awk '/^Version:/{print $2}')"
+[ "$CDDS_VER" = "0.10.2" ] || echo "[arm] NOTE: cyclonedds is ${CDDS_VER:-unknown}; Unitree's SDK uses 0.10.2. If discovery fails: pip3 install cyclonedds==0.10.2"
 
 PY_ARGS=(--iface "$ARM_IFACE")
 [ -n "$ARM_PEER" ] && PY_ARGS+=(--peer "$ARM_PEER")

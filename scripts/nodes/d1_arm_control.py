@@ -9,7 +9,12 @@ Topics (type unitree_arm::msg::dds_::ArmString_, one JSON string):
   rt/arm_Command   host -> arm   (address 1)
   rt/arm_Feedback  arm  -> host  (address 2 = telemetry @10Hz, address 3 = acks)
 
-ALL ANGLES ARE IN DEGREES. Joints 0-5 are the arm, joint 6 is the gripper.
+ALL ANGLES ARE IN DEGREES. Joints 0-5 are the arm, joint 6 is the gripper
+(the gripper command is a servo angle in degrees, not millimetres or metres).
+
+Enable uses mode 80000 (fully locked) by default. The official doc table says
+"1 = enable" but also "0..80000, 80000 = fully locked", and the working D1-550
+ros2_control driver (SofiaAbal/tfg_go2_arm) sends 80000, so that is the default.
 
 Usage:
     python3 d1_arm_control.py --iface enp0s8 enable sleep 2 home sleep 6
@@ -64,6 +69,8 @@ FUNC_JOINT_ENABLE = 4
 FUNC_ENABLE_ALL = 5
 FUNC_POWER = 6
 FUNC_ZERO = 7
+
+ENABLE_FULL = 80000   # "fully locked" per the official doc; used by working drivers
 
 # Joint limits in degrees (from the spec sheet). Joint 6 = gripper (not limited here).
 JOINT_LIMITS_DEG = {0: 135.0, 1: 90.0, 2: 90.0, 3: 135.0, 4: 90.0, 5: 135.0}
@@ -212,7 +219,7 @@ class D1Arm:
 
     # -- commands (degrees!) ------------------------------------------------
 
-    def enable(self, mode: int = 1):
+    def enable(self, mode: int = ENABLE_FULL):
         return self._send(FUNC_ENABLE_ALL, {"mode": mode})
 
     def release(self):
@@ -269,8 +276,9 @@ def main() -> int:
     ap.add_argument("--domain", type=int, default=0, help="DDS domain id")
     ap.add_argument("--peer", default=os.environ.get("ARM_PEER"),
                     help="unicast peer IP (disables multicast), e.g. 192.168.123.100")
-    ap.add_argument("--enable-mode", type=int, default=1,
-                    help="value for enable (1 = enable; doc says up to 80000 = fully locked)")
+    ap.add_argument("--enable-mode", type=int, default=ENABLE_FULL,
+                    help="enable value: 0 = release, 80000 = fully locked (default), "
+                         "1 = enable per doc table")
     ap.add_argument("--verbose", "-v", action="store_true")
     ap.add_argument("commands", nargs="+",
                     help="enable | release | home | power <0|1> | joint <id> <deg> | "

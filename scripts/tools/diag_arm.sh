@@ -141,8 +141,9 @@ echo "--- 4. cyclonedds in container ---"
 if docker exec -u root "$CONTAINER" python3 -c "import cyclonedds" >/dev/null 2>&1; then
     VER="$(docker exec -u root "$CONTAINER" pip3 show cyclonedds 2>/dev/null | awk '/^Version:/{print $2}')"
     pass "importable (pip version: ${VER:-unknown})"
+    [ "$VER" = "0.10.2" ] || warn "Unitree's SDK uses cyclonedds 0.10.2; you have ${VER:-unknown} (try: pip3 install cyclonedds==0.10.2)"
 else
-    fail "not importable (fix: docker exec -u root $CONTAINER pip3 install cyclonedds)"
+    fail "not importable (fix: docker exec -u root $CONTAINER pip3 install cyclonedds==0.10.2)"
 fi
 
 # --- 5. control script ------------------------------------------------------
