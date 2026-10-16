@@ -28,11 +28,11 @@
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
+WS_ROOT="$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 
 # --- Configuration ---------------------------------------------------------
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
-GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.5}"
+GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.4}"
 GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"
 GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
 

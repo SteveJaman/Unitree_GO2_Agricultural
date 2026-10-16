@@ -64,6 +64,7 @@ both the dog and the arm — is the long-term goal.
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
+| [docs/simulation.md](docs/simulation.md) | Test the explorer + Nav2 in the CMU Unity sim (no robot) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
 | [config/README.md](config/README.md) | Config folder notes (RViz layout) |
 | [cmu-legacy/README.md](cmu-legacy/README.md) | Archived CMU-stack code |
@@ -305,6 +306,7 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 | [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Launch RTAB-Map for dense 3D reconstruction alongside the session |
+| [`sim_explore.sh`](scripts/runtime/sim_explore.sh) | **Simulation.** CMU Unity sim + real go2_nav2 config + explorer, on the host. See [docs/simulation.md](docs/simulation.md) |
 | [`start_arm.sh`](scripts/runtime/start_arm.sh) | Initialize the D1-T arm: enable motors, home, verify interface |
 
 ### Nodes ([`scripts/nodes/`](scripts/nodes/))
@@ -361,6 +363,7 @@ Four phases:
 | `cmd_vel_topic` | `/cmd_vel_nav` | Goes through the smoother — do NOT use `/cmd_vel` |
 | `stop_topic` | `/cmd_vel` | Emergency stop bypasses the smoother so it overrides Nav2 |
 | `min_frontier_size` | `4` | Cells per cluster — frontiers are thin |
+| `min_goal_dist` | `0.8` | Skip frontiers closer than this (must exceed goal tolerance; the lidar blind ring makes fake frontiers under the robot) |
 | `min_known_cells` | `200` | Map must have this many known cells before frontier logic runs |
 | `blind_trigger_cells` | `100` | Below this, do a blind step |
 | `blind_enable` | `false` | Off by default — fights Nav2 during first tests |

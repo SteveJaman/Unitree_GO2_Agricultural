@@ -1,0 +1,116 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Help Height: 0
+    Splitter Ratio: 0.5
+  - Class: go2_explore_panel/ExplorePanel
+    Name: ExplorePanel
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: Global costmap
+      Enabled: true
+      Topic:
+        Value: /global_costmap/costmap
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: costmap
+      Alpha: 0.6
+      Draw Behind: true
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: Local costmap
+      Enabled: true
+      Topic:
+        Value: /local_costmap/costmap
+        Reliability Policy: Reliable
+      Color Scheme: costmap
+      Alpha: 0.4
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Lidar (sim)
+      Enabled: true
+      Topic:
+        Value: /lidar3d/registered
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: Global plan
+      Enabled: true
+      Topic:
+        Value: /plan
+      Color: 25; 255; 0
+      Line Width: 0.05
+      Line Style: Billboards
+      Value: true
+    - Class: rviz_default_plugins/Pose
+      Name: Goal
+      Enabled: true
+      Topic:
+        Value: /goal_pose
+      Color: 255; 25; 0
+      Shape: Arrow
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Marker Scale: 0.5
+      Frames:
+        All Enabled: false
+        base_link:
+          Value: true
+        lidar3d_map:
+          Value: true
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Sim camera
+      Enabled: false
+      Topic:
+        Value: /camera/image/raw
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: lidar3d_map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Topic:
+        Value: /clicked_point
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 40
+      X: 0
+      Y: 0
+      Target Frame: base_link
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Displays:
+    collapsed: false
+  ExplorePanel:
+    collapsed: false

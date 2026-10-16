@@ -63,6 +63,12 @@ DEFAULTS = {
 
     # Frontier detection
     'min_frontier_size':     4,
+    # Ignore frontiers closer than this. Must exceed goal_xy_tolerance, or a
+    # goal counts as reached the moment it is sent and the robot never moves.
+    # The lidar blind ring (obstacle_min_range 0.35 m) always leaves unknown
+    # cells right around the robot, so without this the nearest "frontier"
+    # is under the robot itself.
+    'min_goal_dist':         0.8,
     'min_known_cells':       200,
     'frontier_blacklist_s':  30.0,
 
@@ -124,6 +130,7 @@ class FrontierExplorer(Node):
         self.stop_topic = p('stop_topic')
 
         self.min_frontier_size = int(p('min_frontier_size'))
+        self.min_goal_dist = float(p('min_goal_dist'))
         self.min_known_cells = int(p('min_known_cells'))
         self.blacklist_s = float(p('frontier_blacklist_s'))
 
@@ -670,6 +677,8 @@ class FrontierExplorer(Node):
                 continue
 
             dist = math.hypot(cxw - robot_xy[0], cyw - robot_xy[1])
+            if dist < self.min_goal_dist:
+                continue
             frontiers.append(Frontier(cxw, cyw, len(cluster_pts), dist))
 
         return frontiers

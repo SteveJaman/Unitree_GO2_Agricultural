@@ -1,0 +1,22 @@
+# frontier_explorer.py parameters for simulation. These match the values
+# scripts/runtime/wifi_nav.sh passes on the real robot, so a result here is
+# meaningful there. Tweak in sim first, then copy the change to wifi_nav.sh.
+frontier_explorer:
+  ros__parameters:
+    robot_base_frame: base_link
+    map_frame: lidar3d_map
+    map_topic: /global_costmap/costmap
+    goal_topic: /goal_pose
+    cmd_vel_topic: /cmd_vel_nav
+    stop_topic: /cmd_vel
+    min_frontier_size: 4
+    min_goal_dist: 0.8
+    min_known_cells: 200
+    blind_enable: false
+    blind_trigger_cells: 100
+    blind_step_distance: 0.6
+    blind_step_speed: 0.12
+    coverage_enable: false
+    return_to_init: false
+    spin_on_goal: false
+    tick_hz: 1.0

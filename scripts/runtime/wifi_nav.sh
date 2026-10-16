@@ -47,9 +47,10 @@ GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
 MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
 ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
-FLOOR_FILTER_SCRIPT="${SCRIPT_DIR}/go2_floor_filter.py"
-EXPLORER_SCRIPT="${SCRIPT_DIR}/frontier_explorer.py"
-CAMERA_RELAY_SCRIPT="${SCRIPT_DIR}/go2_camera_relay.py"
+NODES_DIR="${NODES_DIR:-$(dirname "${SCRIPT_DIR}")/nodes}"
+FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
+EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
+CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 
 # --- SAFETY thresholds -----------------------------------------------------
 SAFETY_STOP_DISTANCE="${SAFETY_STOP_DISTANCE:-0.45}"
@@ -64,6 +65,7 @@ EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
 EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
 EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
 EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
+EXPLORE_MIN_GOAL_DIST="${EXPLORE_MIN_GOAL_DIST:-0.8}"
 EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
 EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
 EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
@@ -315,6 +317,13 @@ fi
 [ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || { echo "ERROR: mapping.sh not found." >&2; exit 1; }
 echo "[checks] docker + repo present .................... OK"
 
+# docker cp below is best-effort (|| true), so a missing node script would
+# otherwise run a stale /tmp copy in the container. Fail early instead.
+for f in "${EXPLORER_SCRIPT}" "${CAMERA_RELAY_SCRIPT}" "${FLOOR_FILTER_SCRIPT}"; do
+    [ -f "$f" ] || { echo "ERROR: $f not found (set NODES_DIR)." >&2; exit 1; }
+done
+echo "[checks] node scripts present ($(basename "${NODES_DIR}")/) ........ OK"
+
 if ssh -o BatchMode=yes -o ConnectTimeout=3 \
         "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
@@ -527,6 +536,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                      -p stop_topic:=${EXPLORE_STOP_TOPIC} \
                      -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} \
                      -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} \
+                     -p min_goal_dist:=${EXPLORE_MIN_GOAL_DIST} \
                      -p blind_enable:=${EXPLORE_BLIND_ENABLE} \
                      -p blind_trigger_cells:=100 \
                      -p blind_step_distance:=0.6 \

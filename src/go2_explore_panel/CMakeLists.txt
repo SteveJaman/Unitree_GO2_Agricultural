@@ -20,10 +20,6 @@ find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets)
 
-# for python pkgs
-find_package(ament_cmake_python REQUIRED)
-find_package(rclpy REQUIRED)
-
 # Include the HEADER in the sources list so AUTOMOC sees it
 add_library(go2_explore_panel SHARED
   src/explore_panel.cpp
@@ -66,15 +62,18 @@ ament_export_libraries(go2_explore_panel)
 ament_export_targets(export_go2_explore_panel)
 
 
-# python executable nodes 
-file(GLOB PYTHON_SCRIPTS CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}/*.py"
-)
-
-install(PROGRAMS
-  ${PYTHON_SCRIPTS}
-  DESTINATION lib/${PROJECT_NAME}
-)
+# Python nodes. The canonical copy lives in scripts/nodes/ (wifi_nav.sh
+# docker-cp's it from there), so install it from that path rather than
+# keeping a second copy inside this package.
+set(GO2_NODES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/nodes")
+if(EXISTS "${GO2_NODES_DIR}/frontier_explorer.py")
+  install(PROGRAMS
+    "${GO2_NODES_DIR}/frontier_explorer.py"
+    DESTINATION lib/${PROJECT_NAME}
+  )
+else()
+  message(WARNING "frontier_explorer.py not found in ${GO2_NODES_DIR}; not installing it")
+endif()
 
 
 ament_package()
