@@ -76,18 +76,58 @@ Prerequisites:
   13 m from the start), 4 abandoned (no progress or timeout), 3 Nav2 legs
   failed.
 
-Open explorer issues the sim exposes:
-1. **Blacklist is ineffective.** An abandoned frontier `(0.58, 2.03)` was
-   picked again 20 s later, even though `frontier_blacklist_s` is 30. The
-   blacklist key is the centroid pixel, but the check looks at the first 10
-   cluster pixels. The pixel grid also shifts whenever the rolling costmap
-   origin moves.
-2. **Slow reaction to failure.** When `go2_goal_pose_nav` logs `leg failed`,
-   the explorer waits for `progress_timeout_s` (20 s) instead of moving on
-   right away.
-3. **No stop on Ctrl+C.** `emergency_stop()` in `main()`'s `finally` raises
-   `publisher's context is invalid`, so the final stop is never sent. On the
-   robot, the velocity_smoother's 1 s timeout is what actually stops it.
+Explorer issues the sim exposed, now fixed in `frontier_explorer.py`:
+1. **Blacklist was ineffective.** An abandoned frontier `(0.58, 2.03)` was
+   picked again 20 s later, even though `frontier_blacklist_s` is 30. The key
+   was the centroid pixel, the check looked at the first 10 cluster pixels,
+   and the rolling costmap origin shifts the pixel grid. *Fix:* the blacklist
+   now holds world points. A frontier whose centroid is within
+   `frontier_blacklist_radius_m` (0.5 m) of one is skipped.
+2. **Slow reaction to failure.** When `go2_goal_pose_nav` logged `leg failed`,
+   the explorer waited `progress_timeout_s` (20 s). go2_goal_pose_nav
+   publishes no result, so the explorer now watches the
+   `/compute_path_to_pose` and `/follow_path` action status topics. An
+   ABORTED/CANCELED leg blacklists the goal, and the next goal is sent on the
+   next tick. A SUCCEEDED `follow_path` counts as reached, because Nav2's
+   goal checker (0.40 m) is looser than `goal_xy_tolerance` (0.35 m).
+   Goal IDs from older legs are ignored, so a leg queued ahead of ours is not
+   blamed on our goal.
+3. **No stop on Ctrl+C.** `emergency_stop()` in `main()`'s `finally` raised
+   `publisher's context is invalid`. *Fix:* `rclpy.init` is called with
+   `SignalHandlerOptions.NO`. SIGINT/SIGTERM raise `KeyboardInterrupt`, the
+   stop is published, and only then is the context shut down.
+
+Fixing 2 exposed a fourth problem: the robot can end up inside lethal or
+inscribed costmap space. The planner then fails every goal with `Starting
+point in lethal space`. With the instant reaction, the explorer burned through
+and blacklisted every frontier in about a minute (68 goals sent in that run).
+*Fix:* on a planner abort, the explorer reads the costmap at the robot pose.
+If the value is at least `stuck_cost_threshold` (99), it does not blacklist
+the goal, waits `stuck_backoff_s` (5 s), and, if `unstick_enable` is set,
+reverses up to 0.3 m at 0.1 m/s, like Nav2's backup recovery. `unstick_enable`
+defaults to false and is turned on only in `explorer_sim.yaml`. **It is not in
+`wifi_nav.sh` yet**, so the two parameter sets differ there until it is
+tested on the robot. The unstick path did not trigger in the verification run
+below, so it has not been exercised in sim yet.
+
+### Results after the explorer fixes (4 min runs, `--autostart`)
+
+| Run | Sent | Reached | Abandoned | Notes |
+|---|---|---|---|---|
+| Baseline (`min_goal_dist` fix only, 3.5 min) | 8 | 3 | 4 | 20 s wait after each failed leg |
+| Fixes 1–3, before the lethal-start fix | 68 | 3 | 65 | Stuck in lethal space after 3 min, then cascaded |
+| Fixes 1–3 + lethal-start fix | 12 | 10 | 1 | One goal still active at Ctrl+C |
+
+- No goal was sent within 0.5 m of an active blacklist point in any run.
+  Frontier centroids do drift 0.5–0.9 m as the map grows, so a nearby point
+  can still be picked. In the last run it was then reached, so the radius was
+  left at 0.5 m.
+- Failed leg → next goal: at most 1.0 s (one tick at `tick_hz` 1.0).
+- Ctrl+C: the explorer logs `Stopped. goals sent=… reached=… abandoned=…`
+  after the stop and exits with `process has finished cleanly`, with no
+  traceback. go2_goal_pose_nav still prints `Failed to publish log message to
+  rosout: publisher's context is invalid` on shutdown. That comes from its own
+  code, not the explorer.
 
 ## Files
 

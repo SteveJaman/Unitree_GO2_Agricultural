@@ -20,3 +20,6 @@ frontier_explorer:
     return_to_init: false
     spin_on_goal: false
     tick_hz: 1.0
+    # Sim only for now: reverse out of lethal space when the planner reports
+    # the start is lethal. Not yet in wifi_nav.sh (defaults to false there).
+    unstick_enable: true
