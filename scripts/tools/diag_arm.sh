@@ -1,229 +1,188 @@
 #!/usr/bin/env bash
-# diag_arm.sh — full network + DDS diagnostic for the D1-T arm.
+# diag_arm.sh: D1 arm network + DDS diagnostic.
 #
-# Run on the VM. Prints a checklist, ends with a verdict.
-#
-# Usage:
-#   ./scripts/tools/diag_arm.sh                    # default iface enp0s8
-#   ARM_IFACE=enp0s3 ./scripts/tools/diag_arm.sh
-#   CONTAINER_NAME=go2-lidar3d ./scripts/tools/diag_arm.sh
+# Environment overrides:
+#   ARM_IFACE=enp0s8        interface the arm is plugged into (auto-detected if unset)
+#   ARM_SUBNET=192.168.123  arm subnet (D1 factory default IP is .100)
+#   ARM_IP=192.168.123.100
+#   ARM_PEER=...            unicast discovery peer for the DDS test
+#   CONTAINER_NAME=go2-lidar3d
 set -uo pipefail
 
-CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
-ARM_IFACE="${ARM_IFACE:-enp0s8}"
-ARM_SUBNET="${ARM_SUBNET:-192.168.123}"
-# D1 arm's factory default. If the VM squats on it, the arm can't come online.
-D1_DEFAULT_IP="${D1_DEFAULT_IP:-192.168.123.100}"
+CONTAINER="${CONTAINER_NAME:-go2-lidar3d}"
+SUBNET="${ARM_SUBNET:-192.168.123}"
+ARM_IP="${ARM_IP:-${SUBNET}.100}"
+IFACE="${ARM_IFACE:-}"
+ARM_PEER="${ARM_PEER:-}"
 
-# Known Go2 internal MACs (from earlier neighbor table)
-KNOWN_GO2_MACS=("48:b0:2d" "7e:1d:75")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODES="${NODES_DIR:-$(dirname "$SCRIPT_DIR")/nodes}"
+[ -f "$NODES/d1_arm_control.py" ] || NODES="$SCRIPT_DIR"
 
-# ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
-PASS=0
-FAIL=0
-WARN=0
-VERDICT_LINES=()
+pass() { echo "  PASS: $*"; }
+fail() { echo "  FAIL: $*"; FAILS=$((FAILS + 1)); }
+warn() { echo "  WARN: $*"; }
+FAILS=0
 
-ok()    { printf "  \033[32m[OK]\033[0m    %s\n" "$1"; PASS=$((PASS+1)); }
-bad()   { printf "  \033[31m[FAIL]\033[0m  %s\n" "$1"; FAIL=$((FAIL+1)); VERDICT_LINES+=("$1"); }
-warn()  { printf "  \033[33m[WARN]\033[0m  %s\n" "$1"; WARN=$((WARN+1)); }
-info()  { printf "  \033[36m[..]\033[0m    %s\n" "$1"; }
-hdr()   { printf "\n\033[1m=== %s ===\033[0m\n" "$1"; }
+echo "=== D1 arm diagnostic ==="
+echo "container: $CONTAINER"
+echo "subnet:    $SUBNET.x   (arm ip: $ARM_IP)"
+echo
 
-# ---------------------------------------------------------------------------
-# 1. Container
-# ---------------------------------------------------------------------------
-hdr "1. Container"
-
-if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
-    ok "container $CONTAINER_NAME running"
-else
-    bad "container $CONTAINER_NAME NOT running"
-    echo
-    echo "Fix:"
-    echo "  docker start $CONTAINER_NAME"
-    echo "  (or: cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop)"
-    exit 1
-fi
-
-# Check container sees ARM_IFACE (host networking)
-if docker exec -u root "$CONTAINER_NAME" ip link show "$ARM_IFACE" >/dev/null 2>&1; then
-    ok "container sees interface $ARM_IFACE"
-else
-    bad "container cannot see interface $ARM_IFACE"
-    echo "  Interfaces inside container:"
-    docker exec -u root "$CONTAINER_NAME" ip -brief link | sed 's/^/    /'
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# 2. Interface state
-# ---------------------------------------------------------------------------
-hdr "2. Interface $ARM_IFACE"
-
-IFACE_LINE=$(ip -brief addr show "$ARM_IFACE" 2>/dev/null)
-echo "  $IFACE_LINE"
-
-IFACE_IP=$(echo "$IFACE_LINE" | grep -oP 'inet \K[0-9.]+' | head -1)
-
-if [ -z "$IFACE_IP" ]; then
-    bad "$ARM_IFACE has no IPv4 address"
-    echo "  Fix:"
-    echo "    sudo ip addr add ${ARM_SUBNET}.51/24 dev $ARM_IFACE"
-    echo "    sudo ip link set $ARM_IFACE up"
-else
-    ok "$ARM_IFACE has IP $IFACE_IP"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. IP conflict with the arm's factory default
-# ---------------------------------------------------------------------------
-hdr "3. IP conflict check"
-
-if [ "$IFACE_IP" = "$D1_DEFAULT_IP" ]; then
-    bad "VM $ARM_IFACE is squatting on $D1_DEFAULT_IP (D1's factory default)"
-    echo "  The arm cannot come online while the VM holds its address."
-    echo "  Fix:"
-    echo "    sudo ip addr del $D1_DEFAULT_IP/24 dev $ARM_IFACE"
-    echo "    sudo ip addr add ${ARM_SUBNET}.51/24 dev $ARM_IFACE"
-else
-    ok "no conflict with $D1_DEFAULT_IP"
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Neighbor table
-# ---------------------------------------------------------------------------
-hdr "4. Neighbor table on $ARM_IFACE"
-
-NEIGH=$(ip neigh show dev "$ARM_IFACE" 2>/dev/null)
-if [ -z "$NEIGH" ]; then
-    warn "empty neighbor table"
-    info "run a ping sweep (next step) to populate it"
-else
-    echo "$NEIGH" | while read -r line; do
-        nip=$(echo "$line" | awk '{print $1}')
-        nmac=$(echo "$line" | awk '{print $3}')
-        vendor="unknown"
-        for prefix in "${KNOWN_GO2_MACS[@]}"; do
-            if [[ "$nmac" == "$prefix"* ]]; then
-                vendor="Go2 internal"
-            fi
-        done
-        echo "    $nip  $nmac  [$vendor]"
-    done
-fi
-
-# ---------------------------------------------------------------------------
-# 5. Subnet sweep
-# ---------------------------------------------------------------------------
-hdr "5. Sweeping ${ARM_SUBNET}.0/24 for live hosts"
-
-if [ -z "$IFACE_IP" ]; then
-    warn "skipping sweep — $ARM_IFACE has no IP"
-else
-    info "this takes ~30 seconds..."
-    FOUND=()
-    for i in $(seq 1 254); do
-        ip="${ARM_SUBNET}.${i}"
-        if ping -c1 -W1 "$ip" >/dev/null 2>&1; then
-            FOUND+=("$ip")
-        fi
-    done
-
-    if [ ${#FOUND[@]} -eq 0 ]; then
-        bad "no hosts on $ARM_SUBNET.0/24 responded"
-        info "arm may be unpowered, wrong subnet, or cable issue"
+# --- 0. what interfaces exist ----------------------------------------------
+echo "--- 0. host interfaces ---"
+ip -br addr | sed 's/^/  /'
+if [ -z "$IFACE" ]; then
+    IFACE="$(ip -4 -o addr show | awk -v p="^${SUBNET}\\." '$4 ~ p {print $2; exit}')"
+    if [ -n "$IFACE" ]; then
+        echo "  auto-detected arm interface: $IFACE"
     else
-        ok "${#FOUND[@]} host(s) up on $ARM_SUBNET.0/24"
-        for ip in "${FOUND[@]}"; do
-            mac=$(ip neigh show "$ip" 2>/dev/null | awk '{print $5}')
-            echo "    $ip  ${mac:-no-mac}"
-        done
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# 6. Cyclonedds in container
-# ---------------------------------------------------------------------------
-hdr "6. Cyclonedds package"
-
-if docker exec -u root "$CONTAINER_NAME" \
-        python3 -c "import cyclonedds" >/dev/null 2>&1; then
-    VER=$(docker exec -u root "$CONTAINER_NAME" \
-        python3 -c "import cyclonedds; print(cyclonedds.__version__)" 2>/dev/null)
-    ok "cyclonedds installed (version $VER)"
-else
-    bad "cyclonedds not importable"
-    echo "  Fix:"
-    echo "    docker exec -u root $CONTAINER_NAME pip3 install cyclonedds"
-fi
-
-# ---------------------------------------------------------------------------
-# 7. Arm control script
-# ---------------------------------------------------------------------------
-hdr "7. Arm control script"
-
-if [ -f /tmp/d1_arm_control.py ]; then
-    ok "/tmp/d1_arm_control.py present in container"
-else
-    NODES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../nodes" && pwd)"
-    if [ -f "${NODES_DIR}/d1_arm_control.py" ]; then
-        info "copying d1_arm_control.py into container..."
-        docker cp "${NODES_DIR}/d1_arm_control.py" \
-            "$CONTAINER_NAME:/tmp/d1_arm_control.py"
-        ok "copied"
-    else
-        bad "d1_arm_control.py not found"
+        fail "no interface has an address in ${SUBNET}.x"
+        echo "  The arm must be on its own wired interface (not your home-LAN one)."
+        echo "  In VirtualBox: attach the USB Ethernet adapter to the VM, or add a Bridged"
+        echo "  adapter bound to that NIC. Then:"
+        echo "    sudo ip addr add ${SUBNET}.51/24 dev <iface>"
+        echo "    sudo ip link set <iface> up"
+        echo "  and re-run:  ARM_IFACE=<iface> $0"
         exit 1
     fi
 fi
+echo "interface: $IFACE"
+echo
 
-# ---------------------------------------------------------------------------
-# 8. DDS URI test
-# ---------------------------------------------------------------------------
-hdr "8. DDS config test (--verbose)"
-
-info "running feedback with --verbose..."
-
-DDS_OUT=$(docker exec -u root "$CONTAINER_NAME" bash -c "
-    python3 /tmp/d1_arm_control.py --iface $ARM_IFACE --verbose feedback 2>&1
-" 2>&1 || true)
-
-echo "$DDS_OUT" | sed 's/^/    /'
-
-if echo "$DDS_OUT" | grep -q "joint feedback: None"; then
-    warn "DDS initialized but arm did NOT reply"
-    info "likely cause: CYCLONEDDS_URI missing XML namespace, or arm unpowered"
-elif echo "$DDS_OUT" | grep -q "joint feedback: \["; then
-    ok "arm replied with joint angles — DDS is working"
+# --- 1. container -----------------------------------------------------------
+echo "--- 1. container ---"
+if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    pass "$CONTAINER running"
 else
-    bad "DDS test failed"
+    fail "$CONTAINER not running (fix: docker start $CONTAINER)"
+    exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# 9. Verdict
-# ---------------------------------------------------------------------------
-hdr "Verdict"
+NETMODE="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER" 2>/dev/null)"
+if [ "$NETMODE" = "host" ]; then
+    pass "network mode is host"
+else
+    fail "network mode is '$NETMODE'; DDS needs --network host (recreate the container)"
+fi
 
-echo "  Checks passed: $PASS"
-echo "  Warnings:      $WARN"
-echo "  Failures:      $FAIL"
+if docker exec -u root "$CONTAINER" test -e "/sys/class/net/$IFACE"; then
+    pass "container sees $IFACE"
+else
+    fail "container does not see $IFACE"
+fi
 
-if [ "$FAIL" -eq 0 ] && [ "$WARN" -eq 0 ]; then
-    echo
-    echo "  \033[32mAll checks passed.\033[0m"
-    echo "  If feedback still shows None, the arm's DDS is not replying — "
-    echo "  check that the arm is powered (24V DC) and that the correct"
-    echo "  CYCLONEDDS_URI namespace is in use (see d1_arm_control.py)."
-elif [ "$FAIL" -gt 0 ]; then
-    echo
-    echo "  \033[31mFailures to fix:\033[0m"
-    for line in "${VERDICT_LINES[@]}"; do
-        echo "    - $line"
+# --- 2. interface config ----------------------------------------------------
+echo
+echo "--- 2. interface config ---"
+CARRIER="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo 0)"
+if [ "$CARRIER" = "1" ]; then
+    pass "link is up (cable detected)"
+else
+    fail "no link/carrier on $IFACE (cable, adapter, or VM attachment problem)"
+fi
+
+mapfile -t IPS < <(ip -4 -o addr show dev "$IFACE" | awk '{print $4}' | cut -d/ -f1)
+echo "  IPv4 on $IFACE: ${IPS[*]:-none}"
+if [ "${#IPS[@]}" -eq 0 ]; then
+    fail "$IFACE has no IPv4 (fix: sudo ip addr add ${SUBNET}.51/24 dev $IFACE; sudo ip link set $IFACE up)"
+else
+    IN_SUBNET=0
+    for ip in "${IPS[@]}"; do
+        [[ "$ip" == "$SUBNET."* ]] && IN_SUBNET=$((IN_SUBNET + 1))
     done
+    if [ "$IN_SUBNET" -eq 0 ]; then
+        fail "no address in ${SUBNET}.x on $IFACE (fix: sudo ip addr add ${SUBNET}.51/24 dev $IFACE)"
+    else
+        pass "has an address in ${SUBNET}.x"
+    fi
+    [ "${#IPS[@]}" -gt 1 ] && warn "multiple IPv4 addresses on $IFACE; DDS may pick the wrong one"
+    for ip in "${IPS[@]}"; do
+        [ "$ip" = "$ARM_IP" ] && fail "host is squatting on the arm's IP $ARM_IP"
+    done
+fi
+if ip route show default dev "$IFACE" 2>/dev/null | grep -q default; then
+    warn "$IFACE carries your default route, so it is probably your home LAN, not the arm link"
+fi
+
+# --- 3. reachability --------------------------------------------------------
+echo
+echo "--- 3. reach the arm ---"
+if ping -c2 -W1 -I "$IFACE" "$ARM_IP" >/dev/null 2>&1; then
+    pass "ping $ARM_IP via $IFACE"
+    ip neigh show "$ARM_IP" dev "$IFACE" 2>/dev/null | sed 's/^/        /'
+else
+    fail "no ping reply from $ARM_IP via $IFACE"
+    echo "  sweeping ${SUBNET}.0/24 for any live host..."
+    SWEEP_DIR="$(mktemp -d)"
+    for i in $(seq 1 254); do
+        ( ping -c1 -W1 -I "$IFACE" "$SUBNET.$i" >/dev/null 2>&1 && : > "$SWEEP_DIR/$i" ) &
+    done
+    wait
+    if [ -z "$(ls -A "$SWEEP_DIR")" ]; then
+        echo "  no hosts responded on $IFACE"
+        echo "  Next: sudo tcpdump -i $IFACE -n -c 20   (arm powered on, cable in)."
+        echo "        Packets from the arm => link is fine, IP/subnet is the issue."
+        echo "        Silence => cable / adapter / VirtualBox attachment."
+        echo "        The arm also needs ~1 min after power-on."
+    else
+        for f in "$SWEEP_DIR"/*; do
+            n="$(basename "$f")"
+            echo "    UP: $SUBNET.$n  $(ip neigh show "$SUBNET.$n" dev "$IFACE" 2>/dev/null | awk '{print $5}')"
+        done
+        echo "  If the arm shows up on a different IP, re-run with ARM_IP=<that ip>."
+    fi
+    rm -rf "$SWEEP_DIR"
+fi
+
+# --- 4. cyclonedds ----------------------------------------------------------
+echo
+echo "--- 4. cyclonedds in container ---"
+if docker exec -u root "$CONTAINER" python3 -c "import cyclonedds" >/dev/null 2>&1; then
+    VER="$(docker exec -u root "$CONTAINER" pip3 show cyclonedds 2>/dev/null | awk '/^Version:/{print $2}')"
+    pass "importable (pip version: ${VER:-unknown})"
+    [ "$VER" = "0.10.2" ] || warn "Unitree's SDK uses cyclonedds 0.10.2; you have ${VER:-unknown} (try: pip3 install cyclonedds==0.10.2)"
+else
+    fail "not importable (fix: docker exec -u root $CONTAINER pip3 install cyclonedds==0.10.2)"
+fi
+
+# --- 5. control script ------------------------------------------------------
+echo
+echo "--- 5. control script ---"
+if [ -f "$NODES/d1_arm_control.py" ]; then
+    docker cp "$NODES/d1_arm_control.py" "$CONTAINER:/tmp/d1_arm_control.py" \
+        && pass "copied latest d1_arm_control.py from $NODES" \
+        || fail "docker cp failed"
+else
+    fail "d1_arm_control.py not found in $NODES"
+fi
+
+# --- 6. DDS test ------------------------------------------------------------
+echo
+echo "--- 6. DDS discovery + feedback ---"
+PEER_ARGS=()
+[ -n "$ARM_PEER" ] && PEER_ARGS=(--peer "$ARM_PEER")
+
+# No ROS sourcing: the script is pure CycloneDDS and ROS's libddsc can clash.
+DDS_OUT="$(docker exec -u root "$CONTAINER" \
+    env -u CYCLONEDDS_URI python3 /tmp/d1_arm_control.py \
+    --iface "$IFACE" "${PEER_ARGS[@]}" --verbose feedback status 2>&1 || true)"
+echo "$DDS_OUT" | sed 's/^/  /'
+
+if echo "$DDS_OUT" | grep -q "DDS match with arm: NO"; then
+    fail "arm not discovered over DDS (try ARM_PEER=$ARM_IP $0)"
+elif echo "$DDS_OUT" | grep -q "joint feedback: {"; then
+    pass "arm replied with joint feedback"
+elif echo "$DDS_OUT" | grep -q "DDS match with arm: YES"; then
+    warn "matched, but no joint feedback in 5s. Is the arm powered and fully booted?"
+else
+    fail "DDS test crashed; see output above"
 fi
 
 echo
-echo "  Paste this entire output for review."
+if [ "$FAILS" -eq 0 ]; then
+    echo "=== done: all checks passed ==="
+else
+    echo "=== done: $FAILS check(s) failed ==="
+fi
+exit "$FAILS"

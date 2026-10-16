@@ -258,12 +258,12 @@ cd ~/files/Unitree_GO2_Agricultural
 
 # 3. Move a joint directly:
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 joint 0 0.5
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 0.5
 '
 
 # 4. Or move all six joints at once:
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 joints 0.0 0.3 0.6 0.0 0.5 0.0
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joints 0.0 0.3 0.6 0.0 0.5 0.0
 '
 ```
 
@@ -449,22 +449,22 @@ JSON strings** on the `rt/arm_Command` topic. Joint feedback arrives on
 
 # Move one joint (joint index, angle in radians)
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 joint 0 0.5
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 0.5
 '
 
 # Move all six joints
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 joints 0.0 0.3 0.6 0.0 0.5 0.0
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joints 0.0 0.3 0.6 0.0 0.5 0.0
 '
 
 # Read current joint angles
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 feedback
+    python3 /tmp/d1_arm_control.py --iface enp0s8 feedback
 '
 
 # Chain commands
 docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface eth0 \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 \
         home sleep 1 enable joints 0 0.3 0.6 0 0.5 0
 '
 ```
@@ -473,7 +473,7 @@ docker exec -u root go2-lidar3d bash -lc '
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--iface` | `eth0` | Container interface that reaches the arm. Find with `ip -brief link` inside the container |
+| `--iface` | `enp0s8` | Container interface that reaches the arm. Find with `ip -brief link` inside the container |
 
 ### Verifying the arm is reachable
 
