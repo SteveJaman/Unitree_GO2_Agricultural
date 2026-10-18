@@ -8,13 +8,20 @@ bridged over Wi-Fi — and adds a custom frontier-based explorer, an RViz contro
 panel, a live camera relay, an arm controller, and a full set of orchestration
 scripts.
 
-**One command to run everything:**
+**One command to start everything (dog + arm):**
 
 ```bash
-./scripts/runtime/wifi_nav.sh
+./scripts/runtime/wifi_nav.sh --arm
 ```
 
-Power on the dog, stand it, run that. The script does the rest.
+Power on the dog and the arm, stand the dog, run that. The script finds both
+devices on the network, launches navigation over Wi-Fi (`enp0s3`), and folds
+the D1 arm into its calibrated resting pose over Ethernet (`enp0s8`) in the
+background. Without `--arm` it runs navigation only.
+
+> First time with the arm? Calibrate the folded pose once. See
+> [Arm — calibration](#arm--calibration-once). Until you do, `--arm` refuses to
+> move the arm and navigation runs on its own.
 
 ---
 
@@ -75,7 +82,7 @@ both the dog and the arm — is the long-term goal.
 ### Navigation
 
 ```
-Robot (Jetson, 192.168.1.9)              Laptop VM (Ubuntu 22.04, 192.168.1.4)
+Robot (Jetson, DHCP)                     Laptop VM (Ubuntu 22.04, DHCP on enp0s3)
 ─────────────────────────────            ───────────────────────────────────
 LiDAR + IMU ─► Point-LIO                 go2-lidar3d container (Docker)
       │                                        │
@@ -134,17 +141,31 @@ Key facts:
 
 ## Network
 
-| Node | IP | Notes |
+The router assigns addresses by DHCP, so **no IPs are hardcoded**. They are
+resolved on every run by [`scripts/runtime/go2_net.sh`](scripts/runtime/go2_net.sh).
+
+| Node | IP | How it is found |
 |---|---|---|
-| Laptop VM | `192.168.1.4` | `GO2_HOST_IP` |
-| Go2 Jetson | `192.168.1.9` | `GO2_ROBOT_IP` |
-| D1-T arm | via Go2 onboard switch | DDS on `rt/arm_Command` |
+| Laptop VM | DHCP | `GO2_HOST_IP`: read from the Wi-Fi interface `enp0s3` (VirtualBox bridge). Override: `--host-ip` |
+| Go2 Jetson | DHCP | `GO2_ROBOT_IP`: last known IP, then hostname `unitree`, then a MAC-prefix scan (`02:00:00`) on `enp0s3`, then an SSH-key probe. Override: `--robot-ip` |
+| D1-T arm | `192.168.123.100` | Wired, on `enp0s8`. The nav stack never uses this interface |
 | DDS domain | `64` | Wi-Fi side |
 | Relay port | `17999` | TCP, `/cmd_vel` |
 
-The container's CycloneDDS config is generated at startup from `GO2_HOST_IP`.
-If that IP is wrong the container announces the wrong address to the robot and
-no topics cross the wire.
+The container's CycloneDDS config is baked in from `GO2_HOST_IP` when the
+container is created. When the DHCP lease changes, `wifi_nav.sh` detects the
+mismatch and recreates the container. If the bind address were wrong, the
+container would announce the wrong address and no topics would cross the wire.
+
+Interface safeguards: `enp0s8` (the arm, `ARM_IFACE`) is refused as the nav
+interface. It is never scanned, and if the route to the robot goes through
+it, the script stops with an error. The script also checks that the container's
+DDS config binds only the Wi-Fi address.
+
+Tunables: `GO2_IFACE` (default `enp0s3`), `ARM_IFACE` (default `enp0s8`),
+`GO2_MAC_PREFIX`, `GO2_ROBOT_HOSTNAME`. Discovery is faster and more reliable
+with `arp-scan` (`sudo apt install arp-scan`) or `nmap` installed; without
+them it falls back to a ping sweep.
 
 ---
 
@@ -161,15 +182,15 @@ git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree
 cd ~/files/go2-nav2-wifi
 bash apply-lab-nav-fixes.sh
 
-# 3. Create the Docker container
-export GO2_HOST_IP=192.168.1.4 GO2_ROBOT_IP=192.168.1.9
-./setup-lidar3d.sh --laptop
-
-# 4. Set up passwordless SSH to the robot
+# 3. Set up passwordless SSH to the robot (discovers its IP; add
+#    --robot-ip <IP> if discovery fails)
 cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/wifi_nav.sh --setup-ssh
 
-# 5. (Optional) Install pre-commit hooks for linting
+# The Docker container is created automatically on the first run of
+# wifi_nav.sh, bound to the VM's current Wi-Fi IP.
+
+# 4. (Optional) Install pre-commit hooks for linting
 pip install pre-commit
 pre-commit install
 ```
@@ -194,14 +215,18 @@ terminal to end. The physical remote is the emergency stop.
 
 ### Navigation — what the script does automatically
 
-1. Kills stale processes on the VM **and** on the Jetson
-2. SSHes into the Jetson, kills any relay holding port 17999
-3. Starts `robot-relay-wifi.sh` in FULL mode (sensor + motion)
-4. Waits for port 17999 to bind before proceeding
-5. Cleans up partial runs on the robot
-6. Launches Nav2 + RViz via `mapping.sh --3d --nav`
-7. After 20 s: starts the frontier explorer and camera relay
-8. On Ctrl+C: stops exploration, kills helpers, stops the Jetson relay, brings down Docker
+1. Detects the VM's Wi-Fi IP on `enp0s3` and discovers the robot's IP (see [Network](#network))
+2. Kills stale processes on the VM **and** on the Jetson
+3. Cleans up partial runs on the robot
+4. Recreates the container if it was created for an old IP, and pins
+   `numpy<1.25` inside it (prevents `ValueError: numpy.dtype size changed`)
+5. Checks that container DDS binds the Wi-Fi address, not the arm interface
+6. SSHes into the Jetson, kills any relay holding port 17999, and starts
+   `robot-relay-wifi.sh` in FULL mode with the current `GO2_HOST_IP`
+7. Waits for port 17999 to bind before proceeding
+8. Launches Nav2 + RViz via `mapping.sh --3d --nav`
+9. After 20 s: starts the frontier explorer and camera relay
+10. On Ctrl+C: stops exploration, kills helpers, stops the Jetson relay, brings down Docker
 
 ### Arm — one-time setup
 
@@ -225,12 +250,42 @@ docker exec -u root go2-lidar3d bash -lc '
 '
 ```
 
+### Arm — calibration (once)
+
+The folded pose lives in `FOLDED_ANGLES` in
+[`scripts/nodes/d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py)
+(degrees: joints 0–5, then the gripper). The shipped value is a placeholder
+that drives joints 1 and 2 to their ±90° limits, so `start_arm.sh` refuses to
+fold until you calibrate.
+
+```bash
+# 1. With the motors released, fold the arm by hand onto the dog's back
+# 2. Read the angles:
+./scripts/runtime/start_arm.sh --read
+#    -> FOLDED_ANGLES = [ ... ]
+# 3. Paste that line over FOLDED_ANGLES in scripts/nodes/d1_arm_calibration.py
+```
+
+Redo this whenever the mount changes.
+
 ### Arm — every session
+
+The usual way is `./scripts/runtime/wifi_nav.sh --arm`. It checks that
+`enp0s8` exists, has an IPv4 address, and doesn't share a subnet with
+`enp0s3`. It then runs `start_arm.sh` in the background right before Nav2
+launches, logging to `go2-nav2-wifi/ws/log/arm.log`. If the arm isn't ready,
+navigation still starts and the arm is skipped with a warning.
+
+The fold: enable motors, then one funcode=2 multi-joint glide to
+`FOLDED_ANGLES`, then wait 5 s and **release the motors**. After that the arm
+is limp and rests on its mount.
+
+To run the arm on its own:
 
 ```bash
 # 1. Power the arm (24V DC) and confirm the RJ45 is connected
 
-# 2. Enable motors and home:
+# 2. Fold into the calibrated resting pose (enable -> glide -> release):
 cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/start_arm.sh
 
@@ -250,6 +305,7 @@ docker exec -u root go2-lidar3d bash -lc '
 | Flag | Effect |
 |---|---|
 | *(none)* | Explore + camera (default) |
+| `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
 | `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](docs/tour.md) |
 | `--no-camera` | Skip the camera relay |
 | `--nav` | Manual waypoint mode, camera on |
@@ -260,6 +316,9 @@ docker exec -u root go2-lidar3d bash -lc '
 | `--clean` | Clean both ends and exit |
 | `--check` | Verify prerequisites only, no launch |
 | `--setup-ssh` | One-time passwordless SSH setup |
+| `--host-ip <IP>` | Use this host IP instead of auto-detecting it on `enp0s3` |
+| `--robot-ip <IP>` | Use this robot IP instead of discovering it (required if discovery fails) |
+| `--iface <IFACE>` | Wi-Fi interface for Go2 traffic (default `enp0s3`; `enp0s8` is refused) |
 
 ### Navigation — runtime overrides (no file edits)
 
@@ -269,7 +328,7 @@ Every explorer parameter can be overridden with an env var:
 EXPLORE_BLIND_ENABLE=true        ./scripts/runtime/wifi_nav.sh
 EXPLORE_MIN_FRONTIER_SIZE=6      ./scripts/runtime/wifi_nav.sh
 EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
-GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
+./scripts/runtime/wifi_nav.sh --robot-ip 192.168.1.42
 ```
 
 ---
@@ -283,7 +342,8 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 | [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Launch RTAB-Map for dense 3D reconstruction alongside the session |
-| [`start_arm.sh`](scripts/runtime/start_arm.sh) | Initialize the D1-T arm: enable motors, home, verify interface |
+| [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm: verify interface, fold to the calibrated pose and release (`--read` to calibrate, `--no-home` to enable only) |
+| [`go2_net.sh`](scripts/runtime/go2_net.sh) | Sourced library: host-IP detection, `find_go2_ip()` robot discovery, interface safeguards |
 
 ### Nodes ([`scripts/nodes/`](scripts/nodes/))
 
@@ -293,6 +353,7 @@ GO2_ROBOT_IP=192.168.1.42        ./scripts/runtime/wifi_nav.sh
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | Direct control for the D1-T arm via Unitree SDK2 (JSON over DDS) |
+| [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` glide to `FOLDED_ANGLES`, then release |
 
 ### Tools ([`scripts/tools/`](scripts/tools/))
 
@@ -419,11 +480,27 @@ JSON strings** on the `rt/arm_Command` topic. Joint feedback arrives on
 ### Usage
 
 ```bash
-# Enable and home (typical session start)
+# Fold to the calibrated pose and release (typical session start)
 ./scripts/runtime/start_arm.sh
 
-# Enable only, skip homing
+# Print current angles for calibration
+./scripts/runtime/start_arm.sh --read
+
+# Enable only, no motion
 ./scripts/runtime/start_arm.sh --no-home
+
+# Give enp0s8 its 192.168.123.x address (after a VM reboot)
+./scripts/runtime/start_arm.sh --setup-net
+
+# Smooth, speed-limited move from the measured pose (degrees; peak 25 deg/s)
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 enable glide 0 -30 30 0 20 0 0
+
+# Gripper, averaged angles, sequence file
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 gripper 60 2000 angles
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 run /tmp/scan.txt
 
 # Move one joint (joint index, angle in radians)
 docker exec -u root go2-lidar3d bash -lc '
@@ -550,12 +627,14 @@ Unitree_GO2_Agricultural/
 │   │   ├── wifi_nav.sh               # main orchestrator
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # RTAB-Map launcher
-│   │   └── start_arm.sh              # D1-T arm init (enable + home)
+│   │   ├── start_arm.sh              # D1-T arm init (enable + home)
+│   │   └── go2_net.sh                # shared IP detection / robot discovery
 │   ├── nodes/                        # ROS 2 Python nodes
 │   │   ├── frontier_explorer.py      # custom explorer
 │   │   ├── go2_camera_relay.py       # camera bridge
 │   │   ├── go2_floor_filter.py       # floor-plane filter
-│   │   └── d1_arm_control.py         # D1-T arm control
+│   │   ├── d1_arm_control.py         # D1-T arm control
+│   │   └── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh
@@ -606,6 +685,31 @@ and the matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 ---
 
 ## Known Blockers and Fixes
+
+### Robot IP not found / DHCP changed
+
+`wifi_nav.sh` stops with `could not find the Go2 on enp0s3` when discovery fails.
+Find the robot's address in the router's DHCP lease list, or run `hostname -I`
+on the Jetson, then:
+
+```bash
+./scripts/runtime/wifi_nav.sh --robot-ip <IP>
+```
+
+The address is cached, so the next run checks it first. If the Jetson's Wi-Fi
+MAC doesn't start with `02:00:00`, set `GO2_MAC_PREFIX` to the real prefix.
+
+### Container crashes with `numpy.dtype size changed`
+
+`wifi_nav.sh` pins `numpy<1.25` inside the running container before launch. It
+also appends the pin to the upstream Dockerfile(s) in `go2-nav2-wifi/docker/`
+so rebuilds keep it. If the container exits before the pin can be applied,
+rebuild it:
+
+```bash
+docker rm -f go2-lidar3d
+cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop
+```
 
 ### Jetson relay port 17999 conflict
 

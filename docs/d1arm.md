@@ -54,6 +54,41 @@ docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
 
 Start with small angles (about 20 degrees).
 
+## Smooth moves, gripper, sequences
+
+```bash
+A="docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI python3 /tmp/d1_arm_control.py --iface enp0s8"
+
+$A angles                                  # current pose, 10-sample average
+$A enable glide 0 -30 30 0 20 0 0          # smooth move from the measured pose
+$A --vmax 40 enable glide 0 -30 30 0 20 0 0
+$A gripper 60 2000                         # gripper to 60 deg over 2 s (0 = closed)
+$A run /tmp/scan.txt                       # sequence file (docker cp it in first)
+```
+
+- `joints` sends one target and lets the arm's controller choose the motion.
+  `glide` starts from the **measured** pose. It streams a quintic trajectory
+  (zero velocity and acceleration at both ends) at `--rate` Hz (default 50),
+  with **peak** joint speed `--vmax` deg/s (default 25). It then waits until
+  every joint is within `--tolerance` deg (default 5).
+- `glide` **refuses to move without joint feedback**. Planning from a guessed
+  start would make the first setpoint a jump.
+- Joint angles come from `rt/arm_Feedback` (address 2, funcode 1). If that is
+  silent, they come from the `current_servo_angle` topic (`PubServoInfo_`,
+  `servo0_data`..`servo6_data`).
+- Sequence files take one CLI command per line, and `#` starts a comment:
+
+  ```text
+  enable
+  glide 0 -30 30 0 20 0 0
+  gripper 60 2000
+  sleep 2
+  ```
+
+`./scripts/runtime/start_arm.sh --setup-net` adds `192.168.123.51/24` to
+`enp0s8` if the interface has no `192.168.123.x` address. It never flushes
+existing addresses. Re-run it after a VM reboot.
+
 ## Troubleshooting
 
 | Symptom | Meaning | Fix |
@@ -73,3 +108,10 @@ Start with small angles (about 20 degrees).
 - SofiaAbal/tfg_go2_arm PR #23 (D1-550 driver: enable mode 80000, home funcode 7)
 - Robot-Learning-Group/d1t-teleop (pure Python, `unitree_sdk2py` + cyclonedds, hardware-verified)
 - kokekokko481576/Go2_deploy PR #77 (rad to degrees JSON bridge, home, range clamping)
+- JeewanthaSadaruwan/unitree-D1-550-Robot-ARM (C++ SDK examples on a Go2-mounted D1-550).
+  Ideas reimplemented here, not copied (the repo has no license file): quintic
+  trajectory streaming, averaged start-pose sampling, the `current_servo_angle`
+  feedback topic, wait-until-reached, gripper `delay_ms`, network setup. Where we
+  differ: their planner parses `servoN_data` from `rt/arm_Feedback` and silently
+  plans from 0 when it is missing. Their `vmax` caps average, not peak, speed.
+  Some of their waypoints (joint 5 at -164 deg) exceed their own URDF limits.

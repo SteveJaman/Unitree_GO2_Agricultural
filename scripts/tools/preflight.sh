@@ -5,6 +5,11 @@ set -eo pipefail
 CONTAINER="${CONTAINER_NAME:-go2-lidar3d}"
 PASS=0; FAIL=0
 
+# shellcheck source=../runtime/go2_net.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../runtime/go2_net.sh"
+EXPECTED_IP="${GO2_HOST_IP:-}"
+go2_detect_host_ip 2>/dev/null && EXPECTED_IP="${GO2_HOST_IP}"
+
 c_ok()   { printf "  \033[32mPASS\033[0m  %s\n" "$1"; PASS=$((PASS+1)); }
 c_fail() { printf "  \033[31mFAIL\033[0m  %s\n" "$1"; FAIL=$((FAIL+1)); }
 
@@ -27,13 +32,13 @@ docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" \
     || { c_fail "container not running"; echo; echo "PASS=$PASS FAIL=$FAIL"; exit 1; }
 
 HOST_IP=$(docker exec "$CONTAINER" printenv GO2_HOST_IP 2>/dev/null || echo "?")
-[ "$HOST_IP" = "192.168.1.4" ] \
+[ -n "$EXPECTED_IP" ] && [ "$HOST_IP" = "$EXPECTED_IP" ] \
     && c_ok "GO2_HOST_IP = $HOST_IP" \
-    || c_fail "GO2_HOST_IP = $HOST_IP (expected .4)"
+    || c_fail "GO2_HOST_IP = $HOST_IP (${GO2_IFACE} is ${EXPECTED_IP:-unknown}; rerun wifi_nav.sh to recreate)"
 
 BIND=$(docker exec "$CONTAINER" grep -oP 'NetworkInterface address="\K[^"]+' \
     /tmp/go2-wifi-cyclonedds.xml 2>/dev/null || echo "?")
-[ "$BIND" = "192.168.1.4" ] \
+[ -n "$EXPECTED_IP" ] && [ "$BIND" = "$EXPECTED_IP" ] \
     && c_ok "DDS bind = $BIND" \
     || c_fail "DDS bind = $BIND"
 
