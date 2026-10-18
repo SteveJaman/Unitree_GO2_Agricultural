@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-14
+Last updated: 2026-10-18
 
 ---
 
@@ -15,10 +15,11 @@ has been verified on the robot yet except where noted.
 
 ```
 scripts/
-├── runtime/     wifi_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh
-├── nodes/       frontier_explorer.py, go2_camera_relay.py,
-│                go2_floor_filter.py, d1_arm_control.py
-└── tools/       auto_walk.sh, campus_session.sh, export_tour.py,
+├── runtime/     wifi_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
+│                go2_net.sh (sourced: IP detection / robot discovery)
+├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py,
+│                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
+└── tools/       auto_walk.sh, campus_session.sh, diag_arm.sh, export_tour.py,
                  preflight.sh, save_rviz_config.sh, test_explore.sh,
                  test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
 ```
@@ -28,12 +29,13 @@ Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scrip
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
 - [README](../README.md) rewritten for the current stack
-- Docs: [`camera.md`](camera.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md)
+- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md)
 
 ### Navigation — verified working
 
-- VM container `go2-lidar3d` running, DDS bound to `192.168.1.4`
-- CycloneDDS peers: VM `.4` ↔ robot `.9`
+- VM container `go2-lidar3d` running, DDS bound to the VM's Wi-Fi address
+  (verified when the lab network used `192.168.1.4` ↔ robot `192.168.1.9`;
+  addresses are now resolved at runtime, see below)
 - Lab-nav-fixes applied (RPP controller, velocity smoother, Go2 URDF lidar mount)
 - Nav2 planner + controller + smoother reach `active`
 - `/goal_pose` → `/cmd_vel_nav` → `/cmd_vel` chain publishing
@@ -63,25 +65,43 @@ Code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
 `/camera/image_raw` (standard `sensor_msgs/Image`). Launches automatically
 via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 
-### D1-T arm — code complete, untested
+### DHCP networking — code complete, untested on robot (2026-10-18)
 
-- [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) — direct DDS/JSON control
-- [`start_arm.sh`](../scripts/runtime/start_arm.sh) — enable + home from VM
-- Commands: home, enable, release, joint, joints, feedback
-- Requires `unitree_sdk2_python` installed in the container
+- [`go2_net.sh`](../scripts/runtime/go2_net.sh): host IP auto-detected on `enp0s3`;
+  robot found by cache → hostname → MAC prefix scan → SSH-key probe;
+  `--host-ip` / `--robot-ip` / `--iface` overrides
+- Container recreated automatically when its DDS bind IP is stale
+- `numpy<1.25` pinned in the container and upstream Dockerfile
+- SSH relay start fixed (heredoc; the old `bash -lc` string killed itself via `pkill -f`)
+- `--setup-ssh` implemented directly in `wifi_nav.sh`
+- Discovery logic unit-tested against mocked `ip`/`arp-scan` output
+
+### D1-T arm — code complete, untested on hardware (2026-10-18)
+
+- [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py): DDS/JSON control. Commands: enable,
+  release, home, joint, joints, **glide** (smooth quintic, peak-speed capped,
+  refuses without feedback), **gripper**, **angles** (10-sample average),
+  **run** (sequence files), feedback, status
+- [`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py): `--read` folded angles, `--move` fold + release
+- [`start_arm.sh`](../scripts/runtime/start_arm.sh): fold (refuses the uncalibrated placeholder), `--read`,
+  `--no-home`, `--setup-net`
+- `wifi_nav.sh --arm`: checks `enp0s8`, folds the arm in the background
+- Uses pip `cyclonedds==0.10.2` (auto-installed). No Unitree SDK2 needed
+- Glide/sequence logic tested against a simulated arm; see [d1arm.md](d1arm.md)
 
 ### One-command orchestration
 
-[`./scripts/runtime/wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
+[`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
 
-1. Kills stale processes on VM **and** Jetson
-2. SSHes into Jetson, clears port 17999
-3. Starts relay in FULL mode
-4. Waits for port 17999 to bind
-5. Cleans up partial runs
-6. Launches Nav2 + RViz via `mapping.sh --3d --nav`
-7. Starts explorer + camera relay after 20 s
-8. On Ctrl+C: stops everything cleanly
+1. Detects the VM's Wi-Fi IP and discovers the robot's IP
+2. Kills stale processes on VM **and** Jetson, cleans up partial runs
+3. Recreates the container if its IP is stale, pins numpy, checks the DDS bind
+4. SSHes into Jetson, clears port 17999, starts the relay in FULL mode
+5. Waits for port 17999 to bind
+6. (`--arm`) folds the D1 arm in the background over `enp0s8`
+7. Launches Nav2 + RViz via `mapping.sh --3d --nav`
+8. Starts explorer + camera relay after 20 s
+9. On Ctrl+C: waits for an arm fold in progress, then stops everything cleanly
 
 ---
 
@@ -98,9 +118,13 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 | 7 | STOP button halts dog | click | stop within 1 s |
 | 8 | Full autonomous run | watch | `IDLE → EXPLORING → RETURNING → DONE` |
 | 9 | Camera reaches container | `ros2 topic hz /camera/image_raw` | ~10–30 Hz |
-| 10 | Arm reachable | `python3 /tmp/d1_arm_control.py --iface <iface> feedback` | joint angles |
-| 11 | Arm responds to `joint` | `... joint 0 0.5` | arm moves joint 0 |
-| 12 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
+| 10 | Arm reachable | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` | all PASS |
+| 11 | Arm responds to `joint` | `... d1_arm_control.py --iface enp0s8 joint 0 20` | joint 0 moves 20° |
+| 12 | Smooth `glide` works with streamed setpoints | `... enable glide <pose>` | smooth move, "reached" |
+| 13 | Fold calibration | `start_arm.sh --read`, paste, `start_arm.sh` | arm folds onto mount, goes limp |
+| 14 | Robot discovery | `./scripts/runtime/wifi_nav.sh --check` | banner shows `[discovered]` robot IP |
+| 15 | Go2 Jetson MAC prefix | `ip link` on the Jetson | starts `02:00:00` (else set `GO2_MAC_PREFIX`) |
+| 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
 
 ---
 
@@ -125,7 +149,7 @@ Full list of fixes: [troubleshooting.md](troubleshooting.md).
 Manual fallback:
 
 ```bash
-ssh unitree@192.168.1.9
+ssh unitree@<robot-ip>       # shown in the wifi_nav.sh banner
 pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
 sleep 3
 ss -tlnp | grep 17999        # must be empty
@@ -163,11 +187,13 @@ matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 
 ```bash
 # 1. Power on the dog, stand it up
-# 2. Power on the D1 arm if using it (24V DC, RJ45 connected)
+# 2. Power on the D1 arm if using it (24V DC, RJ45 to the VM's enp0s8)
+./scripts/runtime/start_arm.sh --setup-net     # after each VM reboot
 
-# 3. Launch the full stack
+# 3. Launch the full stack (drop --arm for navigation only)
 cd ~/files/Unitree_GO2_Agricultural
-./scripts/runtime/wifi_nav.sh
+./scripts/runtime/wifi_nav.sh --check          # confirm discovered IPs first
+./scripts/runtime/wifi_nav.sh --arm
 
 # 4. In another terminal: verify costmap
 go2sh
@@ -178,10 +204,9 @@ ros2 topic echo /explore/status            # watch goals_sent
 #    Watch explorer log for FRONTIER: lines
 #    Watch /explore/status for goals_sent > 0
 
-# 6. If explorer works, test the arm
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface <iface> feedback
-'
+# 6. Calibrate the arm fold (once), then test a small glide
+./scripts/runtime/start_arm.sh --read          # paste FOLDED_ANGLES into d1_arm_calibration.py
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI python3 /tmp/d1_arm_control.py --iface enp0s8 angles
 
 # 7. Save the RViz layout
 ./scripts/tools/save_rviz_config.sh

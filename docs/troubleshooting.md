@@ -63,7 +63,7 @@ If `frames.pdf` is empty, no session is running.
 kills stale relays before starting a new one. If you need to do it by hand:
 
 ```bash
-ssh unitree@192.168.1.9
+ssh unitree@<robot-ip>       # shown in the wifi_nav.sh banner
 pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
 rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
@@ -88,22 +88,63 @@ If that is missing, the motion relay failed. See the
 
 ### Container has stale `GO2_HOST_IP`
 
-The container's DDS bind address is baked in at creation time. If it's
-wrong:
+The container's DDS bind address is baked in at creation time, and the router
+hands out addresses by DHCP. **`wifi_nav.sh` handles this automatically.** It
+compares the container's `GO2_HOST_IP` with the VM's current `enp0s3` address
+and recreates the container when they differ.
+
+Check by hand:
+
+```bash
+ip -4 -o addr show dev enp0s3                       # the VM's current Wi-Fi IP
+docker exec go2-lidar3d printenv GO2_HOST_IP        # must match
+docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address
+./scripts/runtime/wifi_nav.sh --check               # reports STALE if they differ
+```
+
+If a stale IP is exported in your shell (e.g. `~/.bashrc`), `wifi_nav.sh`
+ignores it with a note. Remove it to avoid confusion.
+
+### `could not find the Go2 on enp0s3`
+
+Robot discovery failed. Order tried: last known IP, hostname `unitree`, MAC
+prefix scan (`02:00:00`) on `enp0s3`, then an SSH-key probe.
+
+1. Find the address in the router's DHCP lease list, or run `hostname -I` on
+   the Jetson, then `./scripts/runtime/wifi_nav.sh --robot-ip <IP>`. It is
+   cached for next time.
+2. If the Jetson's Wi-Fi MAC doesn't start with `02:00:00` (check `ip link` on
+   the Jetson), set `GO2_MAC_PREFIX=<prefix>`.
+3. Install `arp-scan` (`sudo apt install arp-scan`) or `nmap` for a faster,
+   more reliable scan. Without them, a ping sweep is used.
+
+### `route to robot ... goes via the arm interface enp0s8`
+
+The VM would send Go2 traffic out the arm's Ethernet. Make sure `enp0s3` (Wi-Fi
+bridge) and `enp0s8` (arm, `192.168.123.x`) are on different subnets, and that
+`enp0s3` holds the route to the robot's network (`ip route get <robot-ip>`).
+
+### `ValueError: numpy.dtype size changed`
+
+The container's pip numpy is newer than the apt scipy was built against.
+`wifi_nav.sh` pins `numpy<1.25` in the running container before launch. It
+also appends the pin to the upstream Dockerfile(s) in `go2-nav2-wifi/docker/`.
+If the container exits before the pin can be applied, rebuild it:
 
 ```bash
 docker rm -f go2-lidar3d
-cd ~/files/go2-nav2-wifi
-export GO2_HOST_IP=192.168.1.4 GO2_ROBOT_IP=192.168.1.9
-./setup-lidar3d.sh --laptop
+cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop
 ```
 
-Verify:
+If scipy still fails after the pin, a pip-installed package was built against
+a newer numpy:
+`docker exec go2-lidar3d python3 -m pip list | grep -iE 'numpy|scipy|pandas'`.
 
-```bash
-docker exec go2-lidar3d printenv GO2_HOST_IP        # expect 192.168.1.4
-docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address
-```
+### `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED`
+
+The scripts pin the robot's SSH key to the alias `go2-robot`, not to an IP, so
+DHCP changes don't trigger this. If you replaced the Jetson or reflashed it:
+`ssh-keygen -R go2-robot`, then `./scripts/runtime/wifi_nav.sh --setup-ssh`.
 
 ### `GO2_CONTAINER` is set to the wrong container
 
@@ -135,7 +176,7 @@ Confirm with `docker ps` — the container name must be `go2-lidar3d`.
 The Jetson motion relay failed to bind port 17999. Check on the Jetson:
 
 ```bash
-ssh unitree@192.168.1.9
+ssh unitree@<robot-ip>
 ss -tlnp | grep 17999
 tail -30 /tmp/robot-relay.log
 ```
@@ -144,12 +185,11 @@ Look for `cmd_vel TCP server started on port 17999`. If it's missing, the
 relay started in sensor-only mode. Restart it in FULL mode:
 
 ```bash
-ssh unitree@192.168.1.9
+ssh unitree@<robot-ip>
 pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
 rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
-unset GO2_HOST_IP
-export GO2_HOST_IP=192.168.1.4
+export GO2_HOST_IP=<vm-wifi-ip>    # `ip -4 -o addr show dev enp0s3` on the VM
 bash ~/robot-relay-wifi.sh
 ```
 
@@ -325,116 +365,95 @@ If it still uses `cmd_vel_pub`, the file reverted — re-apply the fix.
 
 ## D1-T Arm
 
-Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) and
-[`start_arm.sh`](../scripts/runtime/start_arm.sh).
+Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
+[`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py) and
+[`start_arm.sh`](../scripts/runtime/start_arm.sh). Protocol and runbook:
+[d1arm.md](d1arm.md).
+
+The arm is wired to the VM's `enp0s8` (`192.168.123.x`, DDS domain 0), **not**
+to the Go2. Run arm scripts with `env -u CYCLONEDDS_URI` and without sourcing
+ROS.
 
 ### Arm does not respond to commands
 
-1. **Check the interface name.** Inside the container:
+1. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
+   It checks the interface, ping, container, `cyclonedds`, and DDS match.
+2. **Check the address.** `enp0s8` needs a `192.168.123.x` address, which is
+   lost on every VM reboot: `./scripts/runtime/start_arm.sh --setup-net`.
+3. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
+4. **Read joint feedback:**
 
    ```bash
-   go2sh
-   ip -brief link
-   ```
-
-   The `--iface` flag must match the interface the arm is on.
-
-2. **Check the arm is powered.** 24V DC via the barrel jack. The arm's
-   controller should show activity on power.
-
-3. **Check the RJ45.** The arm should be on the same network segment as
-   the Go2's onboard switch.
-
-4. **Verify the SDK2 is installed:**
-
-   ```bash
-   docker exec -u root go2-lidar3d python3 -c "import cyclonedds; print('ok')"
-   ```
-
-5. **Read joint feedback:**
-
-   ```bash
-   docker exec -u root go2-lidar3d bash -lc '
-       python3 /tmp/d1_arm_control.py --iface <iface> feedback
-   '
+   docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+       python3 /tmp/d1_arm_control.py --iface enp0s8 angles
    ```
 
    If feedback arrives but commands do nothing, the motors may not be
-   enabled — run `enable` first.
+   enabled. Run `enable` first.
 
-### `ModuleNotFoundError: No module named 'unitree_sdk2py'`
+### `DDS match with arm: NO`
 
-The SDK isn't installed in the container. Install it:
+Discovery failed. In order:
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    cd /tmp
-    git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-    cd unitree_sdk2_python
-    export CYCLONEDDS_HOME=/opt/ros/humble
-    pip3 install -e .
-'
-```
+1. `pip3 show cyclonedds` in the container should show `0.10.2`, the version
+   Unitree's SDK uses. Fix: `docker exec -u root go2-lidar3d pip3 install cyclonedds==0.10.2`.
+2. Use unicast discovery: add `--peer 192.168.123.100` (or `ARM_PEER=...`).
+3. Make sure ROS isn't sourced in that shell. ROS's `libddsc` can clash with the
+   pip `cyclonedds` (`free(): invalid pointer`).
+4. The container must use host networking (`docker inspect -f '{{.HostConfig.NetworkMode}}' go2-lidar3d` → `host`).
 
-### `Could not locate cyclonedds` during SDK2 install
+### `ack: none` / `ack: REJECTED`
 
-The SDK needs cyclonedds headers. Two options:
+`none` after a match means a DDS type mismatch. Pin `cyclonedds==0.10.2`.
+`REJECTED` means the JSON shape is wrong: `data` must be a nested object
+(see [d1arm.md](d1arm.md)).
 
-**Option A — point at the ROS 2 install:**
+### `glide REFUSED: no joint feedback`
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    cd /tmp/unitree_sdk2_python
-    export CYCLONEDDS_HOME=/opt/ros/humble
-    pip3 install -e .
-'
-```
+`glide` plans from the arm's measured pose, and no angles arrived on
+`rt/arm_Feedback` or `current_servo_angle`. This is deliberate: planning
+from a guessed pose would make the first setpoint a jump. Fix the feedback
+first (`... angles`, `diag_arm.sh`). Use `joints` only if you accept the
+controller's own motion.
 
-**Option B — build cyclonedds from source:**
+### `target not reached within 10 s (max error N deg)`
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    cd /tmp
-    git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
-    cd cyclonedds && mkdir build install && cd build
-    cmake .. -DCMAKE_INSTALL_PREFIX=../install
-    cmake --build . --target install
-    cd /tmp/unitree_sdk2_python
-    export CYCLONEDDS_HOME=/tmp/cyclonedds/install
-    pip3 install -e .
-'
-```
+The arm stopped short of the `glide` target. Common causes are a joint
+blocked by the mount, a payload too heavy, or a target near a joint limit.
+A small residual error is normal. Raise `--tolerance` only if you're sure
+the pose is safe.
 
-### Arm moves but reports wrong joint angles in feedback
+### `FOLDED_ANGLES is still the uncalibrated placeholder`
 
-The arm's DDS topic may be publishing on a different scale or offset. Check
-the raw message:
+`start_arm.sh` won't fold until the resting pose is calibrated. The shipped
+value drives joints 1 and 2 to their ±90° limits. With the motors released,
+fold the arm onto its mount by hand. Run `./scripts/runtime/start_arm.sh --read`,
+then paste the printed line over `FOLDED_ANGLES` in `d1_arm_calibration.py`.
+(`ARM_ALLOW_DEFAULT_FOLD=1` forces it. Don't use it unless the placeholder
+really is safe for your mount.)
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    source /opt/ros/humble/setup.bash
-    ros2 topic echo /arm_state --once
-'
-```
+### `wifi_nav.sh --arm` skipped the arm
 
-Compare to the joint angles you commanded. If there's a scale or sign
-difference, the parsing in `d1_arm_control.py::_on_feedback` needs
-adjusting.
+Navigation continues without the arm. The banner shows `D1 arm: disabled (...)`.
 
-### Arm reachable from Jetson but not from VM container
+- `enp0s8 not ready`: the interface is missing or has no IPv4 address. Run
+  `./scripts/runtime/start_arm.sh --setup-net`.
+- `share a subnet`: `enp0s3` and `enp0s8` overlap, so arm and Go2 DDS would mix.
+  Give `enp0s8` a `192.168.123.x` address.
+- Otherwise read `~/files/go2-nav2-wifi/ws/log/arm.log`.
 
-The Wi-Fi relay may not be forwarding the arm's DDS domain. Check on the
-Jetson:
+### Arm moves but reports wrong joint angles
+
+Compare the raw telemetry to what you commanded (angles are **degrees**):
 
 ```bash
-ssh unitree@192.168.1.9
-ros2 topic list | grep arm
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 feedback angles
 ```
 
-If the arm appears on the Jetson but not in the container, the relay needs
-to include the arm's DDS topics. This is an upstream
-[`go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) change,
-not something the current scripts can fix.
+`feedback` shows the raw `rt/arm_Feedback` JSON (address 2, funcode 1,
+`angle0`..`angle6`). `angles` shows the 10-sample average the scripts use. A
+sign or scale difference would need a fix in `D1Arm._sample_angles`.
 
 ---
 
@@ -537,12 +556,13 @@ If empty, the session isn't fully up. Wait longer, or check the
 
 | Symptom | First command |
 |---|---|
-| Dog doesn't move | `ssh unitree@192.168.1.9 'ss -tlnp \| grep 17999'` |
+| Dog doesn't move | `ssh unitree@<robot-ip> 'ss -tlnp \| grep 17999'` |
 | Explorer does nothing | `docker exec go2-lidar3d tail -30 /tmp/frontier.log` |
 | Costmap missing | `go2sh; ros2 topic list \| grep costmap` |
 | TF broken | `go2sh; ros2 run tf2_ros tf2_echo lidar3d_map base_link` |
 | Camera empty | `go2sh; ros2 topic hz /camera/image_raw` |
-| Arm unresponsive | `go2sh; python3 /tmp/d1_arm_control.py --iface <iface> feedback` |
+| Arm unresponsive | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` |
+| Robot / host IP wrong | `./scripts/runtime/wifi_nav.sh --check` (banner shows both IPs) |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
 | Verify everything | [`./scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) |
 

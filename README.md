@@ -69,6 +69,7 @@ both the dog and the arm — is the long-term goal.
 |---|---|
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
+| [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, glide, sequences, troubleshooting |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
@@ -114,15 +115,15 @@ LiDAR + IMU ─► Point-LIO                 go2-lidar3d container (Docker)
 ### Arm
 
 ```
-D1-T arm (6 DOF + gripper)
+D1-T arm (6 DOF + gripper, 192.168.123.100)
       │
-      │ RJ45, DDS
+      │ RJ45 → VM enp0s8 (192.168.123.x), DDS domain 0
       ▼
-rt/arm_Command  ──── JSON payloads ────  d1_arm_control.py
-      │                                        │
-      │                                        ▼
-      ▼                                 start_arm.sh
-current_servo_angle  ◄── joint feedback
+rt/arm_Command      ◄── JSON commands ──  d1_arm_control.py / d1_arm_calibration.py
+rt/arm_Feedback     ── joint angles, acks ──►        (run in go2-lidar3d, ROS not
+current_servo_angle ── joint angles (backup) ─►       sourced, DDS bound to enp0s8)
+                                                            ▲
+                                       start_arm.sh ◄── wifi_nav.sh --arm
 ```
 
 Key facts:
@@ -136,6 +137,9 @@ Key facts:
   occupancy grid source.
 - **The D1-T arm uses DDS + JSON** on `rt/arm_Command`, not ROS 2 messages.
   The arm control script wraps the raw interface.
+- **Arm and dog DDS never mix.** The Go2 runs on `enp0s3` (domain 64), and the
+  arm on `enp0s8` (domain 0) with its own CycloneDDS config. The scripts check
+  that the two interfaces are different and on separate subnets.
 
 ---
 
@@ -230,25 +234,24 @@ terminal to end. The physical remote is the emergency stop.
 
 ### Arm — one-time setup
 
-Install the Unitree SDK2 in the container:
+1. In VirtualBox, attach the arm's Ethernet (USB adapter or a second bridged
+   adapter) to the VM as `enp0s8`. The Go2 Wi-Fi stays on `enp0s3`.
+2. Give `enp0s8` an address on the arm's subnet. This doesn't persist across
+   reboots, so re-run it after a VM restart:
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    pip3 install unitree_sdk2_python
-'
-```
+   ```bash
+   ./scripts/runtime/start_arm.sh --setup-net    # adds 192.168.123.51/24, pings the arm
+   ```
 
-If pip fails, build from source:
+3. Check everything:
 
-```bash
-docker exec -u root go2-lidar3d bash -lc '
-    cd /tmp
-    git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-    cd unitree_sdk2_python
-    export CYCLONEDDS_HOME=/opt/ros/humble
-    pip3 install -e .
-'
-```
+   ```bash
+   ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh   # all PASS expected
+   ```
+
+The arm scripts use the `cyclonedds` Python package (pinned to `0.10.2`, the
+version Unitree's SDK is built against). `start_arm.sh` installs it in the
+container on first run, so there is no separate SDK install.
 
 ### Arm — calibration (once)
 
@@ -289,16 +292,12 @@ To run the arm on its own:
 cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/start_arm.sh
 
-# 3. Move a joint directly:
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 0.5
-'
-
-# 4. Or move all six joints at once:
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface enp0s8 joints 0.0 0.3 0.6 0.0 0.5 0.0
-'
+# 3. Smooth move from the current pose (degrees: 6 joints + gripper):
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 enable glide 0 -30 30 0 20 0 0
 ```
+
+See [D1-T Arm Control](#d1-t-arm-control) for every command.
 
 ### Navigation — flags
 
@@ -339,10 +338,10 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 
 | Script | Purpose |
 |---|---|
-| [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera |
+| [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Launch RTAB-Map for dense 3D reconstruction alongside the session |
-| [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm: verify interface, fold to the calibrated pose and release (`--read` to calibrate, `--no-home` to enable only) |
+| [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm: verify interface, fold to the calibrated pose and release (`--read` to calibrate, `--no-home` to enable only, `--setup-net` to address `enp0s8`) |
 | [`go2_net.sh`](scripts/runtime/go2_net.sh) | Sourced library: host-IP detection, `find_go2_ip()` robot discovery, interface safeguards |
 
 ### Nodes ([`scripts/nodes/`](scripts/nodes/))
@@ -352,8 +351,9 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
-| [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | Direct control for the D1-T arm via Unitree SDK2 (JSON over DDS) |
+| [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm CLI + `D1Arm` class (JSON over CycloneDDS): enable, joints, smooth `glide`, gripper, averaged angles, sequence files |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` glide to `FOLDED_ANGLES`, then release |
+| [`direct_test_movement.py`](scripts/nodes/direct_test_movement.py) | Small, safe movement test for the arm (uses `d1_arm_control.py`) |
 
 ### Tools ([`scripts/tools/`](scripts/tools/))
 
@@ -368,6 +368,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
+| [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 
 ---
 
@@ -457,25 +458,36 @@ Expected states: `IDLE` → `EXPLORING` → goals on `/goal_pose` → `RETURNING
 ## D1-T Arm Control
 
 The D1-T is a 6-DOF collaborative arm with a gripper, controlled via **DDS with
-JSON strings** on the `rt/arm_Command` topic. Joint feedback arrives on
-`current_servo_angle`.
+JSON strings** (type `unitree_arm::msg::dds_::ArmString_`, DDS domain 0).
+Commands go to `rt/arm_Command`. Joint angles and acks come back on
+`rt/arm_Feedback`, and `current_servo_angle` serves as a backup source of joint
+angles. **All angles are degrees.** Joints 0–5 are the arm; joint 6 is the
+gripper (servo degrees, 0 = closed). Full protocol notes:
+[docs/d1arm.md](docs/d1arm.md).
 
 ### Physical setup
 
-- **Power:** 24V DC via the DC 5.5-2.1 barrel jack
-- **Communication:** RJ45, typically connected to the Go2's onboard switch, so
-  the arm and robot share a DDS domain
+- **Power:** 24V DC via the DC 5.5-2.1 barrel jack (~1 min boot)
+- **Communication:** RJ45 to the VM's `enp0s8`. Arm at `192.168.123.100`, VM at
+  `192.168.123.51` (`start_arm.sh --setup-net`). It is kept separate from the
+  Go2's Wi-Fi DDS
 - **Debug:** USB-C (serial debug only)
 
 ### Commands
 
-| Action | JSON payload | Purpose |
-|---|---|---|
-| Home | `{"funcode":7,"address":0,"seq":0,"data":""}` | Return all joints to zero |
-| Enable | `{"funcode":5,"address":0,"seq":0,"data":""}` | Power on motors (torque enabled) |
-| Release | `{"funcode":5,"address":0,"seq":0,"data":"release"}` | Power off (drag-teach mode) |
-| Single joint | `{"funcode":1,"address":X,"seq":0,"data":"Y"}` | Move joint X to angle Y radians |
-| All joints | `{"funcode":2,"address":0,"seq":0,"data":"[a0,...]"}` | Move all six joints at once |
+Every command is `{"seq":N,"address":1,"funcode":F,"data":{...}}`, where
+`data` is a nested JSON object, not a string.
+
+| Action | funcode | `data` | Purpose |
+|---|---|---|---|
+| Single joint | `1` | `{"id":J,"angle":DEG,"delay_ms":0}` | Move joint J (6 = gripper) |
+| All joints | `2` | `{"mode":1,"angle0":…,"angle6":…}` | Move all 7 at once |
+| Enable all | `5` | `{"mode":80000}` | Motors on, fully locked |
+| Release | `5` | `{"mode":0}` | Motors off (limp, drag-teach) |
+| Home | `7` | *(none)* | Return all joints to zero |
+
+Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
+The scripts reject anything beyond them.
 
 ### Usage
 
@@ -502,65 +514,75 @@ docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
 docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
     python3 /tmp/d1_arm_control.py --iface enp0s8 run /tmp/scan.txt
 
-# Move one joint (joint index, angle in radians)
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 0.5
-'
+# Move one joint (joint index, degrees)
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 20
 
-# Move all six joints
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface enp0s8 joints 0.0 0.3 0.6 0.0 0.5 0.0
-'
+# Move all joints in one command (7 values: 6 joints + gripper)
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 joints 0 -30 30 0 20 0 0
 
-# Read current joint angles
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface enp0s8 feedback
-'
+# Raw feedback / status
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 feedback status
 
-# Chain commands
-docker exec -u root go2-lidar3d bash -lc '
+# Chain commands in ONE process (each new process must rediscover the arm)
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
     python3 /tmp/d1_arm_control.py --iface enp0s8 \
-        home sleep 1 enable joints 0 0.3 0.6 0 0.5 0
-'
+        enable sleep 2 glide 0 -30 30 0 20 0 0 gripper 60 sleep 1 release
+```
+
+Run the arm scripts with `env -u CYCLONEDDS_URI` and without sourcing ROS.
+The container's `CYCLONEDDS_URI` belongs to the Go2 Wi-Fi stack, and ROS's
+`libddsc` can clash with the pip `cyclonedds`.
+
+`joints` sends one target and lets the arm's controller choose the motion.
+`glide` starts from the measured pose (a 10-sample average). It streams a
+smooth quintic trajectory with a capped peak speed, then waits until every
+joint is within tolerance. **It refuses to move without joint feedback.**
+
+### Sequence files
+
+`run <file>` executes one CLI command per line; `#` starts a comment. This
+is the building block for the scan routine:
+
+```text
+# /tmp/scan.txt  (docker cp it into the container first)
+enable
+glide 0 -30 30 0 20 0 0
+sleep 2
+glide 20 -30 30 0 20 0 0
+release
 ```
 
 ### Parameters
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--iface` | `enp0s8` | Container interface that reaches the arm. Find with `ip -brief link` inside the container |
+| `--iface` | `enp0s8` (or `$ARM_IFACE`) | Interface that reaches the arm |
+| `--peer` | *(multicast)* | Unicast discovery peer, e.g. `192.168.123.100`, if multicast fails |
+| `--vmax` | `25` | `glide` peak joint speed, deg/s |
+| `--rate` | `50` | `glide` setpoint stream rate, Hz |
+| `--tolerance` | `5` | `glide` "reached" tolerance, degrees |
+| `--enable-mode` | `80000` | `enable` value (80000 = fully locked) |
 
 ### Verifying the arm is reachable
 
-From the container:
-
 ```bash
-go2sh
-ip -brief link              # see which interface the arm is on
-python3 /tmp/d1_arm_control.py --iface <iface> feedback
+ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh         # interface, ping, cyclonedds, DDS match
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 angles
 ```
-
-From the Jetson:
-
-```bash
-ssh unitree@192.168.1.9
-ip -brief link
-ros2 topic list 2>/dev/null | grep arm
-```
-
-If the arm's topics appear in the container, the existing Wi-Fi relay already
-carries the DDS traffic and no extra relay is needed. If not, the relay must be
-extended to forward the arm's DDS domain, or a second relay added.
 
 ### Roadmap for the arm
 
 | Step | Purpose | Status |
 |---|---|---|
-| 1. Direct control | Prove the arm responds to JSON commands | Script written |
+| 1. Direct control | Prove the arm responds to JSON commands | Written: control, fold calibration, smooth `glide`, sequences |
 | 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
 | 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
 | 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
-| 5. Scan routine | Move the camera through a plant-scanning path | Pending |
+| 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |
 | 6. AI autonomy | Model commands both the dog and the arm | Long-term |
 
 See [docs/roadmap.md](docs/roadmap.md) for the overall project roadmap.
@@ -619,6 +641,7 @@ Unitree_GO2_Agricultural/
 ├── docs/
 │   ├── STATUS.md                     # session notes
 │   ├── camera.md                     # live camera setup
+│   ├── d1arm.md                      # D1 arm runbook
 │   ├── roadmap.md                    # Phase 1 roadmap
 │   ├── tour.md                       # waypoint mode setup
 │   └── troubleshooting.md            # standalone troubleshooting
@@ -627,14 +650,15 @@ Unitree_GO2_Agricultural/
 │   │   ├── wifi_nav.sh               # main orchestrator
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # RTAB-Map launcher
-│   │   ├── start_arm.sh              # D1-T arm init (enable + home)
+│   │   ├── start_arm.sh              # D1-T arm fold / calibrate / network setup
 │   │   └── go2_net.sh                # shared IP detection / robot discovery
 │   ├── nodes/                        # ROS 2 Python nodes
 │   │   ├── frontier_explorer.py      # custom explorer
 │   │   ├── go2_camera_relay.py       # camera bridge
 │   │   ├── go2_floor_filter.py       # floor-plane filter
-│   │   ├── d1_arm_control.py         # D1-T arm control
-│   │   └── d1_arm_calibration.py     # D1-T folded-pose calibration
+│   │   ├── d1_arm_control.py         # D1-T arm control (glide, gripper, sequences)
+│   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
+│   │   └── direct_test_movement.py   # small safe arm movement test
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh
@@ -644,7 +668,8 @@ Unitree_GO2_Agricultural/
 │       ├── tune_costmap.sh
 │       ├── verify_costmap.sh
 │       ├── save_rviz_config.sh
-│       └── export_tour.py
+│       ├── export_tour.py
+│       └── diag_arm.sh               # D1 arm diagnostic
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used
@@ -720,7 +745,7 @@ automatically** — it kills stale relays over SSH before starting the new one.
 If you need to do it manually:
 
 ```bash
-ssh unitree@192.168.1.9
+ssh unitree@<robot-ip>       # shown in the wifi_nav.sh banner
 pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
 sleep 3
 ss -tlnp | grep 17999        # must be empty
@@ -739,29 +764,29 @@ Check in order:
 
 If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 
-1. Check the Jetson relay: `ssh unitree@192.168.1.9 'ss -tlnp | grep 17999'`
-2. Check the relay log: `ssh unitree@192.168.1.9 'tail -20 /tmp/robot-relay.log'`
+1. Check the Jetson relay: `ssh unitree@<robot-ip> 'ss -tlnp | grep 17999'`
+2. Check the relay log: `ssh unitree@<robot-ip> 'tail -20 /tmp/robot-relay.log'`
 3. Confirm FULL mode: the log should say `cmd_vel TCP server started on port 17999`
 
 ### Arm does not respond
 
-1. **Check the interface name.** Inside the container: `ip -brief link`. The
-   `--iface` flag must match the interface the arm is on.
-2. **Check the arm is powered.** 24V DC via the barrel jack. The arm's
-   controller should show activity on power.
-3. **Check the RJ45.** Arm should be on the same network segment as the Go2.
-4. **Verify the SDK2 is installed:**
-   ```bash
-   docker exec -u root go2-lidar3d bash -lc 'python3 -c "import unitree_sdk2py; print(\"ok\")"'
-   ```
+1. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
+   It checks the interface, ping, container, `cyclonedds`, and DDS match.
+2. **Check the address.** `enp0s8` needs a `192.168.123.x` address:
+   `./scripts/runtime/start_arm.sh --setup-net`.
+3. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
+4. **Check `cyclonedds`:** `docker exec go2-lidar3d pip3 show cyclonedds` should
+   show `0.10.2`. If discovery fails, try `--peer 192.168.123.100`.
 5. **Read the joint feedback:**
    ```bash
-   docker exec -u root go2-lidar3d bash -lc '
-       python3 /tmp/d1_arm_control.py --iface <iface> feedback
-   '
+   docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+       python3 /tmp/d1_arm_control.py --iface enp0s8 angles
    ```
-   If feedback arrives but commands do nothing, the motors may not be enabled —
-   run `enable` first.
+   If feedback arrives but commands do nothing, the motors may not be enabled.
+   Run `enable` first.
+6. **`wifi_nav.sh --arm` skipped the arm?** Read `go2-nav2-wifi/ws/log/arm.log`.
+   A `FOLDED_ANGLES is still the uncalibrated placeholder` error means the fold
+   isn't calibrated yet. See [Arm — calibration](#arm--calibration-once).
 
 ---
 
@@ -779,6 +804,8 @@ Common items:
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](scripts/tools/test_explore.sh) |
 | Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` — see [docs/camera.md](docs/camera.md) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
+| `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
+| `glide REFUSED: no joint feedback` | Arm telemetry not arriving | Check `diag_arm.sh`; never plan a move from a guessed pose |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
 
 ---
@@ -814,8 +841,12 @@ and manual waypoint navigation via RViz. This repo adds:
 - **RViz control panel** with START/STOP buttons
 - **Live camera relay** — `/frontvideostream` → `/camera/image_raw`
 - **Floor-plane filter** to prevent the ground being treated as an obstacle
-- **D1-T arm control** — direct DDS/JSON commands and a launcher
-- **One-command orchestration** — auto relay startup, cleanup, monitoring
+- **D1-T arm control**: direct DDS/JSON commands, smooth speed-limited
+  `glide`, gripper control, sequence files, folded-pose calibration
+- **One-command orchestration**: `wifi_nav.sh --arm` starts dog and arm,
+  with auto relay startup, cleanup, and monitoring
+- **DHCP-proof networking**: host IP auto-detection, robot discovery,
+  container recreated when the IP changes, arm/dog DDS isolation checks
 - **Diagnostic and tuning scripts** — preflight, test_explore, campus_session, tune_costmap
 - **RTAB-Map integration** — dense 3D reconstruction and mesh export
 
@@ -834,7 +865,8 @@ part of the active pipeline. See [`cmu-legacy/README.md`](cmu-legacy/README.md).
 | Project | Purpose |
 |---|---|
 | [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) | SLAM (Point-LIO) + Nav2 + Wi-Fi relay |
-| [`unitree_sdk2_python`](https://github.com/unitreerobotics/unitree_sdk2_python) | DDS interface for the D1-T arm and Go2 Sport API |
+| [`cyclonedds`](https://pypi.org/project/cyclonedds/) `0.10.2` | Python DDS bindings used by the D1-T arm scripts (auto-installed by `start_arm.sh`) |
+| [`JeewanthaSadaruwan/unitree-D1-550-Robot-ARM`](https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM) | Reference only: ideas behind `glide` and the servo-angle feedback (reimplemented, no code copied) |
 
 ---
 

@@ -8,12 +8,15 @@ against working open-source drivers (see References).
 
 | File | Role |
 |---|---|
-| `d1_arm_control.py` | Control node (runs in the container). CLI + `D1Arm` class |
-| `start_arm.sh` | Enable + home the arm from the host |
-| `diag_arm.sh` | Network + DDS diagnostic |
-| `direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
+| `scripts/nodes/d1_arm_control.py` | Control node (runs in the container). CLI + `D1Arm` class: joints, `glide`, gripper, `angles`, `run` |
+| `scripts/nodes/d1_arm_calibration.py` | `--read` the folded pose, `--move` fold (enable → glide → release) |
+| `scripts/runtime/start_arm.sh` | From the host: fold (default), `--read`, `--no-home` (enable only), `--setup-net` |
+| `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
+| `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 
-Keep all four in one folder (or set `NODES_DIR`).
+The scripts find the Python files in `scripts/nodes/` (or set `NODES_DIR`).
+`./scripts/runtime/wifi_nav.sh --arm` runs `start_arm.sh` automatically,
+alongside navigation.
 
 ## Protocol summary (verified against the doc and working drivers)
 
@@ -25,32 +28,46 @@ Keep all four in one folder (or set `NODES_DIR`).
   4 single enable; 5 enable all `{"mode":80000}` (0 = release); 6 power; 7 home (no `data`).
 - Feedback: address 2 funcode 1 = joint angles (10 Hz), funcode 3 = status;
   address 3 funcode 1 = command received (`recv_status`), funcode 2 = executed.
+- Second joint-angle source: topic `current_servo_angle`, type
+  `unitree_arm::msg::dds_::PubServoInfo_` (`servo0_data`..`servo6_data`, float32).
+- Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
 - Arm default IP `192.168.123.100`.
 
-## Network (the part code cannot fix)
+## Network
 
-The arm must be on its own wired interface in the VM, with an address on `192.168.123.x`.
-
-```bash
-ip -br addr                                   # find the arm-side interface (not your home-LAN one)
-sudo ip addr add 192.168.123.51/24 dev <iface>
-sudo ip link set <iface> up
-ping -c3 192.168.123.100
-```
+The arm must be on its own wired interface in the VM (`enp0s8` by default), with
+an address on `192.168.123.x`. The Go2's Wi-Fi bridge (`enp0s3`) must be on a
+different subnet, otherwise arm and Go2 DDS traffic mix. `wifi_nav.sh --arm`
+refuses an overlapping setup.
 
 In VirtualBox, attach the USB Ethernet adapter to the VM or add a Bridged adapter bound
-to that NIC. The arm needs about a minute after power-on.
+to that NIC. The arm needs about a minute after power-on. Then:
+
+```bash
+./scripts/runtime/start_arm.sh --setup-net    # adds 192.168.123.51/24 if missing, pings the arm
+```
+
+It never flushes existing addresses. The address doesn't persist across VM
+reboots, so re-run it after a restart. To do it by hand:
+`sudo ip addr add 192.168.123.51/24 dev enp0s8 && sudo ip link set enp0s8 up`.
 
 The container must use host networking (`--network host`).
 
 ## Run
 
 ```bash
-ARM_IFACE=<iface> ./diag_arm.sh      # all PASS expected
-ARM_IFACE=<iface> ./start_arm.sh     # enable + home (clear the workspace first)
+ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh     # all PASS expected
+./scripts/runtime/start_arm.sh --read            # once: calibrate the folded pose (see below)
+./scripts/runtime/start_arm.sh                   # fold: enable -> glide -> release (clear the workspace)
 docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
-  python3 /tmp/d1_arm_control.py --iface <iface> joint 0 20
+  python3 /tmp/d1_arm_control.py --iface enp0s8 joint 0 20
 ```
+
+**Fold calibration.** With the motors released, fold the arm onto its mount by
+hand. Run `start_arm.sh --read` and paste the printed `FOLDED_ANGLES` line into
+`scripts/nodes/d1_arm_calibration.py`. Until then `start_arm.sh` refuses to fold,
+because the shipped placeholder drives joints 1 and 2 to their ±90° limits.
+After folding, the motors are **released**, so the mount must hold the arm.
 
 Start with small angles (about 20 degrees).
 
@@ -93,7 +110,7 @@ existing addresses. Re-run it after a VM reboot.
 
 | Symptom | Meaning | Fix |
 |---|---|---|
-| diag: no interface in 192.168.123.x | arm not on a VM interface | attach adapter, set IP |
+| diag: no interface in 192.168.123.x | arm not on a VM interface, or address lost after reboot | attach adapter, `start_arm.sh --setup-net` |
 | no ping from 192.168.123.100 | cable / wrong subnet / still booting | check link, `tcpdump -i <iface>` |
 | `DDS match with arm: NO` | discovery failed | `ARM_PEER=192.168.123.100`, pin `cyclonedds==0.10.2`, no ROS sourced |
 | `ack: REJECTED` | payload format wrong | check JSON shape against the doc |

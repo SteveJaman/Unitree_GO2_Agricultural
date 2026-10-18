@@ -31,6 +31,8 @@ Everything else depends on this. Do not skip.
 | 0.2 | Port 17999 conflict eliminated before every session | ✅ auto-handled |
 | 0.3 | `mapping.sh --3d --nav` launches a clean session | ✅ verified |
 | 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
+| 0.5 | DHCP-proof networking: host IP auto-detect, robot discovery, stale-container recreate | ✅ code ([`go2_net.sh`](../scripts/runtime/go2_net.sh)), ⏳ verify on robot |
+| 0.6 | Container `numpy<1.25` pin (fixes `numpy.dtype size changed`) | ✅ auto-handled by `wifi_nav.sh` |
 
 **Blocker:** if 0.1–0.2 fail, nothing downstream matters. `wifi_nav.sh`
 now SSHes into the Jetson and clears the port before every launch. Manual
@@ -179,31 +181,30 @@ is captured for later plant-analysis research.
 | # | Task | Status |
 |---|---|---|
 | 8.1 | [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) written — DDS/JSON control | ✅ written |
-| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — enable + home from the VM | ✅ written |
-| 8.3 | Install `unitree_sdk2_python` in the container | ⏳ |
-| 8.4 | Arm reachable from VM container | ⏳ verify interface |
+| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — fold / `--read` / `--setup-net` from the VM | ✅ written |
+| 8.3 | Python DDS bindings in the container | ✅ `cyclonedds==0.10.2` auto-installed by `start_arm.sh` (no SDK2 needed) |
+| 8.4 | Arm reachable from VM container (`enp0s8`, `192.168.123.x`) | ⏳ verify with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
 | 8.5 | Arm responds to `joint` command | ⏳ hardware |
 | 8.6 | Arm responds to `joints` command | ⏳ hardware |
-| 8.7 | Joint feedback readable | ⏳ hardware |
+| 8.7 | Joint feedback readable (`angles`) | ⏳ hardware |
+| 8.8 | Smooth `glide` (quintic, peak-speed capped, measured start) | ✅ written, simulated; ⏳ hardware |
+| 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ written; ⏳ calibrate on the mount |
+| 8.10 | `wifi_nav.sh --arm`: dog + arm from one command, DDS isolated | ✅ written; ⏳ hardware |
 
-**Commands available:**
+**Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
+`rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1
+single joint, 2 all joints, 5 enable (`mode` 80000) / release (`mode` 0),
+7 home. Full table: [d1arm.md](d1arm.md).
 
-| Action | JSON payload |
-|---|---|
-| Home | `{"funcode":7,"address":0,"seq":0,"data":""}` |
-| Enable | `{"funcode":5,"address":0,"seq":0,"data":""}` |
-| Release | `{"funcode":5,"address":0,"seq":0,"data":"release"}` |
-| Single joint | `{"funcode":1,"address":X,"seq":0,"data":"Y"}` |
-| All joints | `{"funcode":2,"address":0,"seq":0,"data":"[a0,...]"}` |
-
-**Blocker:** need to verify the arm's DDS traffic reaches the VM container.
-`wifi_nav.sh` already bridges the Go2's DDS domain, but the arm may use a
-different topic or interface. First test on hardware:
+**Network:** the arm is wired to the VM's `enp0s8` (`192.168.123.x`, DDS
+domain 0). It is kept separate from the Go2's Wi-Fi DDS on `enp0s3`
+(domain 64). First test on hardware:
 
 ```bash
-docker exec -u root go2-lidar3d bash -lc '
-    python3 /tmp/d1_arm_control.py --iface <iface> feedback
-'
+./scripts/runtime/start_arm.sh --setup-net
+ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+    python3 /tmp/d1_arm_control.py --iface enp0s8 angles
 ```
 
 If it fails, see [troubleshooting → D1-T Arm](troubleshooting.md#d1-t-arm).
@@ -260,8 +261,8 @@ once known.
 
 | # | Task | Status |
 |---|---|---|
-| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ |
-| 12.2 | Play the path with waypoint interpolation | ⏳ |
+| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ (write it as a `run` sequence file) |
+| 12.2 | Play the path with waypoint interpolation | ✅ `glide` + `run <file>` in `d1_arm_control.py`; ⏳ hardware |
 | 12.3 | Trigger camera capture at each step | ⏳ |
 | 12.4 | Store captures with pose metadata | ⏳ |
 | 12.5 | Repeat for multiple plants | ⏳ |
