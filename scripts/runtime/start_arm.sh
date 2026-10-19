@@ -76,7 +76,7 @@ if [ "$ACTION" = "setup-net" ]; then
 fi
 
 # --- container -------------------------------------------------------------
-docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME" \
+docker ps --format '{{.Names}}' | grep -x "$CONTAINER_NAME" >/dev/null \
     || die "container $CONTAINER_NAME not running (docker start $CONTAINER_NAME)"
 
 NETMODE="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER_NAME")"

@@ -86,19 +86,22 @@ cmd_vel TCP server started on port 17999
 If that is missing, the motion relay failed. See the
 [port 17999 entry](#address-already-in-use-for-port-17999-on-the-jetson) above.
 
-### Container has stale `GO2_HOST_IP`
+### Container has stale `GO2_HOST_IP` / `GO2_ROBOT_IP`
 
-The container's DDS bind address is baked in at creation time, and the router
-hands out addresses by DHCP. **`wifi_nav.sh` handles this automatically.** It
-compares the container's `GO2_HOST_IP` with the VM's current `enp0s3` address
-and recreates the container when they differ.
+Both addresses are baked into the container at creation time, and the router
+hands out addresses by DHCP. `mapping.sh` reads them from the container. It
+corrects a stale host IP itself, but a stale robot IP sends it to the wrong
+robot. **`wifi_nav.sh` handles this automatically.** It compares both with the
+current host and robot addresses and recreates the container when either
+differs.
 
 Check by hand:
 
 ```bash
 ip -4 -o addr show dev enp0s3                       # the VM's current Wi-Fi IP
 docker exec go2-lidar3d printenv GO2_HOST_IP        # must match
-docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address
+docker exec go2-lidar3d printenv GO2_ROBOT_IP       # must be the robot's current IP
+docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address   # rewritten each session
 ./scripts/runtime/wifi_nav.sh --check               # reports STALE if they differ
 ```
 
@@ -127,8 +130,11 @@ bridge) and `enp0s8` (arm, `192.168.123.x`) are on different subnets, and that
 ### `ValueError: numpy.dtype size changed`
 
 The container's pip numpy is newer than the apt scipy was built against.
-`wifi_nav.sh` pins `numpy<1.25` in the running container before launch. It
-also appends the pin to the upstream Dockerfile(s) in `go2-nav2-wifi/docker/`.
+`wifi_nav.sh` pins `numpy<1.25` in the running container before launch. If pip
+can't download (no internet on the robot's Wi-Fi), it prints a warning and
+continues. Run the printed command once with internet. It also appends the pin
+to the upstream Dockerfiles in `go2-nav2-wifi/docker/`, including
+`Dockerfile.lidar3d`.
 If the container exits before the pin can be applied, rebuild it:
 
 ```bash
@@ -549,6 +555,14 @@ ros2 node list | grep costmap
 
 If empty, the session isn't fully up. Wait longer, or check the
 `mapping.sh --3d --nav` log for errors.
+
+---
+
+## Simulation
+
+Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
+[gazebo/README.md → Troubleshooting](../gazebo/README.md#troubleshooting).
+`./gazebo/test_sim.sh` checks every simulated topic, motion and the arm.
 
 ---
 

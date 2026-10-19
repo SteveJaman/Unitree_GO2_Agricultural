@@ -106,6 +106,26 @@ $A run /tmp/scan.txt                       # sequence file (docker cp it in firs
 `enp0s8` if the interface has no `192.168.123.x` address. It never flushes
 existing addresses. Re-run it after a VM reboot.
 
+## Simulation
+
+The same scripts run against a simulated D1 in Gazebo. `gazebo/sim/d1_arm_emulator.py`
+speaks this protocol on interface `simarm0` (`192.168.123.51`, arm "at" `.100`):
+
+```bash
+./gazebo/run_sim.sh up
+ARM_IFACE=simarm0 ./scripts/runtime/start_arm.sh --read
+docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
+  python3 /tmp/d1_arm_control.py --iface simarm0 enable glide 20 -20 20 0 10 0 30 angles
+```
+
+Sim differences:
+- Motion is rate-limited to 60°/s.
+- `release` holds the pose.
+- Gripper 0–65° maps to 0–30 mm of finger travel.
+
+The official D1 URDF limits are ±134.6° / ±89.95°, slightly inside the ±135° / ±90°
+used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../gazebo/README.md).
+
 ## Troubleshooting
 
 | Symptom | Meaning | Fix |

@@ -70,11 +70,18 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 - [`go2_net.sh`](../scripts/runtime/go2_net.sh): host IP auto-detected on `enp0s3`;
   robot found by cache → hostname → MAC prefix scan → SSH-key probe;
   `--host-ip` / `--robot-ip` / `--iface` overrides
-- Container recreated automatically when its DDS bind IP is stale
-- `numpy<1.25` pinned in the container and upstream Dockerfile
+- Container recreated when its baked-in host **or robot** IP is stale. `mapping.sh`
+  reads both from the container; it fixes a stale host IP itself, not a stale robot IP
+- `numpy<1.25` pinned in the container (warns and continues without internet) and in
+  the upstream Dockerfiles, including `Dockerfile.lidar3d` (`.dockerignore` files untouched)
 - SSH relay start fixed (heredoc; the old `bash -lc` string killed itself via `pkill -f`)
+- Relay IP passed under private names, so a stale `GO2_HOST_IP` in the Jetson's login
+  profile can no longer redirect the relay
+- Discovery `ping` falls back when binding to `enp0s3` isn't permitted
+- Container checks no longer use `grep -q` in pipelines (SIGPIPE + `pipefail` misreport)
 - `--setup-ssh` implemented directly in `wifi_nav.sh`
-- Discovery logic unit-tested against mocked `ip`/`arp-scan` output
+- Discovery logic unit-tested against mocked `ip`/`arp-scan` output; `wifi_nav.sh`
+  end-to-end tested against fake `docker`/`ssh`/`ip`/Jetson (56 checks)
 
 ### D1-T arm — code complete, untested on hardware (2026-10-18)
 
@@ -89,13 +96,25 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 - Uses pip `cyclonedds==0.10.2` (auto-installed). No Unitree SDK2 needed
 - Glide/sequence logic tested against a simulated arm; see [d1arm.md](d1arm.md)
 
+### Gazebo simulation — code complete, untested in Gazebo (2026-10-18)
+
+[`gazebo/`](../gazebo/README.md): Go2 + D1 from the official Unitree models, Gazebo Harmonic,
+`wifi_nav.sh --sim [--arm]`. The robot side (lidar odom/cloud, cmd_vel TCP :17999,
+camera, D1 controller) is simulated; the laptop side is the real one.
+
+Verified off-robot: model builder on the real Unitree URDFs (tree, meshes, spawn
+height); pose maths against upstream `compose_pose`; cmd_vel TCP server; the D1
+emulator against the **unmodified** `d1_arm_control.py` and `d1_arm_calibration.py`
+over real CycloneDDS; `wifi_nav.sh --sim` / `run_sim.sh` with a fake harness.
+Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
+
 ### One-command orchestration
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
 
 1. Detects the VM's Wi-Fi IP and discovers the robot's IP
 2. Kills stale processes on VM **and** Jetson, cleans up partial runs
-3. Recreates the container if its IP is stale, pins numpy, checks the DDS bind
+3. Recreates the container if its host or robot IP is stale, pins numpy, checks DDS
 4. SSHes into Jetson, clears port 17999, starts the relay in FULL mode
 5. Waits for port 17999 to bind
 6. (`--arm`) folds the D1 arm in the background over `enp0s8`
@@ -154,6 +173,17 @@ pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_brid
 sleep 3
 ss -tlnp | grep 17999        # must be empty
 ```
+
+### Possible double motion bridge on port 17999 (needs confirming)
+
+In `--3d --nav` mode upstream `mapping.sh` starts its own motion bridge on the
+Jetson (`robot-motion-wifi.sh`, cmd_vel TCP :17999 + sport bridge), and
+`wifi_nav.sh` also starts `robot-relay-wifi.sh` in FULL mode, which binds :17999
+too. The TCP server uses only `SO_REUSEADDR`, so whichever starts second fails;
+if it is mapping.sh's bridge, `mapping.sh` exits (it `wait -n`s on it). Check
+`motion.log` in the session log folder on the next robot run: if it shows
+"Address already in use" or "Motion bridge already running", run with
+`--no-relay` and let `mapping.sh` own motion.
 
 ### `SENSOR-ONLY: no cmd_vel TCP server…` in `slam.log`
 
@@ -214,6 +244,9 @@ docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI python3 /tmp/d1_arm_contro
 
 # 8. Commit any config/tour.rviz that gets saved
 ```
+
+No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
+once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).
 
 ---
 

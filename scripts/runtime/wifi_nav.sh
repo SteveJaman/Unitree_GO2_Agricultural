@@ -22,6 +22,7 @@
 #
 # Usage:
 #   ./wifi_nav.sh --arm                      # START EVERYTHING: nav + fold the D1 arm
+#   ./wifi_nav.sh --sim [--arm]              # same stack against the Gazebo simulator
 #   ./wifi_nav.sh                            # explore + camera (default)
 #   ./wifi_nav.sh --no-camera                # explore only
 #   ./wifi_nav.sh --no-explore               # camera only, manual goals
@@ -56,6 +57,7 @@ FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 ARM_START_SCRIPT="${SCRIPT_DIR}/start_arm.sh"
+SIM_RUN="$( cd "${SCRIPT_DIR}/../../gazebo" &> /dev/null && pwd )/run_sim.sh"
 ARM_LOG="${NAV2_WIFI_DIR}/ws/log/arm.log"
 
 # apt scipy in the container is built against numpy 1.21; a newer pip numpy
@@ -88,6 +90,9 @@ FLOOR_FILTER="false"
 CAMERA="true"
 START_RELAY="true"
 ARM="false"
+SIM="false"
+SIM_STARTED="false"
+SIM_OWNER="wifi-nav-sim-$$"
 HOST_IP_FLAG=""
 ROBOT_IP_FLAG=""
 export GO2_RECORD="${GO2_RECORD:-0}"
@@ -109,6 +114,7 @@ while [ $# -gt 0 ]; do
         --setup-ssh)    ACTION="setup-ssh" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
+        --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
         --robot-ip)     need_arg "$1" "${2:-}"; ROBOT_IP_FLAG="$2"; shift ;;
         --iface)        need_arg "$1" "${2:-}"; GO2_IFACE="$2"; shift ;;
@@ -194,10 +200,12 @@ start_robot_relay() {
     # IPs are validated by go2_resolve_network, so they are safe to inline.
     local rc=0
     robot_ssh -o ConnectTimeout=10 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
-        "GO2_HOST_IP=${GO2_HOST_IP} GO2_ROBOT_IP=${GO2_ROBOT_IP} GO2_RELAY_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} bash -l -s" \
+        "WN_HOST_IP=${GO2_HOST_IP} WN_ROBOT_IP=${GO2_ROBOT_IP} WN_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} bash -l -s" \
         <<'REMOTE_RELAY' || rc=$?
 set -e
-export GO2_HOST_IP GO2_ROBOT_IP GO2_RELAY_DOMAIN_ID
+# bash -l has sourced the Jetson's profile, which may export a stale
+# GO2_HOST_IP. The WN_* values come from this run, so they win.
+export GO2_HOST_IP="${WN_HOST_IP}" GO2_ROBOT_IP="${WN_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${WN_DOMAIN_ID}"
 
 pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
 rm -f /tmp/go2-relay-wifi.sock*
@@ -253,7 +261,7 @@ do_clean() {
     pkill -9 -f "go2_camera_relay"  2>/dev/null || true
     pkill -9 -f "safety_watchdog"   2>/dev/null || true
 
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         echo "[clean] Killing stale helpers inside container..."
         kill_explore_inside_container
         kill_floor_filter_inside_container
@@ -265,6 +273,10 @@ do_clean() {
         (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     fi
 
+    if [ "${SIM}" = "true" ]; then
+        echo "[clean] Simulation: no remote robot to clean."
+        return 0
+    fi
     if [ -z "${GO2_ROBOT_IP}" ]; then
         echo "[clean] WARN: robot IP unknown — skipping remote cleanup (pass --robot-ip)"
         return 0
@@ -320,27 +332,33 @@ do_setup_ssh() {
 }
 
 # --- Container: DDS bind follows the current DHCP address -----------------
-container_exists()  { docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; }
-container_running() { docker ps    --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; }
+container_exists()  { docker ps -a --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; }
+container_running() { docker ps    --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; }
 
-container_host_ip() {
+container_env() {   # $1 = variable name
     docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null \
-        | sed -n 's/^GO2_HOST_IP=//p' | head -n1
+        | sed -n "s/^${1}=//p" | head -n1
 }
+container_host_ip() { container_env GO2_HOST_IP; }
 
 container_dds_bind() {
     docker exec "${CONTAINER_NAME}" grep -oP 'NetworkInterface address="\K[^"]+' \
         /tmp/go2-wifi-cyclonedds.xml 2>/dev/null | head -n1 || true
 }
 
-# The CycloneDDS bind address is baked in when the container is created, so
-# a new DHCP lease means the container must be recreated.
+# mapping.sh reads GO2_HOST_IP *and* GO2_ROBOT_IP from the container's
+# environment (baked in at creation). It corrects a stale host IP itself, but a
+# stale robot IP sends it to the wrong robot, so recreate when either changed.
+# In simulation the session gets its IPs via `docker exec -e`; no recreation.
 ensure_container() {
-    local cur
-    if container_exists; then
-        cur="$(container_host_ip)"
-        if [ -n "${cur}" ] && [ "${cur}" != "${GO2_HOST_IP}" ]; then
-            echo "[container] ${CONTAINER_NAME} was created for ${cur}; host is now ${GO2_HOST_IP} — recreating"
+    local cur_host cur_robot
+    if container_exists && [ "${SIM}" != "true" ]; then
+        cur_host="$(container_env GO2_HOST_IP)"
+        cur_robot="$(container_env GO2_ROBOT_IP)"
+        if { [ -n "${cur_host}" ] && [ "${cur_host}" != "${GO2_HOST_IP}" ]; } ||
+           { [ -n "${cur_robot}" ] && [ "${cur_robot}" != "${GO2_ROBOT_IP}" ]; }; then
+            echo "[container] ${CONTAINER_NAME} was created for host ${cur_host:-?} / robot ${cur_robot:-?};"
+            echo "            now host ${GO2_HOST_IP} / robot ${GO2_ROBOT_IP} — recreating"
             docker rm -f "${CONTAINER_NAME}" >/dev/null
         fi
     fi
@@ -365,23 +383,27 @@ ensure_container() {
 # Persistent fix: pin numpy in the upstream Dockerfile(s) so rebuilds keep it.
 patch_upstream_dockerfiles() {
     local f
+    local f last_user
     while IFS= read -r f; do
         grep -q 'numpy<1.25' "$f" && continue
-        if grep -qiE '^[[:space:]]*USER[[:space:]]+' "$f"; then
-            echo "[numpy] WARN: ${f} sets USER — add by hand: RUN pip3 install '${NUMPY_PIN}'"
-            continue
-        fi
-        cat >> "$f" <<EOF
-
-# Added by Unitree_GO2_Agricultural/scripts/runtime/wifi_nav.sh:
-# apt scipy is built against numpy 1.21; newer numpy crashes it with
-# "ValueError: numpy.dtype size changed".
-RUN (python3 -m pip --version >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends python3-pip)) \\
- && python3 -m pip install --no-cache-dir '${NUMPY_PIN}'
-EOF
+        # Install as root, then restore whatever user the file ended with.
+        last_user="$(awk 'toupper($1) == "USER" {u = $2} END {print u}' "$f")"
+        {
+            echo
+            echo "# Added by Unitree_GO2_Agricultural/scripts/runtime/wifi_nav.sh:"
+            echo "# apt scipy is built against numpy 1.21; newer numpy crashes it with"
+            echo "# \"ValueError: numpy.dtype size changed\"."
+            echo "USER root"
+            echo "RUN (python3 -m pip --version >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends python3-pip)) \\"
+            echo " && python3 -m pip install --no-cache-dir '${NUMPY_PIN}'"
+            if [ -n "${last_user}" ] && [ "${last_user}" != root ] && [ "${last_user}" != 0 ]; then
+                echo "USER ${last_user}"
+            fi
+        } >> "$f"
         echo "[numpy] Pinned ${NUMPY_PIN} in ${f} (applies on next image build)"
     done < <(find "${NAV2_WIFI_DIR}/docker" -maxdepth 2 -type f \
-                \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) 2>/dev/null)
+                \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) \
+                ! -name '*.dockerignore' 2>/dev/null)
 }
 
 container_numpy_version() {
@@ -402,8 +424,13 @@ pin_container_numpy() {
         return 0
     fi
     echo "[numpy] container numpy ${ver:-missing} — installing '${NUMPY_PIN}'..."
-    docker exec -u root "${CONTAINER_NAME}" python3 -m pip install --no-cache-dir "${NUMPY_PIN}" \
-        || { echo "[numpy] ERROR: pip install failed inside ${CONTAINER_NAME}"; return 1; }
+    if ! docker exec -u root "${CONTAINER_NAME}" python3 -m pip install --no-cache-dir "${NUMPY_PIN}"; then
+        # Often no internet on the robot's Wi-Fi. Don't block navigation over it.
+        echo "[numpy] WARN: pip install failed inside ${CONTAINER_NAME} (no internet?)."
+        echo "        Continuing. If a node crashes with 'numpy.dtype size changed', run once"
+        echo "        with internet: docker exec -u root ${CONTAINER_NAME} python3 -m pip install '${NUMPY_PIN}'"
+        return 0
+    fi
     if ! docker exec "${CONTAINER_NAME}" python3 -c 'import scipy.spatial' >/dev/null 2>&1; then
         echo "[numpy] WARN: scipy still fails to import with numpy $(container_numpy_version)."
         echo "        A pip-installed package may be built against a newer numpy:"
@@ -429,9 +456,9 @@ check_dds_bind() {
     elif [ "${bind}" = "${GO2_HOST_IP}" ]; then
         echo "[checks] DDS bind ${bind} (${GO2_IFACE}) ......... OK"
     else
-        echo "[checks] ERROR: DDS bound to ${bind}, but ${GO2_IFACE} is ${GO2_HOST_IP}."
-        echo "         Recreate: docker rm -f ${CONTAINER_NAME} && ./wifi_nav.sh"
-        return 1
+        # The file is rewritten by every session (go2-env.sh), so this one is
+        # from an earlier run; the session about to start regenerates it.
+        echo "[checks] DDS config from the last session bound ${bind}; this session rebinds to ${GO2_HOST_IP}"
     fi
 }
 
@@ -441,15 +468,35 @@ check_dds_bind() {
 ROBOT_REQUIRED="true"
 [ "${ACTION}" = "clean" ] && ROBOT_REQUIRED="false"
 
-echo "[net] Resolving network on ${GO2_IFACE} (arm interface ${ARM_IFACE} is ignored)..."
-if ! go2_resolve_network "${HOST_IP_FLAG}" "${ROBOT_IP_FLAG}" "${ROBOT_REQUIRED}"; then
-    echo "ERROR: network resolution failed." >&2
-    exit 1
+if [ "${SIM}" = "true" ]; then
+    # Simulation: the "robot" is the Gazebo container on this machine.
+    echo "[net] Simulation: robot = this machine (Gazebo); no discovery, SSH or relay"
+    if [ -n "${HOST_IP_FLAG}" ]; then
+        go2_valid_ip "${HOST_IP_FLAG}" || { echo "ERROR: --host-ip '${HOST_IP_FLAG}' is not an IPv4 address." >&2; exit 1; }
+        GO2_HOST_IP="${HOST_IP_FLAG}"; GO2_HOST_IP_SRC="--host-ip"
+    elif go2_detect_host_ip 2>/dev/null; then
+        GO2_HOST_IP_SRC="auto-detected on ${GO2_IFACE}"
+    else
+        GO2_HOST_IP=127.0.0.1; GO2_HOST_IP_SRC="loopback (no Wi-Fi address)"
+    fi
+    GO2_ROBOT_IP="${GO2_HOST_IP}"; GO2_ROBOT_IP_SRC="simulator on this machine"
+    START_RELAY="false"
+    ARM_IFACE="${SIM_ARM_IFACE:-simarm0}"
+    export GO2_HOST_IP GO2_ROBOT_IP ARM_IFACE
+    [ -x "${SIM_RUN}" ] || [ -f "${SIM_RUN}" ] || { echo "ERROR: ${SIM_RUN} not found." >&2; exit 1; }
+else
+    echo "[net] Resolving network on ${GO2_IFACE} (arm interface ${ARM_IFACE} is ignored)..."
+    if ! go2_resolve_network "${HOST_IP_FLAG}" "${ROBOT_IP_FLAG}" "${ROBOT_REQUIRED}"; then
+        echo "ERROR: network resolution failed." >&2
+        exit 1
+    fi
 fi
 
 # The arm is optional: a bad arm setup disables it, it never blocks navigation.
 ARM_STATUS="off"
-if [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ]; then
+if [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ] && [ "${SIM}" = "true" ]; then
+    ARM_STATUS="on (simulated D1 on ${ARM_IFACE}; checked after the simulator starts)"
+elif [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ]; then
     if [ ! -f "${ARM_START_SCRIPT}" ]; then
         echo "[arm] WARN: ${ARM_START_SCRIPT} missing — arm disabled"
         ARM="false"; ARM_STATUS="disabled (start_arm.sh missing)"
@@ -490,6 +537,7 @@ echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
+echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
 echo "  GO2_RECORD  : ${GO2_RECORD}"
 echo "  Interface   : ${GO2_IFACE}  (arm ${ARM_IFACE}: never used for Go2 traffic)"
 echo "  Host IP     : ${GO2_HOST_IP}  [${GO2_HOST_IP_SRC}]"
@@ -512,7 +560,14 @@ fi
 [ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || { echo "ERROR: mapping.sh not found." >&2; exit 1; }
 echo "[checks] docker + repo present .................... OK"
 
-if robot_ssh -o ConnectTimeout=3 \
+if [ "${SIM}" = "true" ]; then
+    if docker image inspect "${SIM_IMAGE:-go2-sim:local}" >/dev/null 2>&1; then
+        echo "[checks] simulator image go2-sim:local ............ OK"
+    else
+        echo "[checks] simulator image go2-sim:local ............ MISSING (run ./gazebo/setup_gazebo.sh)"
+        [ "${ACTION}" = "check" ] || exit 1
+    fi
+elif robot_ssh -o ConnectTimeout=3 \
         "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
     go2_save_robot_ip "${GO2_ROBOT_IP}"
@@ -533,7 +588,7 @@ if [ "${EXPLORE}" = "true" ]; then
         EXPLORE="false"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}" && \
+    if docker ps --format '{{.Names}}' | grep -x "${CONTAINER_NAME}" >/dev/null && \
        docker exec -u root "${CONTAINER_NAME}" bash -c \
            "source /opt/ros/humble/setup.bash; \
             source /ws/install/setup.bash 2>/dev/null; \
@@ -617,9 +672,35 @@ if ! ensure_container; then
     echo "ERROR: could not bring up ${CONTAINER_NAME}." >&2
     exit 1
 fi
-pin_container_numpy || exit 1
+pin_container_numpy
 check_dds_bind || exit 1
 echo
+
+if [ "${SIM}" = "true" ]; then
+    echo "================================================================"
+    echo " Starting the Gazebo simulator"
+    echo "================================================================"
+    docker ps --format '{{.Names}}' | grep -x go2-sim >/dev/null || SIM_STARTED="true"
+    if ! GO2_HOST_IP="${GO2_HOST_IP}" GO2_ROBOT_IP="${GO2_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
+            SIM_ARM="$( [ "${ARM}" = "true" ] && echo 1 || echo 0 )" SIM_ARM_IFACE="${ARM_IFACE}" \
+            bash "${SIM_RUN}" up; then
+        echo "ERROR: simulator did not start (see: ./gazebo/run_sim.sh logs)." >&2
+        exit 1
+    fi
+    if [ "${ARM}" = "true" ]; then
+        if go2_check_arm_iface; then
+            ARM_STATUS="on (simulated D1 on ${ARM_IFACE} ${ARM_HOST_CIDR})"
+        else
+            echo "[arm] WARN: simulated arm interface not ready — continuing with navigation only"
+            ARM="false"
+        fi
+    fi
+    if [ "${CAMERA}" = "true" ]; then
+        echo "[camera] Simulation publishes /camera/image_raw directly; camera relay not needed."
+        CAMERA="false"
+    fi
+    echo
+fi
 
 # ===========================================================================
 # Start robot relay (automated)
@@ -665,7 +746,10 @@ export GO2_HOST_IP GO2_ROBOT_IP GO2_RELAY_DOMAIN_ID
 EXPLORE_HOST_PID=""
 ARM_PID=""
 
+CLEANED_UP="false"
 cleanup() {
+    [ "${CLEANED_UP}" = "true" ] && return 0
+    CLEANED_UP="true"
     echo
     echo "[wifi_nav] Shutting down..."
     # Don't pull the container out from under a fold in progress.
@@ -676,25 +760,38 @@ cleanup() {
             sleep 1
         done
     fi
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         echo "[wifi_nav] SAFETY: publishing stop to /explore/resume"
         stop_exploration
     fi
     if [ -n "${EXPLORE_HOST_PID}" ]; then
         kill "${EXPLORE_HOST_PID}" 2>/dev/null || true
     fi
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         kill_explore_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     stop_robot_relay
+    if [ "${SIM}" = "true" ]; then
+        docker exec "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh stop lidar3d-viz \
+            --owner "${SIM_OWNER}" >/dev/null 2>&1 || true
+        if [ "${SIM_STARTED}" = "true" ] && [ "${SIM_KEEP:-0}" != 1 ]; then
+            bash "${SIM_RUN}" down || true
+        elif [ "${SIM_STARTED}" = "true" ]; then
+            echo "[wifi_nav] SIM_KEEP=1: simulator left running (./gazebo/run_sim.sh down)"
+        fi
+    fi
     echo "[wifi_nav] Done."
 }
 trap cleanup EXIT INT TERM
 
-echo "Launching: ./mapping.sh --3d ${MODE}"
+if [ "${SIM}" = "true" ]; then
+    echo "Launching: laptop session (go2-session.sh lidar3d-viz) against the simulator"
+else
+    echo "Launching: ./mapping.sh --3d ${MODE}"
+fi
 echo
 
 if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ]; then
@@ -799,8 +896,14 @@ if [ "${ARM}" = "true" ]; then
     mkdir -p "$(dirname "${ARM_LOG}")"
     echo "[arm] Folding the D1 arm in the background (log: ${ARM_LOG})"
     (
-        if ARM_IFACE="${ARM_IFACE}" CONTAINER_NAME="${CONTAINER_NAME}" NODES_DIR="${NODES_DIR}" \
-                bash "${ARM_START_SCRIPT}" > "${ARM_LOG}" 2>&1; then
+        sim_arm_env=()
+        if [ "${SIM}" = "true" ]; then
+            # The uncalibrated placeholder fold is harmless in Gazebo.
+            sim_arm_env=(ARM_SUBNET="${SIM_ARM_SUBNET:-192.168.123}" ARM_IP="${SIM_ARM_SUBNET:-192.168.123}.100"
+                         ARM_ALLOW_DEFAULT_FOLD=1)
+        fi
+        if env ARM_IFACE="${ARM_IFACE}" CONTAINER_NAME="${CONTAINER_NAME}" NODES_DIR="${NODES_DIR}" \
+                "${sim_arm_env[@]}" bash "${ARM_START_SCRIPT}" > "${ARM_LOG}" 2>&1; then
             echo "[arm] Arm folded and released."
         else
             echo "[arm] WARNING: arm start failed — navigation continues. Last lines of ${ARM_LOG}:"
@@ -810,7 +913,27 @@ if [ "${ARM}" = "true" ]; then
     ARM_PID=$!
 fi
 
-./mapping.sh --3d ${MODE} || true
+if [ "${SIM}" = "true" ]; then
+    # The laptop half of `mapping.sh --3d --nav` (same command and environment),
+    # with the robot half replaced by the simulator.
+    : "${DISPLAY:?RViz needs a desktop session: run this in a terminal on the VM desktop}"
+    sim_nav=0; sim_plan=1
+    [ "${MODE}" = "--nav" ] && sim_nav=1
+    if [ "${sim_nav}" = 1 ]; then
+        docker exec "${CONTAINER_NAME}" test -f /ws/install/go2_rviz_controls/lib/libgo2_rviz_controls.so ||
+            docker exec "${CONTAINER_NAME}" bash /ws/scripts/build-rviz-controls.sh
+    fi
+    xuser="$(getent passwd "$(docker exec "${CONTAINER_NAME}" id -u)" | cut -d: -f1)"
+    [ -n "${xuser}" ] && xhost "+SI:localuser:${xuser}" >/dev/null 2>&1 || true
+    docker exec -e GO2_HOST_IP="${GO2_HOST_IP}" -e GO2_ROBOT_IP="${GO2_ROBOT_IP}" \
+        -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
+        -e GO2_LIDAR3D_NAV="${sim_nav}" -e GO2_LIDAR3D_PLAN="${sim_plan}" -e GO2_LIDAR3D_BACKEND=pointlio \
+        -e DISPLAY="${DISPLAY}" -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 \
+        -e LIBGL_ALWAYS_SOFTWARE=1 -e XDG_CONFIG_HOME=/tmp/go2-mapping-config \
+        "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh start lidar3d-viz --owner "${SIM_OWNER}" || true
+else
+    ./mapping.sh --3d ${MODE} || true
+fi
 
 # ===========================================================================
 # Post-run: slam log tail
@@ -845,7 +968,7 @@ fi
 # Post-run: camera relay log tail
 # ===========================================================================
 if [ "${CAMERA}" = "true" ] && \
-   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"; then
+   docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
     echo "================================================================"
     echo " Last 10 lines of camera_relay.log:"
     echo "================================================================"

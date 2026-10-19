@@ -65,10 +65,17 @@ try:
     from cyclonedds.sub import DataReader
     from cyclonedds.topic import Topic
     from cyclonedds.idl import IdlStruct
-    from cyclonedds.idl import types as idl_types
-    from cyclonedds.qos import Policy, Qos
 except ImportError:
     sys.exit("cyclonedds Python bindings not installed. Run: pip3 install cyclonedds")
+
+# Only needed for the current_servo_angle backup feedback source. If this
+# cyclonedds build lacks them, everything else still works.
+try:
+    from cyclonedds.idl import types as idl_types
+    from cyclonedds.qos import Policy, Qos
+    _SERVO_FEEDBACK_OK = True
+except ImportError:
+    _SERVO_FEEDBACK_OK = False
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +89,16 @@ class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
 
 # Second joint-angle source (matches unitree_arm/msg/PubServoInfo.idl), published
 # on "current_servo_angle". Used when rt/arm_Feedback telemetry is missing.
-@dataclass
-class PubServoInfo_(IdlStruct, typename="unitree_arm::msg::dds_::PubServoInfo_"):
-    servo0_data: idl_types.float32 = 0.0
-    servo1_data: idl_types.float32 = 0.0
-    servo2_data: idl_types.float32 = 0.0
-    servo3_data: idl_types.float32 = 0.0
-    servo4_data: idl_types.float32 = 0.0
-    servo5_data: idl_types.float32 = 0.0
-    servo6_data: idl_types.float32 = 0.0
+if _SERVO_FEEDBACK_OK:
+    @dataclass
+    class PubServoInfo_(IdlStruct, typename="unitree_arm::msg::dds_::PubServoInfo_"):
+        servo0_data: idl_types.float32 = 0.0
+        servo1_data: idl_types.float32 = 0.0
+        servo2_data: idl_types.float32 = 0.0
+        servo3_data: idl_types.float32 = 0.0
+        servo4_data: idl_types.float32 = 0.0
+        servo5_data: idl_types.float32 = 0.0
+        servo6_data: idl_types.float32 = 0.0
 
 
 # Protocol constants (from the official doc)
@@ -187,7 +195,10 @@ class D1Arm:
         self.fb_reader = DataReader(self.participant, self.fb_topic)
 
         # Best-effort reader matches both reliable and best-effort writers.
+        self.servo_reader = None
         try:
+            if not _SERVO_FEEDBACK_OK:
+                raise RuntimeError("cyclonedds.qos / idl.types not available")
             self.servo_topic = Topic(self.participant, "current_servo_angle", PubServoInfo_)
             self.servo_reader = DataReader(self.participant, self.servo_topic,
                                            qos=Qos(Policy.Reliability.BestEffort))

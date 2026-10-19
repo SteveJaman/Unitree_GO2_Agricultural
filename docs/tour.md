@@ -26,6 +26,8 @@ future sessions.
 ## Prerequisites
 
 - A running session: [`./scripts/runtime/wifi_nav.sh`](../scripts/runtime/wifi_nav.sh)
+  (or `wifi_nav.sh --sim` to build and test the layout against the
+  [Gazebo simulation](../gazebo/README.md) without the robot)
 - RViz window open with a live map and a valid TF tree
   (`lidar3d_map → base_link` resolving)
 - The `nav2_rviz_plugins` package installed (it is, by default, in the

@@ -23,6 +23,14 @@ background. Without `--arm` it runs navigation only.
 > [Arm — calibration](#arm--calibration-once). Until you do, `--arm` refuses to
 > move the arm and navigation runs on its own.
 
+**No robot handy?** Run the same stack against a Gazebo simulation of the Go2
+with the D1 on its back (see [Simulation](#simulation)):
+
+```bash
+./gazebo/setup_gazebo.sh                     # once
+./scripts/runtime/wifi_nav.sh --sim --arm
+```
+
 ---
 
 ## Table of Contents
@@ -36,6 +44,7 @@ background. Without `--arm` it runs navigation only.
 - [Explorer](#explorer)
 - [D1-T Arm Control](#d1-t-arm-control)
 - [Live Camera](#live-camera)
+- [Simulation](#simulation)
 - [Repository Structure](#repository-structure)
 - [Collision Threshold Tuning](#collision-threshold-tuning)
 - [Known Blockers and Fixes](#known-blockers-and-fixes)
@@ -70,6 +79,7 @@ both the dog and the arm — is the long-term goal.
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, glide, sequences, troubleshooting |
+| [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
@@ -156,10 +166,13 @@ resolved on every run by [`scripts/runtime/go2_net.sh`](scripts/runtime/go2_net.
 | DDS domain | `64` | Wi-Fi side |
 | Relay port | `17999` | TCP, `/cmd_vel` |
 
-The container's CycloneDDS config is baked in from `GO2_HOST_IP` when the
-container is created. When the DHCP lease changes, `wifi_nav.sh` detects the
-mismatch and recreates the container. If the bind address were wrong, the
-container would announce the wrong address and no topics would cross the wire.
+The container is created with `GO2_HOST_IP` and `GO2_ROBOT_IP` baked into its
+environment. `mapping.sh` reads both from there and corrects only a stale host
+IP, so a stale robot IP would send it to the wrong robot. When either address
+changes, `wifi_nav.sh` recreates the container. Each session then writes its
+CycloneDDS config afresh, bound to the current address. If the bind address were
+wrong, the container would announce the wrong address and no topics would cross
+the wire.
 
 Interface safeguards: `enp0s8` (the arm, `ARM_IFACE`) is refused as the nav
 interface. It is never scanned, and if the route to the robot goes through
@@ -222,9 +235,11 @@ terminal to end. The physical remote is the emergency stop.
 1. Detects the VM's Wi-Fi IP on `enp0s3` and discovers the robot's IP (see [Network](#network))
 2. Kills stale processes on the VM **and** on the Jetson
 3. Cleans up partial runs on the robot
-4. Recreates the container if it was created for an old IP, and pins
-   `numpy<1.25` inside it (prevents `ValueError: numpy.dtype size changed`)
-5. Checks that container DDS binds the Wi-Fi address, not the arm interface
+4. Recreates the container if it was created for an old host or robot IP.
+   Pins `numpy<1.25` inside it (prevents `ValueError: numpy.dtype size changed`).
+   With no internet it warns and carries on.
+5. Checks that the container's DDS config never references the arm interface
+   (a config left over from an older session is just noted; the new session rewrites it)
 6. SSHes into the Jetson, kills any relay holding port 17999, and starts
    `robot-relay-wifi.sh` in FULL mode with the current `GO2_HOST_IP`
 7. Waits for port 17999 to bind before proceeding
@@ -305,6 +320,7 @@ See [D1-T Arm Control](#d1-t-arm-control) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
+| `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |
 | `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](docs/tour.md) |
 | `--no-camera` | Skip the camera relay |
 | `--nav` | Manual waypoint mode, camera on |
@@ -589,6 +605,26 @@ See [docs/roadmap.md](docs/roadmap.md) for the overall project roadmap.
 
 ---
 
+## Simulation
+
+[`gazebo/`](gazebo/) is a Gazebo Harmonic simulation of the Go2 with the D1 on
+its back, in a small field with planted beds. It replaces the **robot side**:
+lidar odometry and cloud, the cmd_vel TCP server, the camera, and the D1
+controller. The **laptop side** stays exactly as it is: Nav2, RViz, the explorer
+and the arm scripts.
+
+```bash
+./gazebo/setup_gazebo.sh                     # once: official Unitree models + image
+./scripts/runtime/wifi_nav.sh --sim --arm    # full stack, simulated
+./gazebo/test_sim.sh                         # automated smoke test
+```
+
+The simulated Go2 glides rather than walks (legs held in a standing pose), and
+its localization is perfect. It tests navigation, exploration and arm logic, not
+gait or SLAM. Details and limits: [gazebo/README.md](gazebo/README.md).
+
+---
+
 ## Live Camera
 
 The Go2's front camera publishes on `/frontvideostream` as a custom
@@ -670,6 +706,12 @@ Unitree_GO2_Agricultural/
 │       ├── save_rviz_config.sh
 │       ├── export_tour.py
 │       └── diag_arm.sh               # D1 arm diagnostic
+├── gazebo/                           # Gazebo simulation (Go2 + D1), see gazebo/README.md
+│   ├── setup_gazebo.sh / run_sim.sh / test_sim.sh
+│   ├── docker/Dockerfile             # go2-sim:local (Humble + Gazebo Harmonic)
+│   ├── sim/                          # model builder, robot bridge, D1 emulator
+│   ├── worlds/agri_field.sdf
+│   └── models/                       # downloaded Unitree models (not in git)
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used
@@ -727,9 +769,12 @@ MAC doesn't start with `02:00:00`, set `GO2_MAC_PREFIX` to the real prefix.
 ### Container crashes with `numpy.dtype size changed`
 
 `wifi_nav.sh` pins `numpy<1.25` inside the running container before launch. It
-also appends the pin to the upstream Dockerfile(s) in `go2-nav2-wifi/docker/`
-so rebuilds keep it. If the container exits before the pin can be applied,
-rebuild it:
+also appends the pin to the upstream Dockerfiles in `go2-nav2-wifi/docker/`,
+including `Dockerfile.lidar3d`, so rebuilds keep it. It installs as root, then
+restores the file's user; `.dockerignore` files are left alone. If the pip
+install fails (often: no internet on the robot's Wi-Fi), it warns and continues.
+Run the pin once with internet. If the container exits before the pin can be
+applied, rebuild it:
 
 ```bash
 docker rm -f go2-lidar3d
@@ -740,7 +785,13 @@ cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop
 
 If the motion relay fails with `OSError: [Errno 98] Address already in use`,
 a stale process is holding port 17999. **`wifi_nav.sh` handles this
-automatically** — it kills stale relays over SSH before starting the new one.
+automatically.** It kills stale relays over SSH before starting the new one.
+
+> **To confirm on the robot:** in `--nav` mode, upstream `mapping.sh` starts its
+> own motion bridge on 17999 (`robot-motion-wifi.sh`), after `wifi_nav.sh` has
+> started a FULL relay on the same port. If the session's `motion.log` shows
+> "Address already in use" or "Motion bridge already running", run with
+> `--no-relay`. Details: [docs/STATUS.md](docs/STATUS.md).
 
 If you need to do it manually:
 
@@ -800,7 +851,8 @@ Common items:
 | `GO2_CONTAINER: Start the project Docker container first` | Container missing | `cd ~/files/go2-nav2-wifi && ./setup-lidar3d.sh --laptop` |
 | `ros2: command not found` on host | ROS runs inside Docker | Use `go2sh` or `docker exec -u root go2-lidar3d bash -lc '…'` |
 | `Invalid frame ID "lidar3d_map"` | Session not up, or Point-LIO not forwarding | Check `mapping.sh --3d --nav` log; check Jetson relay |
-| `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it |
+| `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
+| Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [gazebo/README.md](gazebo/README.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](scripts/tools/test_explore.sh) |
 | Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` — see [docs/camera.md](docs/camera.md) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
@@ -846,7 +898,9 @@ and manual waypoint navigation via RViz. This repo adds:
 - **One-command orchestration**: `wifi_nav.sh --arm` starts dog and arm,
   with auto relay startup, cleanup, and monitoring
 - **DHCP-proof networking**: host IP auto-detection, robot discovery,
-  container recreated when the IP changes, arm/dog DDS isolation checks
+  container recreated when the host or robot IP changes, arm/dog DDS isolation checks
+- **Gazebo simulation**: Go2 + D1 from the official Unitree models; the
+  unchanged stack and arm scripts run against it (`wifi_nav.sh --sim`)
 - **Diagnostic and tuning scripts** — preflight, test_explore, campus_session, tune_costmap
 - **RTAB-Map integration** — dense 3D reconstruction and mesh export
 

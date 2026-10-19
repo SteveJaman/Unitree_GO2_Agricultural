@@ -33,6 +33,7 @@ Everything else depends on this. Do not skip.
 | 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
 | 0.5 | DHCP-proof networking: host IP auto-detect, robot discovery, stale-container recreate | ✅ code ([`go2_net.sh`](../scripts/runtime/go2_net.sh)), ⏳ verify on robot |
 | 0.6 | Container `numpy<1.25` pin (fixes `numpy.dtype size changed`) | ✅ auto-handled by `wifi_nav.sh` |
+| 0.7 | Gazebo simulation of Go2 + D1 for off-robot testing | ✅ code ([`gazebo/`](../gazebo/README.md)), ⏳ first run on the VM (`gazebo/test_sim.sh`) |
 
 **Blocker:** if 0.1–0.2 fail, nothing downstream matters. `wifi_nav.sh`
 now SSHes into the Jetson and clears the port before every launch. Manual

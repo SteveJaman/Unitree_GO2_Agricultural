@@ -37,6 +37,13 @@ GO2_SSH_OPTS=(-o BatchMode=yes -o HostKeyAlias=go2-robot -o StrictHostKeyCheckin
 # Discovery logs go to stderr so $(find_go2_ip) captures only the IP.
 go2_log() { echo "$@" >&2; }
 
+# One ping out GO2_IFACE. Binding to an interface (-I) can need CAP_NET_RAW;
+# if that is refused, fall back to a plain ping (callers only ping addresses
+# already confirmed to route via GO2_IFACE, or the GO2_IFACE subnet itself).
+go2_ping() {
+    ping -c1 -W1 -I "${GO2_IFACE}" "$1" >/dev/null 2>&1 || ping -c1 -W1 "$1" >/dev/null 2>&1
+}
+
 go2_valid_ip() {
     local ip="$1" o
     [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
@@ -87,7 +94,7 @@ go2_is_go2() {
     local ip="$1"
     go2_valid_ip "$ip" || return 1
     go2_on_wifi_segment "$ip" || return 1
-    ping -c1 -W1 -I "${GO2_IFACE}" "$ip" >/dev/null 2>&1 || true   # refresh ARP
+    go2_ping "$ip" || true   # refresh ARP
     go2_mac_matches "$ip" || go2_ssh_probe "$ip"
 }
 
@@ -134,7 +141,7 @@ go2_detect_host_ip() {
 
 # True if IP is assigned to GO2_IFACE (used to validate overrides)
 go2_ip_on_wifi_iface() {
-    ip -4 -o addr show dev "${GO2_IFACE}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Fqx "$1"
+    ip -4 -o addr show dev "${GO2_IFACE}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Fx "$1" >/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -149,7 +156,7 @@ _go2_populate_neighbors() {
     # No nmap: parallel ping sweep of the host's /24
     base="${GO2_HOST_IP%.*}"
     for i in $(seq 1 254); do
-        ping -c1 -W1 -I "${GO2_IFACE}" "${base}.${i}" >/dev/null 2>&1 &
+        go2_ping "${base}.${i}" &
     done
     wait
 }
@@ -177,7 +184,7 @@ find_go2_ip() {
     for h in "${GO2_ROBOT_HOSTNAME}" "${GO2_ROBOT_HOSTNAME}.local"; do
         ip="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1; exit}' || true)"
         [ -n "${ip}" ] && [ "${ip}" != "${GO2_HOST_IP}" ] || continue
-        if go2_on_wifi_segment "${ip}" && ping -c1 -W1 -I "${GO2_IFACE}" "${ip}" >/dev/null 2>&1; then
+        if go2_on_wifi_segment "${ip}" && go2_ping "${ip}"; then
             go2_log "[net] Robot found by hostname ${h} -> ${ip}"
             echo "${ip}"; return 0
         fi
@@ -315,7 +322,7 @@ go2_resolve_network() {
         GO2_ROBOT_IP="${robot_flag}"
         GO2_ROBOT_IP_SRC="--robot-ip"
     elif [ -n "${env_robot}" ] && go2_valid_ip "${env_robot}" && \
-         ping -c1 -W1 -I "${GO2_IFACE}" "${env_robot}" >/dev/null 2>&1; then
+         go2_ping "${env_robot}"; then
         GO2_ROBOT_IP="${env_robot}"
         GO2_ROBOT_IP_SRC="env GO2_ROBOT_IP"
     else
