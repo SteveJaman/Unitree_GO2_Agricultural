@@ -29,8 +29,8 @@
 #   ./wifi_nav.sh --record                   # also save input data for replay
 #   ./wifi_nav.sh --clean                    # clean both ends and exit
 #   ./wifi_nav.sh --check                    # verify prerequisites only
-#   ./wifi_nav.sh --setup-ssh                # one-time passwordless SSH setup
-#   ./wifi_nav.sh --no-relay                 # skip auto relay startup
+#   ./wifi_nav.sh --setup-ssh                # one-time passwordless SSH setup (asks robot password)
+#   ./wifi_nav.sh --relay                    # legacy: also start ~/robot-relay-wifi.sh (conflicts with 3D --nav)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -47,6 +47,9 @@ GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
 MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
 ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
+# Seconds to wait for the robot relay to bind the cmd_vel TCP port. A warm
+# start takes ~7 s; a cold Jetson (first python/DDS start) can take longer.
+RELAY_START_TIMEOUT="${RELAY_START_TIMEOUT:-45}"
 NODES_DIR="${NODES_DIR:-$(dirname "${SCRIPT_DIR}")/nodes}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
@@ -77,7 +80,13 @@ ACTION="run"
 EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
-START_RELAY="true"
+# go2-nav2-wifi v0.2's "mapping.sh --3d --nav" starts the robot side itself
+# (onboard SLAM + relay in go2-lidar3d-onboard, and robot-motion-wifi.sh on
+# port 17999). Starting ~/robot-relay-wifi.sh here as well takes port 17999
+# first, so mapping.sh's motion server dies ("Address already in use") and
+# the whole session tears down. Off by default; --relay is for the legacy
+# 2D stack only. Pre-flight cleanup still kills stale relays.
+START_RELAY="false"
 export GO2_RECORD="${GO2_RECORD:-0}"
 
 while [ $# -gt 0 ]; do
@@ -94,6 +103,7 @@ while [ $# -gt 0 ]; do
         --check)        ACTION="check" ;;
         --setup-ssh)    ACTION="setup-ssh" ;;
         --no-relay)     START_RELAY="false" ;;
+        --relay)        START_RELAY="true" ;;   # legacy 2D stack only
         -h|--help)      sed -n '2,42p' "$0"; exit 0 ;;
         *)              echo "Unknown option: $1" >&2; exit 1 ;;
     esac
@@ -159,9 +169,14 @@ start_robot_relay() {
 
     echo "[relay] Killing stale relay processes and starting FULL mode..."
 
+    # Send the script on stdin: ssh joins its arguments into one string, so
+    # 'bash -lc "<multi-line script>"' reaches the robot as a bare 'bash -lc'
+    # ("-c: option requires an argument"). The heredoc is unquoted so
+    # GO2_HOST_IP expands here; \$ stays literal for the robot. No 'set -e':
+    # with it, the robot's ~/.bash_logout turns 'exit 0' into status 1, and
+    # every step below already exits explicitly.
     ssh -o BatchMode=yes -o ConnectTimeout=10 \
-        "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" bash -lc "
-        set -e
+        "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'bash -l -s' <<RELAY_EOF || {
         pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
         rm -f /tmp/go2-relay-wifi.sock*
         sleep 3
@@ -173,10 +188,10 @@ start_robot_relay() {
         fi
 
         export GO2_HOST_IP=${GO2_HOST_IP}
-        nohup bash ~/robot-relay-wifi.sh > /tmp/robot-relay.log 2>&1 &
+        nohup bash ~/robot-relay-wifi.sh < /dev/null > /tmp/robot-relay.log 2>&1 &
         echo \$! > /tmp/robot-relay.pid
 
-        for i in \$(seq 1 20); do
+        for i in \$(seq 1 ${RELAY_START_TIMEOUT}); do
             if ss -tlnp 2>/dev/null | grep -q ':17999'; then
                 echo '[relay] FULL mode confirmed on port 17999'
                 exit 0
@@ -184,10 +199,10 @@ start_robot_relay() {
             sleep 1
         done
 
-        echo '[relay] ERROR: port 17999 never bound. Last 30 lines:'
+        echo '[relay] ERROR: port 17999 never bound within ${RELAY_START_TIMEOUT} s. Last 30 lines:'
         tail -30 /tmp/robot-relay.log 2>/dev/null || true
         exit 1
-    " || {
+RELAY_EOF
         echo "[relay] ERROR: relay start failed."
         echo "[relay] Debug: ssh ${GO2_ROBOT_USER}@${GO2_ROBOT_IP} 'cat /tmp/robot-relay.log'"
         return 1
@@ -270,11 +285,22 @@ do_clean() {
 # Dispatch: setup-ssh
 # ===========================================================================
 if [ "${ACTION}" = "setup-ssh" ]; then
-    if [ -x "${SCRIPT_DIR}/wifi_mapping.sh" ]; then
-        exec "${SCRIPT_DIR}/wifi_mapping.sh" --setup-ssh
-    else
-        echo "ERROR: wifi_mapping.sh not found." >&2; exit 1
+    # One-time: install this machine's key on the Jetson so the relay can be
+    # started over SSH with BatchMode. Asks for the robot password once.
+    KEY="${HOME}/.ssh/id_ed25519"
+    if [ ! -f "${KEY}" ]; then
+        echo "[setup-ssh] Generating ${KEY}"
+        ssh-keygen -t ed25519 -N "" -f "${KEY}"
     fi
+    echo "[setup-ssh] Copying key to ${GO2_ROBOT_USER}@${GO2_ROBOT_IP} (enter the robot password)"
+    ssh-copy-id -i "${KEY}.pub" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 \
+            "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
+        echo "[setup-ssh] Passwordless SSH works."
+    else
+        echo "[setup-ssh] ERROR: passwordless SSH still fails." >&2; exit 1
+    fi
+    exit 0
 fi
 
 if [ "${ACTION}" = "clean" ]; then
@@ -305,6 +331,18 @@ echo "  Repo        : ${NAV2_WIFI_DIR}"
 echo
 
 # ===========================================================================
+# Single instance: a second run's pre-flight cleanup pkill -9's the first
+# run's robot relay mid-start ("Killed", "port 17999 never bound").
+# ===========================================================================
+if [ "${ACTION}" = "run" ]; then
+    exec 8>"/tmp/wifi_nav.${USER}.lock"
+    if ! flock -n 8; then
+        echo "ERROR: wifi_nav.sh is already running (another terminal?). Stop it first." >&2
+        exit 1
+    fi
+fi
+
+# ===========================================================================
 # Prerequisite checks
 # ===========================================================================
 if ! command -v docker >/dev/null 2>&1; then
@@ -330,8 +368,8 @@ if ssh -o BatchMode=yes -o ConnectTimeout=3 \
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
-    if [ "${START_RELAY}" = "true" ] && [ "${MODE}" != "--plan" ]; then
-        echo "[checks] ERROR: auto relay requires SSH. Use --no-relay to skip."
+    if [ "${ACTION}" = "run" ]; then
+        echo "[checks] ERROR: mapping.sh starts SLAM and motion on the robot over SSH."
         exit 1
     fi
 fi

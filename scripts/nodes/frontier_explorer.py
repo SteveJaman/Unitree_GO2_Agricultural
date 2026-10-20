@@ -280,6 +280,9 @@ class FrontierExplorer(Node):
             f'stop={self.stop_topic} '
             f'map_topic={self.map_topic} map_frame={self.map_frame} '
             f'min_frontier_size={self.min_frontier_size} '
+            f'min_goal_dist={self.min_goal_dist} '
+            f'blacklist_radius={self.blacklist_radius} '
+            f'unstick={self.unstick_enable} '
             f'blind={self.blind_enable} coverage={self.coverage_enable} '
             f'return_to_init={self.return_to_init} '
             f'spin_on_goal={self.spin_on_goal}')
