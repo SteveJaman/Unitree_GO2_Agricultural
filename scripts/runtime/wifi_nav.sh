@@ -775,9 +775,9 @@ if [ "${ARM}" = "true" ]; then
     (
         sim_arm_env=()
         if [ "${SIM}" = "true" ]; then
-            sim_arm_env=(ARM_SUBNET="${SIM_ARM_SUBNET:-192.168.123}" ARM_IP="${SIM_ARM_SUBNET:-192.168.123}.100" ARM_ALLOW_DEFAULT_FOLD=1)
+            sim_arm_env=(ARM_IP="${SIM_ARM_SUBNET:-192.168.123}.100" ARM_HOST_IP="${SIM_ARM_SUBNET:-192.168.123}.51")
         fi
-        if env ARM_IFACE="${ARM_IFACE}" CONTAINER_NAME="${CONTAINER_NAME}" NODES_DIR="${NODES_DIR}" "${sim_arm_env[@]}" bash "${ARM_START_SCRIPT}" > "${ARM_LOG}" 2>&1; then
+        if env ARM_IFACE="${ARM_IFACE}" "${sim_arm_env[@]}" bash "${ARM_START_SCRIPT}" fold > "${ARM_LOG}" 2>&1; then
             echo "[arm] Arm folded and released."
         else
             echo "[arm] WARNING: arm start failed — navigation continues. Last lines of ${ARM_LOG}:"

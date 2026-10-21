@@ -7,6 +7,8 @@
 #
 # Usage:
 #   ./start_arm.sh --check                    # preflight only
+#   ./start_arm.sh fold                       # glide to FOLDED_ANGLES, then release
+#   ./start_arm.sh read                       # print FOLDED_ANGLES (calibration)
 #   ./start_arm.sh state                      # read state
 #   ./start_arm.sh home                       # home (starts OFF, ends OFF)
 #   ./start_arm.sh enable sleep 2 joint 0 20 sleep 3 release
@@ -18,6 +20,7 @@
 #   ARM_IFACE  (default: enp0s8)
 #   ARM_IP     (default: 192.168.123.100)
 #   ARM_DOMAIN (default: 0)
+#   ARM_HOST_IP (default: 192.168.123.99, this VM's address on ARM_IFACE)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -27,9 +30,11 @@ REPO_ROOT="$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 export ARM_IFACE="${ARM_IFACE:-enp0s8}"
 export ARM_IP="${ARM_IP:-192.168.123.100}"
 export ARM_DOMAIN="${ARM_DOMAIN:-0}"
+ARM_HOST_IP="${ARM_HOST_IP:-192.168.123.99}"
 
 CONTROL="${REPO_ROOT}/scripts/nodes/d1_arm_control.py"
 CALIBRATE="${REPO_ROOT}/scripts/tools/calibrate_arm.py"
+FOLD="${REPO_ROOT}/scripts/nodes/d1_arm_calibration.py"
 
 preflight() {
     local fail=0
@@ -38,12 +43,12 @@ preflight() {
     echo "  arm ip : $ARM_IP"
     echo "  domain : $ARM_DOMAIN"
     echo
-    if ! ip -br addr show "$ARM_IFACE" 2>/dev/null | grep -q "192.168.123.99"; then
-        echo "  [!] $ARM_IFACE is missing 192.168.123.99"
-        echo "      Fix: sudo ip addr add 192.168.123.99/24 dev $ARM_IFACE"
+    if ! ip -br addr show "$ARM_IFACE" 2>/dev/null | grep -qF "$ARM_HOST_IP/"; then
+        echo "  [!] $ARM_IFACE is missing $ARM_HOST_IP"
+        echo "      Fix: sudo ip addr add $ARM_HOST_IP/24 dev $ARM_IFACE"
         fail=1
     else
-        echo "  [ok] $ARM_IFACE has 192.168.123.99"
+        echo "  [ok] $ARM_IFACE has $ARM_HOST_IP"
     fi
     if ! ping -c 2 -W 2 "$ARM_IP" >/dev/null 2>&1; then
         echo "  [!] $ARM_IP does not reply to ping"
@@ -59,12 +64,20 @@ preflight() {
 cmd="${1:-}"
 case "$cmd" in
     ""|"-h"|"--help")
-        sed -n '2,30p' "$0"
+        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
         exit 0
         ;;
     --check|check)
         preflight
         exit $?
+        ;;
+    --fold|fold)
+        preflight || { echo "[!] preflight failed"; exit 1; }
+        exec python3 "$FOLD" --iface "$ARM_IFACE" --move
+        ;;
+    --read|read)
+        preflight || { echo "[!] preflight failed"; exit 1; }
+        exec python3 "$FOLD" --iface "$ARM_IFACE" --read
         ;;
     --calibrate|calibrate)
         shift

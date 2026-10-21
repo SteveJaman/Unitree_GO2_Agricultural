@@ -236,7 +236,8 @@ Two possibilities:
 
 1. **Collision threshold too tight.** Use
    [`tune_costmap.sh --safe`](../scripts/tools/tune_costmap.sh) to
-   restore `inflation_radius=0.35`, `footprint_padding=0.02`. Do not go
+   restore `inflation_radius=0.70`, `footprint_padding=0.05`, or `--wide`
+   (0.85) for crowded spaces. Do not go
    below `inflation_radius=0.20` — that's the Go2's inscribed radius.
 2. **Obstacles aren't in the costmap.** Check `/scan` or `/lidar3d/registered`
    is reaching the costmap. Run
@@ -372,94 +373,81 @@ If it still uses `cmd_vel_pub`, the file reverted — re-apply the fix.
 ## D1-T Arm
 
 Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
-[`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py) and
+[`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py),
+[`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) and
 [`start_arm.sh`](../scripts/runtime/start_arm.sh). Protocol and runbook:
 [d1arm.md](d1arm.md).
 
-The arm is wired to the VM's `enp0s8` (`192.168.123.x`, DDS domain 0), **not**
-to the Go2. Run arm scripts with `env -u CYCLONEDDS_URI` and without sourcing
-ROS.
+The arm is wired to the VM's `enp0s8` (VM `192.168.123.99`, arm `.100`, DDS
+domain 0, multicast discovery), **not** to the Go2. The arm scripts run with
+the VM's `python3` and the pip `cyclonedds` package. Don't source ROS in that
+shell.
 
 ### Arm does not respond to commands
 
-1. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
+1. **Run the preflight:** `./scripts/runtime/start_arm.sh --check` (address + ping).
+2. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
    It checks the interface, ping, container, `cyclonedds`, and DDS match.
-2. **Check the address.** `enp0s8` needs a `192.168.123.x` address, which is
-   lost on every VM reboot: `./scripts/runtime/start_arm.sh --setup-net`.
-3. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
-4. **Read joint feedback:**
+3. **Check the address.** `enp0s8` needs `192.168.123.99`, which is lost on
+   every VM reboot: `sudo ip addr add 192.168.123.99/24 dev enp0s8`.
+4. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
+5. **Read joint feedback:**
 
    ```bash
-   docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
-       python3 /tmp/d1_arm_control.py --iface enp0s8 angles
+   ./scripts/runtime/start_arm.sh feedback
    ```
 
    If feedback arrives but commands do nothing, the motors may not be
    enabled. Run `enable` first.
 
-### `DDS match with arm: NO`
+### `does not reply to ping`
 
-Discovery failed. In order:
+The cable, adapter, or VM networking is wrong, or the arm is still booting.
+Check the link light, then cold-boot the VM (power off, not reboot) with
+VirtualBox Adapter 2 set to **Intel PRO/1000**.
 
-1. `pip3 show cyclonedds` in the container should show `0.10.2`, the version
-   Unitree's SDK uses. Fix: `docker exec -u root go2-lidar3d pip3 install cyclonedds==0.10.2`.
-2. Use unicast discovery: add `--peer 192.168.123.100` (or `ARM_PEER=...`).
+### `route to 192.168.123.100 does NOT go via enp0s8`
+
+Another interface also has a `192.168.123.x` address, so traffic to the arm
+leaves the wrong way. Remove the other address, or set `ARM_IFACE`.
+
+### `DDS discovery failed`
+
+No DDS match within `--match-timeout` (default 20 s). In order:
+
+1. `pip3 show cyclonedds` on the VM. Fix: `pip3 install cyclonedds`.
+2. Don't use `--peer` / unicast. This firmware only works with multicast.
 3. Make sure ROS isn't sourced in that shell. ROS's `libddsc` can clash with the
    pip `cyclonedds` (`free(): invalid pointer`).
-4. The container must use host networking (`docker inspect -f '{{.HostConfig.NetworkMode}}' go2-lidar3d` → `host`).
+4. Give it a longer wait: `--match-timeout 40`.
 
-### `ack: none` / `ack: REJECTED`
+### `joint N limit ±L°, got A°`
 
-`none` after a match means a DDS type mismatch. Pin `cyclonedds==0.10.2`.
-`REJECTED` means the JSON shape is wrong: `data` must be a nested object
-(see [d1arm.md](d1arm.md)).
-
-### `glide REFUSED: no joint feedback`
-
-`glide` plans from the arm's measured pose, and no angles arrived on
-`rt/arm_Feedback` or `current_servo_angle`. This is deliberate: planning
-from a guessed pose would make the first setpoint a jump. Fix the feedback
-first (`... angles`, `diag_arm.sh`). Use `joints` only if you accept the
-controller's own motion.
-
-### `target not reached within 10 s (max error N deg)`
-
-The arm stopped short of the `glide` target. Common causes are a joint
-blocked by the mount, a payload too heavy, or a target near a joint limit.
-A small residual error is normal. Raise `--tolerance` only if you're sure
-the pose is safe.
-
-### `FOLDED_ANGLES is still the uncalibrated placeholder`
-
-`start_arm.sh` won't fold until the resting pose is calibrated. The shipped
-value drives joints 1 and 2 to their ±90° limits. With the motors released,
-fold the arm onto its mount by hand. Run `./scripts/runtime/start_arm.sh --read`,
-then paste the printed line over `FOLDED_ANGLES` in `d1_arm_calibration.py`.
-(`ARM_ALLOW_DEFAULT_FOLD=1` forces it. Don't use it unless the placeholder
-really is safe for your mount.)
+The target is outside the joint's limit (±135, ±90, ±90, ±135, ±90, ±135).
+Use a smaller angle. `sweep --pct` keeps targets inside the limits.
 
 ### `wifi_nav.sh --arm` skipped the arm
 
 Navigation continues without the arm. The banner shows `D1 arm: disabled (...)`.
 
 - `enp0s8 not ready`: the interface is missing or has no IPv4 address. Run
-  `./scripts/runtime/start_arm.sh --setup-net`.
+  `sudo ip addr add 192.168.123.99/24 dev enp0s8`.
 - `share a subnet`: `enp0s3` and `enp0s8` overlap, so arm and Go2 DDS would mix.
-  Give `enp0s8` a `192.168.123.x` address.
-- Otherwise read `~/files/go2-nav2-wifi/ws/log/arm.log`.
+  Give `enp0s8` its `192.168.123.99` address.
+- `arm start failed`: read `~/files/go2-nav2-wifi/ws/log/arm.log`. A
+  `preflight failed` there means the address or ping check failed.
 
 ### Arm moves but reports wrong joint angles
 
 Compare the raw telemetry to what you commanded (angles are **degrees**):
 
 ```bash
-docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
-    python3 /tmp/d1_arm_control.py --iface enp0s8 feedback angles
+./scripts/runtime/start_arm.sh enable sleep 2 joint 0 20 sleep 3 feedback release
 ```
 
 `feedback` shows the raw `rt/arm_Feedback` JSON (address 2, funcode 1,
-`angle0`..`angle6`). `angles` shows the 10-sample average the scripts use. A
-sign or scale difference would need a fix in `D1Arm._sample_angles`.
+`angle0`..`angle6`). To measure the offset per joint, run
+`./scripts/runtime/start_arm.sh --calibrate --test-deg 10 --yes`.
 
 ---
 

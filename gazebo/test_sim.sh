@@ -6,7 +6,7 @@
 #   1. starts the simulation (run_sim.sh up)
 #   2. robot topics reach the container on the Wi-Fi DDS domain
 #   3. motion: drives 0.3 m/s for 3 s through TCP 17999 and checks /lidar3d/odom moved
-#   4. arm: start_arm.sh --read, a fold (start_arm.sh), and a d1_arm_control.py glide
+#   4. arm: start_arm.sh read, start_arm.sh fold, and a joint move with feedback
 #
 #   ./gazebo/test_sim.sh            # leaves the simulation running
 #   ./gazebo/test_sim.sh --down     # stops it at the end
@@ -69,17 +69,16 @@ echo "=== 4. D1 arm (real scripts, ARM_IFACE=${SIM_ARM_IFACE}) ==="
 if ! ip link show dev "$SIM_ARM_IFACE" >/dev/null 2>&1; then
     bad "${SIM_ARM_IFACE} missing (SIM_ARM=0?)"
 else
-    export ARM_IFACE="$SIM_ARM_IFACE" ARM_SUBNET="$SIM_ARM_SUBNET" ARM_IP="${SIM_ARM_SUBNET}.100" CONTAINER_NAME="$CONTAINER"
-    out="$(bash "$REPO_DIR/scripts/runtime/start_arm.sh" --read 2>&1)"
-    if grep -q "^FOLDED_ANGLES = \[" <<< "$out"; then ok "start_arm.sh --read: $(grep '^FOLDED_ANGLES' <<< "$out")"
-    else bad "start_arm.sh --read"; echo "$out" | tail -5 | sed 's/^/        /'; fi
-    out="$(ARM_ALLOW_DEFAULT_FOLD=1 bash "$REPO_DIR/scripts/runtime/start_arm.sh" 2>&1)"
-    if grep -q "Folded and released" <<< "$out"; then ok "start_arm.sh fold (placeholder pose allowed in sim)"
+    export ARM_IFACE="$SIM_ARM_IFACE" ARM_IP="${SIM_ARM_SUBNET}.100" ARM_HOST_IP="${SIM_ARM_SUBNET}.51"
+    out="$(bash "$REPO_DIR/scripts/runtime/start_arm.sh" read 2>&1)"
+    if grep -q "^FOLDED_ANGLES = \[" <<< "$out"; then ok "start_arm.sh read: $(grep '^FOLDED_ANGLES' <<< "$out")"
+    else bad "start_arm.sh read"; echo "$out" | tail -5 | sed 's/^/        /'; fi
+    out="$(bash "$REPO_DIR/scripts/runtime/start_arm.sh" fold 2>&1)"
+    if grep -q "^\[+\] Done" <<< "$out"; then ok "start_arm.sh fold"
     else bad "start_arm.sh fold"; echo "$out" | tail -5 | sed 's/^/        /'; fi
-    out="$(docker exec "$CONTAINER" env -u CYCLONEDDS_URI python3 /tmp/d1_arm_control.py --iface "$SIM_ARM_IFACE" \
-        enable glide 20 -20 20 0 10 0 30 angles 2>&1)"
-    if grep -q "reached" <<< "$out"; then ok "d1_arm_control.py glide: $(grep 'angles' <<< "$out" | tail -1 | sed 's/^\[d1\] //')"
-    else bad "d1_arm_control.py glide"; echo "$out" | tail -5 | sed 's/^/        /'; fi
+    out="$(bash "$REPO_DIR/scripts/runtime/start_arm.sh" enable sleep 1 joint 0 20 sleep 3 feedback 2>&1)"
+    if grep -q "angles: {" <<< "$out"; then ok "d1_arm_control.py joint + feedback: $(grep 'angles' <<< "$out" | tail -1 | sed 's/^\[d1\] //')"
+    else bad "d1_arm_control.py joint + feedback"; echo "$out" | tail -5 | sed 's/^/        /'; fi
 fi
 
 echo

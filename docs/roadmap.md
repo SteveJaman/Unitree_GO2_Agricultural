@@ -27,7 +27,7 @@ Everything else depends on this. Do not skip.
 
 | # | Task | Status |
 |---|---|---|
-| 0.1 | Jetson relay starts in FULL mode (no `--sensors-only`) | ✅ auto-handled by [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) |
+| 0.1 | Jetson relay starts in FULL mode (no `--sensors-only`) | ✅ auto-handled by [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) (by `mapping.sh` with Jetson compute) |
 | 0.2 | Port 17999 conflict eliminated before every session | ✅ auto-handled |
 | 0.3 | `mapping.sh --3d --nav` launches a clean session | ✅ verified |
 | 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
@@ -182,14 +182,14 @@ is captured for later plant-analysis research.
 | # | Task | Status |
 |---|---|---|
 | 8.1 | [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) written — DDS/JSON control | ✅ written |
-| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — fold / `--read` / `--setup-net` from the VM | ✅ written |
-| 8.3 | Python DDS bindings in the container | ✅ `cyclonedds==0.10.2` auto-installed by `start_arm.sh` (no SDK2 needed) |
-| 8.4 | Arm reachable from VM container (`enp0s8`, `192.168.123.x`) | ⏳ verify with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
+| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — preflight, `fold`, `read`, `--calibrate`, command chains from the VM | ✅ written |
+| 8.3 | Python DDS bindings on the VM | ✅ pip `cyclonedds` on the host (no SDK2, no container needed) |
+| 8.4 | Arm reachable from the VM (`enp0s8` `192.168.123.99` → arm `.100`, multicast) | ✅ verified config; check with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
 | 8.5 | Arm responds to `joint` command | ⏳ hardware |
 | 8.6 | Arm responds to `joints` command | ⏳ hardware |
-| 8.7 | Joint feedback readable (`angles`) | ⏳ hardware |
-| 8.8 | Smooth `glide` (quintic, peak-speed capped, measured start) | ✅ written, simulated; ⏳ hardware |
-| 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ written; ⏳ calibrate on the mount |
+| 8.7 | Joint feedback readable (`feedback`) | ⏳ hardware |
+| 8.8 | Per-joint offset calibration ([`calibrate_arm.py`](../scripts/tools/calibrate_arm.py)), `lift` / `sweep` tests | ✅ written; ⏳ hardware |
+| 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ calibrated on the mount |
 | 8.10 | `wifi_nav.sh --arm`: dog + arm from one command, DDS isolated | ✅ written; ⏳ hardware |
 
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
@@ -197,15 +197,15 @@ is captured for later plant-analysis research.
 single joint, 2 all joints, 5 enable (`mode` 80000) / release (`mode` 0),
 7 home. Full table: [d1arm.md](d1arm.md).
 
-**Network:** the arm is wired to the VM's `enp0s8` (`192.168.123.x`, DDS
-domain 0). It is kept separate from the Go2's Wi-Fi DDS on `enp0s3`
+**Network:** the arm is wired to the VM's `enp0s8` (VM `192.168.123.99`,
+arm `.100`, DDS domain 0, multicast discovery). It is kept separate from the Go2's Wi-Fi DDS on `enp0s3`
 (domain 64). First test on hardware:
 
 ```bash
-./scripts/runtime/start_arm.sh --setup-net
+sudo ip addr add 192.168.123.99/24 dev enp0s8
+./scripts/runtime/start_arm.sh --check
 ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh
-docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
-    python3 /tmp/d1_arm_control.py --iface enp0s8 angles
+./scripts/runtime/start_arm.sh feedback
 ```
 
 If it fails, see [troubleshooting → D1-T Arm](troubleshooting.md#d1-t-arm).
@@ -262,8 +262,8 @@ once known.
 
 | # | Task | Status |
 |---|---|---|
-| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ (write it as a `run` sequence file) |
-| 12.2 | Play the path with waypoint interpolation | ✅ `glide` + `run <file>` in `d1_arm_control.py`; ⏳ hardware |
+| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ (a `start_arm.sh` command chain for now) |
+| 12.2 | Play the path with waypoint interpolation | ⏳ smooth `glide` / sequence files were removed in the 2026-10-20 rework; re-add on top of the new `D1Arm` |
 | 12.3 | Trigger camera capture at each step | ⏳ |
 | 12.4 | Store captures with pose metadata | ⏳ |
 | 12.5 | Repeat for multiple plants | ⏳ |
