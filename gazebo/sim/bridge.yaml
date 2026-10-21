@@ -1,0 +1,28 @@
+# ros_gz_bridge topics for the Go2 + D1 simulation.
+# ROS side runs on the Wi-Fi DDS domain (64) so the go2-lidar3d container sees
+# /camera/image_raw directly; the /sim/* topics are consumed by sim_robot_bridge.py,
+# which republishes them under the names the real robot uses.
+
+- ros_topic_name: "/sim/odom"
+  gz_topic_name: "/model/go2/odometry"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/sim/lidar/points"
+  gz_topic_name: "/sim/lidar/points"
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/camera/image_raw"
+  gz_topic_name: "/camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/sim/cmd_vel"
+  gz_topic_name: "/model/go2/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
