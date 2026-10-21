@@ -122,7 +122,7 @@ unchanged, plus a separate `go2-3d` container ([`twin/`](../twin/)). The
 container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), foxglove_bridge
 `:8765` (or rosbridge `:9090`) and
 [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)
-(`/clicked_point` → `/goal_pose`). It copies the session's DDS settings, and
+(`/clicked_point` → nearest safe floor → `/goal_pose`). It copies the session's DDS settings, and
 the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](3d_nav.md).
 
 Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
@@ -169,7 +169,7 @@ connection, click-to-go, `--export`.
 | 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
 | 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
 | 19 | Dense map grows | Foxglove 3D panel, `/rtabmap/cloud_map` | map fills in as the dog walks |
-| 20 | Click-to-go | Foxglove Publish → Point on the floor | `goal (...)` in `click_to_goal.log`, dog drives there |
+| 20 | Click-to-go | Foxglove Publish → Point on the floor, then on a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
 | 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
 
 ---

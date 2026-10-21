@@ -5,7 +5,7 @@
 # Starts, on the session's DDS domain:
 #   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
 #   * web bridge          foxglove_bridge (default) or rosbridge, for Foxglove
-#   * go2_click_to_goal   /clicked_point -> /goal_pose
+#   * go2_click_to_goal   /clicked_point -> nearest safe floor -> /goal_pose
 #
 # Odometry comes from TF (lidar3d_map -> base_link, Point-LIO + go2_odom_tf),
 # so RTAB-Map's map frame "rtabmap_map" becomes the parent of lidar3d_map and

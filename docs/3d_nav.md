@@ -102,7 +102,7 @@ Each run writes its own database:
      - `/tf`: the dog's pose
      - `/plan`: Nav2's route
      - `/global_costmap/costmap`: optional
-     - `/click_goal/marker`: the active clicked goal (red arrow)
+     - `/clicked_goal_markers`: grey cylinder where you clicked, green arrow at the snapped goal
 3. **Add panel → Image** → `/camera/image_raw` for the live camera.
 4. **Layout → Save** (or export it to a JSON file to share with the team).
 
@@ -113,9 +113,25 @@ Each run writes its own database:
    topic is `/clicked_point`.
 3. Click the floor where the dog should go.
 
-`go2_click_to_goal` transforms the point into `lidar3d_map`, faces the goal
-along the robot → point direction, and publishes `/goal_pose`. Nav2 then plans
-and drives there. The terminal log and `/click_goal/marker` confirm the goal.
+`go2_click_to_goal` transforms the point into the costmap frame
+(`lidar3d_map`) and **snaps it to the nearest navigable floor**. It then faces
+the goal along the robot → goal direction and publishes `/goal_pose`, and Nav2
+plans and drives there.
+
+Snapping, on `/global_costmap/costmap`:
+
+1. A breadth-first search runs outward from the clicked cell, ring by ring,
+   up to `max_snap_distance` (2 m).
+2. A cell is accepted only if it **and its 8 neighbours** (a 3×3 block, so
+   the body fits) are known and cost < `free_threshold` (50). Unknown space
+   is never accepted.
+3. Of the accepted cells in the nearest ring, the one closest to the click
+   wins.
+
+A click on a desk or wall therefore lands on the free floor next to it.
+`/clicked_goal_markers` shows a grey cylinder at the click and a green arrow
+at the goal actually sent. If no safe floor is within reach, or no costmap has
+arrived yet, no goal is sent and the log says why.
 
 Why top-down: Foxglove projects a click onto the display frame's `z = 0`
 plane. `lidar3d_map`'s `z = 0` is at the LiDAR's start height, not the floor.
@@ -128,10 +144,20 @@ Alternatives:
 - **Publish → Pose estimate** publishes `/initialpose`, the same as RViz's
   2D Pose Estimate.
 
-Each click replaces the current goal. A clicked point inside an obstacle is
-rejected by the Nav2 planner, the same as in RViz. To ignore far-away
-accidental clicks, set `max_goal_distance` on the node (see
-[`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)).
+Each click replaces the current goal. The **Publish → Pose** route above
+skips the snapping.
+
+Node parameters (see
+[`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `free_threshold` | `50` | Costmap value (0–100) below which a cell counts as floor |
+| `clearance_cells` | `1` | Free radius around the goal cell: 1 = 3×3, 2 = 5×5 |
+| `max_snap_distance` | `2.0` | How far (m) a click may be moved |
+| `max_goal_distance` | `0` | Ignore goals farther than this from the robot (0 = off) |
+| `costmap_topic` | `/global_costmap/costmap` | Grid used for snapping |
+| `floor_z` | `0.0` | Height of the green arrow in the map frame |
 
 ---
 
@@ -175,7 +201,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | `no ROS nodes in go2-lidar3d … 3D stack NOT started` | The 2D session never came up. Fix that first with `wifi_nav.sh` alone |
 | Foxglove connects but shows no topics | VM firewall or wrong IP. Use the IP printed in the READY block; `ss -tlnp \| grep 8765` on the VM |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
-| Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. Confirm the Publish tool's topic is `/clicked_point` and the display frame exists in TF |
+| Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
 | VM CPU pegged | `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
 | Map not saved after a crash | A leftover `go2-3d` is stopped (and saved) at the start of the next run, or run `--stop` |
 

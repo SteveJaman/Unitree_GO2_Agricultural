@@ -391,7 +391,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
-| [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → `/goal_pose` in `lidar3d_map`, plus a goal marker |
+| [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
 | [`direct_test_movement.py`](scripts/nodes/direct_test_movement.py) | Small, safe movement test for the arm (uses `d1_arm_control.py`) |
@@ -637,7 +637,8 @@ container ([`twin/`](twin/)) with:
 - **foxglove_bridge on `:8765`** (or `--rosbridge` on `:9090`). The Foxglove
   app on Windows shows `/rtabmap/cloud_map`, the robot, `/plan` and the camera.
 - **[`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py).** A point
-  published from Foxglove's 3D panel becomes a Nav2 `/goal_pose`.
+  published from Foxglove's 3D panel becomes a Nav2 `/goal_pose`. Clicks on a
+  desk or wall are snapped to the nearest free floor the body fits on.
 
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh --build          # once (needs internet)
