@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 ---
 
@@ -15,9 +15,9 @@ has been verified on the robot yet except where noted.
 
 ```
 scripts/
-├── runtime/     wifi_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
+├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
 │                go2_net.sh (sourced: IP detection / robot discovery)
-├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py,
+├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
 │                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
 └── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
                  preflight.sh, save_rviz_config.sh, test_explore.sh,
@@ -29,7 +29,7 @@ Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scrip
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
 - [README](../README.md) rewritten for the current stack
-- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md)
+- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`3d_nav.md`](3d_nav.md), [`troubleshooting.md`](troubleshooting.md)
 
 ### Navigation — verified working
 
@@ -115,6 +115,20 @@ emulator against the **unmodified** `d1_arm_control.py` and `d1_arm_calibration.
 over real CycloneDDS; `wifi_nav.sh --sim` / `run_sim.sh` with a fake harness.
 Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 
+### 3D digital twin — code complete, untested (2026-10-21)
+
+[`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs `wifi_nav.sh`
+unchanged, plus a separate `go2-3d` container ([`twin/`](../twin/)). The
+container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), foxglove_bridge
+`:8765` (or rosbridge `:9090`) and
+[`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)
+(`/clicked_point` → `/goal_pose`). It copies the session's DDS settings, and
+the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](3d_nav.md).
+
+Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
+the `go2-3d:local` image build, RTAB-Map on live data, the Foxglove
+connection, click-to-go, `--export`.
+
 ### One-command orchestration
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
@@ -152,6 +166,11 @@ Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 | 14 | Robot discovery | `./scripts/runtime/wifi_nav.sh --check` | banner shows `[discovered]` robot IP |
 | 15 | Go2 Jetson MAC prefix | `ip link` on the Jetson | starts `02:00:00` (else set `GO2_MAC_PREFIX`) |
 | 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
+| 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
+| 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
+| 19 | Dense map grows | Foxglove 3D panel, `/rtabmap/cloud_map` | map fills in as the dog walks |
+| 20 | Click-to-go | Foxglove Publish → Point on the floor | `goal (...)` in `click_to_goal.log`, dog drives there |
+| 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
 
 ---
 
@@ -162,7 +181,7 @@ Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 | [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
-| RTAB-Map + RealSense | Depth camera not yet purchased |
+| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | Depth camera not yet purchased; LiDAR-only map works without it |
 
 ---
 
@@ -251,6 +270,10 @@ ros2 topic echo /explore/status            # watch goals_sent
 
 # 8. Commit any config/tour.rviz that gets saved
 ```
+
+3D twin (instead of step 3, once `--build` has run):
+`./scripts/runtime/wifi_3d_nav.sh --no-explore`, then Foxglove → `ws://<VM IP>:8765`
+(see [3d_nav.md](3d_nav.md)).
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
 once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).
