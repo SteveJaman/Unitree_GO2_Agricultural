@@ -11,7 +11,7 @@ set -uo pipefail
 
 CONTAINER="${CONTAINER_NAME:-go2-lidar3d}"
 SUBNET="${ARM_SUBNET:-192.168.123}"
-ARM_IP="${ARM_IP:-${SUBNET}.100}"
+ARM_IP="${ARM_IP:-${SUBNET}.99}"
 IFACE="${ARM_IFACE:-}"
 ARM_PEER="${ARM_PEER:-}"
 
