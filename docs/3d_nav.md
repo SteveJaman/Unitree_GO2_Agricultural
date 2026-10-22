@@ -92,9 +92,44 @@ Each run writes its own database:
 
 1. **Open connection → Foxglove WebSocket →** `ws://<VM IP>:8765`.
    The VM IP is the `Foxglove :` line printed by the script, i.e. the VM's
-   Wi-Fi address (DHCP, so it changes).
+   Wi-Fi address (DHCP, so it changes). From a browser or Foxglove inside the
+   VM itself, `ws://localhost:8765` also works.
    With `--rosbridge`, choose **Rosbridge** and port `9090`.
-2. **Add panel → 3D.** In its settings:
+2. **Import the team layout** (recommended, skips steps 3–4):
+   [`config/foxglove_layout.json`](../config/foxglove_layout.json).
+   See [Import the layout](#import-the-layout) below.
+
+If the 3D panel shows *"Error creating WebGL context"*, see
+[WebGL / Hardware Acceleration Error](#webgl--hardware-acceleration-error).
+
+### Import the layout
+
+[`config/foxglove_layout.json`](../config/foxglove_layout.json) contains a
+3D panel and an Image panel side by side:
+
+| Panel | Pre-configured |
+|---|---|
+| 3D | Display frame `lidar3d_map`; `/rtabmap/cloud_map` (coloured by `z`), `/tf`, `/plan`, `/clicked_goal_markers` on; `/lidar3d/registered` and `/global_costmap/costmap` listed but off; **Publish → Point** on `/clicked_point` |
+| Image | `/camera/image_raw` |
+
+To import it:
+
+1. Copy the file to the machine running Foxglove (for Windows, e.g. through the
+   VirtualBox shared folder, or `scp` it from the VM).
+2. In Foxglove, open the **Layouts** menu (top-left, next to the layout name)
+   or the **Layouts** sidebar.
+3. Choose **Import from file…** and select `foxglove_layout.json`.
+4. Connect as in step 1 above. The panels fill as soon as the topics arrive.
+
+The layout is stored in Foxglove after import. To share a change with the team,
+use **Layouts → Export…** and commit the file over
+`config/foxglove_layout.json`.
+
+### Manual setup
+
+Without the layout file:
+
+1. **Add panel → 3D.** In its settings:
    - **Display frame:** `lidar3d_map`
    - Enable topics:
      - `/rtabmap/cloud_map`: the dense 3D map. Colour by `z` for a height map
@@ -103,8 +138,8 @@ Each run writes its own database:
      - `/plan`: Nav2's route
      - `/global_costmap/costmap`: optional
      - `/clicked_goal_markers`: grey cylinder where you clicked, green arrow at the snapped goal
-3. **Add panel → Image** → `/camera/image_raw` for the live camera.
-4. **Layout → Save** (or export it to a JSON file to share with the team).
+2. **Add panel → Image** → `/camera/image_raw` for the live camera.
+3. **Layout → Save** (or export it to a JSON file to share with the team).
 
 ### Click-to-go
 
@@ -200,12 +235,98 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | `image go2-3d:local missing` | `./scripts/runtime/wifi_3d_nav.sh --build` |
 | `no ROS nodes in go2-lidar3d … 3D stack NOT started` | The 2D session never came up. Fix that first with `wifi_nav.sh` alone |
 | Foxglove connects but shows no topics | VM firewall or wrong IP. Use the IP printed in the READY block; `ss -tlnp \| grep 8765` on the VM |
+| Topics listed, but panels say "topic does not exist" or wait forever; `rtabmap.log` repeats `Did not receive data` | `go2-3d` is on the wrong DDS domain. `docker logs go2-3d \| grep 'DDS domain'` must show the session's domain (64) and `file:///tmp/go2-wifi-cyclonedds.xml`, not `domain 0`. Restart `wifi_3d_nav.sh`. Also check that the Foxglove layout's topics exist in this project (a layout from another project shows red topics) |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
 | VM CPU pegged | `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
 | Map not saved after a crash | A leftover `go2-3d` is stopped (and saved) at the start of the next run, or run `--stop` |
+| Topics listed, but 3D panel says *"Error creating WebGL context"* | No GPU acceleration in the VM, see below |
 
 `go2-3d` keeps its own log after it stops: `docker logs go2-3d`.
+
+### WebGL / Hardware Acceleration Error
+
+Symptom: Foxglove connects to `ws://localhost:8765` and the **Topics** list is
+complete (`/rtabmap/cloud_map`, `/clicked_goal_markers`,
+`/global_costmap/costmap`, …), but the 3D panel shows:
+
+> Error creating WebGL context. Hardware Acceleration is not enabled. App
+> performance may be severely degraded.
+
+**This is not a bug in the repository.** The backend is working: the topics
+reaching Foxglove prove that RTAB-Map, the bridge and DDS are all fine. Foxglove's 3D
+panel renders with WebGL, and WebGL needs an OpenGL-capable GPU. A VirtualBox
+VM has none by default, so the browser or Foxglove app inside the VM cannot
+create a WebGL context. The **Image panel renders with WebGL too** and fails the
+same way. Panels that don't draw graphics keep working: Plot, Raw Messages,
+Diagnostics and the topic list. Use them to confirm the data is arriving.
+
+#### Fix: enable 3D acceleration in VirtualBox
+
+1. **Shut down** the VM completely (not *Save State*). These settings are
+   greyed out while it runs.
+2. VirtualBox Manager → select the VM → **Settings → Display → Screen**:
+   - **Video Memory:** `128 MB` (drag the slider to the maximum)
+   - **Graphics Controller:** `VMSVGA` (the recommended one for Linux guests)
+   - Tick **Enable 3D Acceleration**
+3. Start the VM and install the guest drivers:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y virtualbox-guest-utils virtualbox-guest-x11
+   sudo reboot
+   ```
+
+   Alternatively, use **Devices → Insert Guest Additions CD image…** and run
+   `sudo /media/$USER/VBox_GAs_*/VBoxLinuxAdditions.run`. Use one method, not
+   both. The Guest Additions version should match the VirtualBox version on
+   the host.
+4. Check that OpenGL now goes through the host GPU:
+
+   ```bash
+   sudo apt install -y mesa-utils
+   glxinfo -B | grep -E 'renderer|direct rendering'
+   ```
+
+   - `OpenGL renderer string: SVGA3D …`: accelerated, good.
+   - `llvmpipe` or `softpipe`: still software rendering. Recheck steps 2–3
+     and update the host GPU driver.
+5. In the VM's browser, make sure **Settings → System → Use graphics
+   acceleration when available** is on, then open `chrome://gpu` (Chrome or
+   Chromium) and check that *WebGL* says *Hardware accelerated*. Firefox shows
+   the same information on `about:support` under *Graphics*.
+6. Reload Foxglove.
+
+#### If WebGL still fails
+
+VirtualBox 3D support depends on the host GPU and driver, and some setups
+never get a working WebGL context. Use one of these instead.
+
+1. **Run Foxglove natively on the Windows host (recommended).** Install
+   the Foxglove desktop app on Windows (see [One-time setup](#one-time-setup)),
+   where it uses the real GPU. Connect to `ws://<VM IP>:8765` (the IP in the
+   READY block) instead of `localhost`, and import
+   [`config/foxglove_layout.json`](../config/foxglove_layout.json). This needs the VM on
+   **bridged** networking. On NAT, add a port-forwarding rule for TCP `8765`
+   (VM Settings → Network → Advanced → Port Forwarding) and connect to
+   `ws://localhost:8765` on Windows. This also takes the rendering load off
+   the VM's CPU.
+2. **Use RViz for the 3D view.** RViz already opens with every
+   `wifi_3d_nav.sh` session and works with software OpenGL:
+   - Fixed Frame `lidar3d_map`.
+   - **Add → By topic → `/rtabmap/cloud_map` → PointCloud2**. Colour
+     Transformer `AxisColor`, axis `Z` gives the same height map.
+   - Add `/plan` (Path) and `/clicked_goal_markers` (MarkerArray) the same way.
+   - Click-to-go still works: RViz's **Publish Point** tool publishes on
+     `/clicked_point`, which `go2_click_to_goal` already listens to.
+   - The dense map is heavy for a CPU renderer. Use **Style** `Points` with
+     a small **Size**, untick `/lidar3d/registered`, or coarsen the map with
+     `TWIN_RTAB_ARGS="--Grid/CellSize 0.1"`.
+3. **Software WebGL in Chrome (last resort, slow).** Start Chrome in the VM
+   with `google-chrome --enable-unsafe-swiftshader --ignore-gpu-blocklist`.
+   WebGL then runs on the CPU via SwiftShader. Expect a low frame rate with
+   `/rtabmap/cloud_map` visible, so use it only to check that the panel
+   works.
 
 ---
 

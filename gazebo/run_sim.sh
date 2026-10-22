@@ -21,6 +21,9 @@
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
+#   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
+#                         lidar mount (sensor_from_base) the laptop stack uses;
+#                         the sim places its lidar to match
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -34,6 +37,8 @@ SIM_ARM_IFACE="${SIM_ARM_IFACE:-simarm0}"
 SIM_ARM_SUBNET="${SIM_ARM_SUBNET:-192.168.123}"
 SIM_TIMEOUT="${SIM_TIMEOUT:-240}"
 IFACE_MARKER="/tmp/go2-sim-created-${SIM_ARM_IFACE}"
+NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
+SIM_SENSOR_YAML="${SIM_SENSOR_YAML:-${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_robot_viz.yaml}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -106,6 +111,13 @@ cmd_up() {
     fi
     local dev_args=()
     if [ -d /dev/dri ]; then dev_args=(--device /dev/dri --group-add video); fi
+    local sensor_args=()
+    if [ -f "$SIM_SENSOR_YAML" ]; then
+        sensor_args=(-v "$SIM_SENSOR_YAML:/nav2_cfg/lidar3d_robot_viz.yaml:ro"
+                     -e SIM_SENSOR_YAML=/nav2_cfg/lidar3d_robot_viz.yaml)
+    else
+        echo "[sim] WARN: ${SIM_SENSOR_YAML} not found; sim uses the Go2 URDF lidar mount"
+    fi
 
     echo "[sim] starting ${NAME} (GUI=${gui}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
     docker run -d --name "$NAME" --network host --ipc host \
@@ -117,7 +129,7 @@ cmd_up() {
         -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-        -v "$GZ_DIR:/sim:ro" \
+        -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" \
         "$IMAGE" >/dev/null
 
     echo "[sim] waiting for the first lidar frame (up to ${SIM_TIMEOUT} s; software rendering is slow)..."

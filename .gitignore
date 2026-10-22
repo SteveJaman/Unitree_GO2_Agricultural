@@ -26,3 +26,6 @@ desktop.ini
 # Generated TF diagrams
 frames_*.gv
 frames_*.pdf
+
+# Camera calibration runs (views, previews); the installed result is config/camera/front_camera.yaml
+config/camera/runs/

@@ -89,13 +89,14 @@ both the dog and the arm — is the long-term goal.
 |---|---|
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
+| [docs/camera_lidar_fusion.md](docs/camera_lidar_fusion.md) | Camera intrinsic calibration and the camera–LiDAR overlay check |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, commands, calibration, troubleshooting |
 | [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + Foxglove, click-to-go, export |
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
-| [config/README.md](config/README.md) | Config folder notes (RViz layout) |
+| [config/README.md](config/README.md) | Config folder notes (RViz and Foxglove layouts) |
 | [cmu-legacy/README.md](cmu-legacy/README.md) | Archived CMU-stack code |
 
 ---
@@ -391,6 +392,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`go2_lidar_overlay.py`](scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
@@ -408,6 +410,8 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`tune_costmap.sh`](scripts/tools/tune_costmap.sh) | Change inflation radius and footprint padding at runtime (`--safe`, `--wide`, `--tight`, `--show`) |
 | [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
+| [`calibrate_camera.sh`](scripts/tools/calibrate_camera.sh) | Headless checkerboard calibration of the front camera → `config/camera/front_camera.yaml` (`/camera/camera_info`) |
+| [`lidar_overlay.sh`](scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
@@ -651,6 +655,50 @@ kill it before it saves. On Ctrl+C the session stops first, then RTAB-Map
 writes its database. Foxglove setup, click-to-go, tuning and troubleshooting:
 [docs/3d_nav.md](docs/3d_nav.md).
 
+### Foxglove layout
+
+[`config/foxglove_layout.json`](config/foxglove_layout.json) is a ready-made
+layout, so nobody has to add and configure panels by hand:
+
+- **3D panel:** display (fixed) frame `lidar3d_map`; `/rtabmap/cloud_map`
+  coloured by height, `/tf`, `/plan` and `/clicked_goal_markers`; the
+  **Publish → Point** tool already set to `/clicked_point` for click-to-go.
+- **Image panel:** `/camera/image_raw`.
+
+To import it:
+
+1. Copy `config/foxglove_layout.json` to the machine running Foxglove.
+2. Foxglove → **Layouts** menu (top-left) → **Import from file…** → pick the file.
+3. **Open connection → Foxglove WebSocket →** `ws://<VM IP>:8765`
+   (`ws://localhost:8765` from inside the VM).
+
+To share a layout change, use **Layouts → Export…** and commit it over the same file.
+
+### WebGL / Hardware Acceleration Error
+
+If Foxglove lists all the topics but the 3D panel shows *"Error creating
+WebGL context. Hardware Acceleration is not enabled"*, the cause is a
+**VirtualBox limitation, not a code error**. The VM has no GPU, so the
+browser inside it cannot create a WebGL context. The backend is fine.
+
+1. Shut the VM down fully. In **Settings → Display → Screen**, set **Video
+   Memory** to `128 MB`, set **Graphics Controller** to `VMSVGA`, and tick
+   **Enable 3D Acceleration**.
+2. Boot and install the guest drivers, then reboot:
+
+   ```bash
+   sudo apt install -y virtualbox-guest-utils virtualbox-guest-x11
+   ```
+
+3. Verify with `glxinfo -B | grep renderer` (package `mesa-utils`). It should
+   say `SVGA3D`, not `llvmpipe`.
+
+If WebGL still fails, run the **Foxglove desktop app on the Windows host** and
+connect to `ws://<VM IP>:8765`. Otherwise use **RViz** for the 3D view
+(`/rtabmap/cloud_map` as PointCloud2; its Publish Point tool also drives
+click-to-go). Full steps:
+[docs/3d_nav.md → WebGL / Hardware Acceleration Error](docs/3d_nav.md#webgl--hardware-acceleration-error).
+
 ---
 
 ## Live Camera
@@ -701,11 +749,14 @@ Unitree_GO2_Agricultural/
 ├── .pre-commit-config.yaml           # ruff, shellcheck, clang-format, markdownlint
 ├── config/
 │   ├── README.md
+│   ├── camera/                       # front_camera.yaml (calibration), sim_front_camera.yaml
+│   ├── foxglove_layout.json          # Foxglove layout (3D twin + camera), import in Foxglove
 │   └── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
 ├── docs/
 │   ├── STATUS.md                     # session notes
 │   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map + Foxglove)
 │   ├── camera.md                     # live camera setup
+│   ├── camera_lidar_fusion.md        # camera calibration + LiDAR overlay check
 │   ├── d1arm.md                      # D1 arm runbook
 │   ├── roadmap.md                    # Phase 1 roadmap
 │   ├── tour.md                       # waypoint mode setup
@@ -903,6 +954,7 @@ Common items:
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
+| Foxglove 3D panel: `Error creating WebGL context` | VirtualBox has no GPU acceleration (not a code error) | Enable 3D Acceleration + 128 MB video memory, install `virtualbox-guest-utils`, or use Foxglove on Windows / RViz. See [WebGL error](#webgl--hardware-acceleration-error) |
 
 ---
 

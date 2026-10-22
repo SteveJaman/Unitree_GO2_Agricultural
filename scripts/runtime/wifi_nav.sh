@@ -28,6 +28,8 @@ CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
+CAMERA_CALIB="${CAMERA_CALIB:-$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )/config/camera/front_camera.yaml}"
+CAMERA_RESOLUTION="${CAMERA_RESOLUTION:-720p}"   # must match the calibration
 ARM_START_SCRIPT="${SCRIPT_DIR}/start_arm.sh"
 SIM_RUN="$( cd "${SCRIPT_DIR}/../../gazebo" &> /dev/null && pwd )/run_sim.sh"
 ARM_LOG="${NAV2_WIFI_DIR}/ws/log/arm.log"
@@ -743,9 +745,18 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             kill_camera_relay_inside_container
             echo "[camera] Copying go2_camera_relay.py into container..."
             docker cp "${CAMERA_RELAY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_camera_relay.py" 2>/dev/null || true
+            # Lens calibration (scripts/tools/calibrate_camera.py) -> /camera/camera_info
+            camera_info_arg=""
+            if [ -f "${CAMERA_CALIB}" ]; then
+                docker cp "${CAMERA_CALIB}" "${CONTAINER_NAME}:/tmp/front_camera.yaml" 2>/dev/null \
+                    && camera_info_arg="-p camera_info_file:=/tmp/front_camera.yaml"
+                echo "[camera] Calibration ${CAMERA_CALIB} -> /camera/camera_info"
+            else
+                echo "[camera] No ${CAMERA_CALIB}: no /camera/camera_info (run scripts/tools/calibrate_camera.sh)"
+            fi
             echo "[camera] Starting camera relay..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_topic:=/frontvideostream -p output_topic:=/camera/image_raw -p frame_id:=camera_link -p resolution:=720p > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_topic:=/frontvideostream -p output_topic:=/camera/image_raw -p frame_id:=front_camera -p resolution:=${CAMERA_RESOLUTION} ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${EXPLORE}" = "true" ]; then

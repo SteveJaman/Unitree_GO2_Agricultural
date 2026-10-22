@@ -458,13 +458,18 @@ Full camera setup: [camera.md](camera.md). Relay code:
 
 ### Relay crashes on start
 
-Missing dependencies inside the container.
+Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
 
-```bash
-docker exec -u root go2-lidar3d apt-get update
-docker exec -u root go2-lidar3d apt-get install -y \
-    ros-humble-cv-bridge python3-opencv
-```
+- `No module named 'cv_bridge'`: an old copy of the relay. The current one
+  fills the Image itself and needs only `python3-opencv`.
+- `No module named 'unitree_go'`: the Unitree messages in
+  `/opt/go2-unitree-msgs` weren't sourced. `wifi_nav.sh` sources them now.
+- `No module named 'cv2'`:
+
+  ```bash
+  docker exec -u root go2-lidar3d apt-get update
+  docker exec -u root go2-lidar3d apt-get install -y python3-opencv
+  ```
 
 ### RViz Image display is empty
 
@@ -557,7 +562,8 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 ## 3D Digital Twin
 
 `wifi_3d_nav.sh` problems (image missing, no Foxglove topics, empty
-`/rtabmap/cloud_map`, clicks ignored, CPU load, unsaved map): see
+`/rtabmap/cloud_map`, clicks ignored, CPU load, unsaved map, Foxglove
+*"Error creating WebGL context"* in a VirtualBox VM): see
 [3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
 `click_to_goal.log`) and `docker logs go2-3d`.

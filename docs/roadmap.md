@@ -92,7 +92,7 @@ Required for reconstruction. Currently blocked by hardware.
 | 3.1 | Fix the camera backend on Jetson | ⏳ hardware |
 | 3.2 | Verify image reaches VM | ⏳ |
 | 3.3 | Mount Intel RealSense D435i (if available) | ⏳ hardware |
-| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ⏳ |
+| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](camera_lidar_fusion.md)), ⏳ run on robot |
 
 **Note:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) is already written and bridges
 `/frontvideostream` → `/camera/image_raw`. What is missing is the *camera

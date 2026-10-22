@@ -56,8 +56,13 @@ launches, pointed at this machine instead of the robot.
 - The D1 is mounted on the trunk top (`SIM_D1_MOUNT`, default `0 0 0.057 0 0 0`).
 - **The D1 URDF ships `effort=0 velocity=0` on every joint** (the controllers would
   apply no force); real limits are patched in.
-- A virtual lidar is placed where the stack's measured mount puts the sensor
-  (0.291, 0.014, −0.005 m), so the laptop's `go2_odom_tf` recovers the exact body pose.
+- A virtual lidar is placed where the stack's lidar mount puts the sensor, so the
+  laptop's `go2_odom_tf` recovers the exact body pose. The mount (`sensor_from_base`)
+  is read at every start from go2-nav2-wifi's
+  `go2_nav2/config/lidar3d_robot_viz.yaml` (`SIM_SENSOR_YAML`), the file
+  `go2_odom_tf` itself uses. With the [lab fix](../docs/LAB-NAV-FIXES.md) applied, the
+  lidar sits at the Go2 URDF mount (0.289, 0, −0.047 m). If the file is missing, the
+  sim falls back to that same URDF mount and prints a warning.
 
 ## Commands
 
@@ -96,6 +101,7 @@ the VM, so the VM needs `pip3 install cyclonedds`.
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
+| `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
 | `GO2_HOST_IP` | auto (`enp0s3`, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
 
@@ -122,6 +128,8 @@ These are deliberate. They're listed so test results aren't over-read:
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
 | `enp0s8 already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
+| RViz dog tilted (~20°) and heading ~120° off in `--sim` | The sim and `go2_odom_tf` use different lidar mounts. Check that `./gazebo/run_sim.sh logs` says `sensor_from_base from /nav2_cfg/lidar3d_robot_viz.yaml`, then restart the sim (`./gazebo/run_sim.sh down`). `tf2_echo lidar3d_map base_link` should show roll and pitch at 0 |
+| Headless (`SIM_GUI=0`): camera image black, LiDAR points all at the sensor | `ogre2` headless rendering fails on the VM: `SIM_RENDER_ENGINE=ogre` |
 | RViz shows no robot or cloud | `./gazebo/test_sim.sh` shows which topic is missing. The sim and the session must use the same `GO2_HOST_IP` |
 | `D1 download checksum mismatch` | Unitree changed the file. Inspect it, then update `D1_SHA256` in `setup_gazebo.sh` |
 

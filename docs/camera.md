@@ -24,6 +24,13 @@ ros2 topic hz /camera/image_raw
 # expect ~10–30 Hz
 ```
 
+## Calibration and LiDAR overlay
+
+To use the camera together with the LiDAR, calibrate it once
+(`./scripts/tools/calibrate_camera.sh`) so the relay publishes
+`/camera/camera_info`, then check the alignment with
+`./scripts/tools/lidar_overlay.sh`. See [camera_lidar_fusion.md](camera_lidar_fusion.md).
+
 ## See also
 
 - [Troubleshooting → Camera](troubleshooting.md#camera) — empty Image display, QoS mismatch, stutter

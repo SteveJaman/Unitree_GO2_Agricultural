@@ -15,6 +15,7 @@
 #   SIM_ARM=1            run the D1 emulator on SIM_ARM_IFACE (default simarm0)
 #   SIM_SPAWN="x y yaw"  robot start pose (default "-4.5 0 0")
 #   SIM_D1_MOUNT         D1 pose on the trunk, see build_model.py --mount
+#   SIM_SENSOR_YAML      lidar mount file (sensor_from_base), see build_model.py --sensor-yaml
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
