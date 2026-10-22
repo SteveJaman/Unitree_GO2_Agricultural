@@ -1,0 +1,23 @@
+# Questions the VLM is asked each cycle. Keep them short yes/no questions:
+# small local models (moondream) follow those reliably, not JSON.
+#
+#   behavior: keepout  -> asked per ground strip; "yes" marks that strip's
+#                         ground footprint with `cost` (1..100, 100 = lethal)
+#             slow     -> asked once on the full image; "yes" sets a Nav2
+#                         speed limit of `speed_percent` of max speed
+#   mock:              -> colour rule used only by backend:=mock (tests).
+#                         HSV in OpenCV units (H 0..180). Tuned for the CMU
+#                         Unity living room: the brown rug stands in for mud.
+queries:
+  - name: hazard
+    behavior: keepout
+    cost: 100
+    question: >-
+      Is the ground in this picture mud, water, a hole, a rug, or growing
+      crops or plants? Answer yes or no.
+    mock: {hsv_lo: [5, 90, 60], hsv_hi: [22, 255, 235], min_fraction: 0.15}
+
+  - name: person
+    behavior: slow
+    speed_percent: 40
+    question: Is there a person or an animal in this picture? Answer yes or no.

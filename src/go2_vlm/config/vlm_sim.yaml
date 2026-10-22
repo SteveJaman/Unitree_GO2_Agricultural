@@ -1,0 +1,18 @@
+# CMU Unity sim camera (1280x720 pinhole, frame "camera", mounted at the lidar:
+# 0.066 m above base_link, no pitch; floor 0.30 m below base_link).
+vlm_semantic_costmap:
+  ros__parameters:
+    image_topic: /camera/image/compressed
+    compressed: true
+    map_frame: lidar3d_map
+    robot_frame: base_link
+    cam_hfov_deg: 90.0
+    cam_x: 0.0
+    cam_z: 0.066
+    cam_pitch_down_deg: 0.0
+    base_height: 0.30
+    max_range: 4.0
+    n_strips: 3
+    ground_top_frac: 0.58
+    period_s: 3.0
+    mark_ttl_s: 180.0
