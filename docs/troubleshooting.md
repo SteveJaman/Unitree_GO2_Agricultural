@@ -7,7 +7,7 @@ Sections are self-contained. Search for the error message you see.
 
 **Jump to:** [Session / Infrastructure](#session--infrastructure) ·
 [Motion](#motion) · [Explorer](#explorer) · [D1-T Arm](#d1-t-arm) ·
-[Camera](#camera) · [RViz / VM](#rviz--vm) ·
+[Camera](#camera) · [RViz / VM](#rviz--vm) · [3D twin](#3d-digital-twin) ·
 [Diagnostics cheat sheet](#diagnostics-cheat-sheet)
 
 ---
@@ -554,6 +554,16 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 
 ---
 
+## 3D Digital Twin
+
+`wifi_3d_nav.sh` problems (image missing, no Foxglove topics, empty
+`/rtabmap/cloud_map`, clicks ignored, CPU load, unsaved map): see
+[3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
+`~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
+`click_to_goal.log`) and `docker logs go2-3d`.
+
+---
+
 ## Diagnostics cheat sheet
 
 | Symptom | First command |
@@ -566,6 +576,7 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 | Arm unresponsive | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` |
 | Robot / host IP wrong | `./scripts/runtime/wifi_nav.sh --check` (banner shows both IPs) |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
+| 3D map / Foxglove empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log` |
 | Verify everything | [`./scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) |
 
 ---

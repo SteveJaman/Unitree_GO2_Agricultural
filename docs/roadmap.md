@@ -117,6 +117,14 @@ The pipeline that produces the dense 3D tour.
 | 4.4 | Manual walk in one room, export PLY | ⏳ hardware |
 | 4.5 | Open PLY in Open3D | ✅ [`scripts/tools/export_tour.py`](../scripts/tools/export_tour.py) written |
 | 4.6 | Poisson mesh from point cloud | ✅ `export_tour.py` includes this |
+| 4.7 | RTAB-Map in its own container (`go2-3d`), DB saved on every exit | ✅ [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh), [`twin/`](../twin/) written |
+| 4.8 | Live 3D view in Foxglove (foxglove_bridge / rosbridge) | ✅ written, ⏳ verify on robot |
+| 4.9 | Click a 3D point in Foxglove → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
+| 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
+| 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ⏳ |
+
+**3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
+`wifi_3d_nav.sh` wraps it.
 
 **Compute risk:** RTAB-Map is heavier than Point-LIO. If the VM struggles,
 run RTAB-Map on a separate machine or throttle the LiDAR input rate.
