@@ -12,6 +12,10 @@ decodes it and republishes as standard `sensor_msgs/Image` on
 The relay launches automatically when
 [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) runs (unless `--no-camera`).
 
+In simulation (`wifi_nav.sh --sim`), Gazebo publishes `/camera/image_raw`
+directly as `sensor_msgs/Image`, so the relay isn't started. Use the same RViz
+Image display. See [gazebo/README.md](../gazebo/README.md).
+
 ## Verify the relay is publishing
 
 ```bash

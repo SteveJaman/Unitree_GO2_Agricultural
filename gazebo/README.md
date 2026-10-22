@@ -77,11 +77,14 @@ then **Auto Explore: START** or a **2D Goal Pose**, as on the real robot.
 Arm against the simulator (the arm "network" is `simarm0`, `192.168.123.51`, arm "at" `.100`):
 
 ```bash
-ARM_IFACE=simarm0 ./scripts/runtime/start_arm.sh --read
-ARM_IFACE=simarm0 ARM_ALLOW_DEFAULT_FOLD=1 ./scripts/runtime/start_arm.sh
-docker exec -u root go2-lidar3d env -u CYCLONEDDS_URI \
-    python3 /tmp/d1_arm_control.py --iface simarm0 enable glide 20 -20 20 0 10 0 30 angles
+export ARM_IFACE=simarm0 ARM_HOST_IP=192.168.123.51
+./scripts/runtime/start_arm.sh read
+./scripts/runtime/start_arm.sh fold
+./scripts/runtime/start_arm.sh enable sleep 1 joint 0 20 sleep 3 feedback
 ```
+
+`wifi_nav.sh --sim --arm` sets these variables for you. The arm scripts run on
+the VM, so the VM needs `pip3 install cyclonedds`.
 
 ## Settings
 
@@ -118,7 +121,7 @@ These are deliberate. They're listed so test results aren't over-read:
 | `no lidar frame after 240 s` | Software rendering is slow: `SIM_TIMEOUT=600`, or `SIM_GUI=0`, or `SIM_RENDER_ENGINE=ogre` |
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
 | `enp0s8 already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
-| Arm scripts: `DDS match with arm: NO` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
+| Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
 | RViz shows no robot or cloud | `./gazebo/test_sim.sh` shows which topic is missing. The sim and the session must use the same `GO2_HOST_IP` |
 | `D1 download checksum mismatch` | Unitree changed the file. Inspect it, then update `D1_SHA256` in `setup_gazebo.sh` |
 

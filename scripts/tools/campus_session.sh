@@ -11,6 +11,11 @@ CONTAINER_EXPLORER="/tmp/frontier_explorer.py"
 CONTAINER_LOG="/tmp/frontier.log"
 MONITOR_SECONDS=30
 
+# shellcheck source=../runtime/go2_net.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../runtime/go2_net.sh"
+EXPECTED_IP="${GO2_HOST_IP:-}"
+go2_detect_host_ip 2>/dev/null && EXPECTED_IP="${GO2_HOST_IP}"
+
 c_ok()   { printf "  \033[32mPASS\033[0m  %s\n" "$1"; }
 c_fail() { printf "  \033[31mFAIL\033[0m  %s\n" "$1"; }
 c_warn() { printf "  \033[33mWARN\033[0m  %s\n" "$1"; }
@@ -42,9 +47,9 @@ docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" \
     || { c_fail "container not running"; exit 1; }
 
 HOST_IP=$(docker exec "$CONTAINER" printenv GO2_HOST_IP 2>/dev/null || echo "?")
-[ "$HOST_IP" = "192.168.1.4" ] \
+[ -n "$EXPECTED_IP" ] && [ "$HOST_IP" = "$EXPECTED_IP" ] \
     && c_ok "GO2_HOST_IP = $HOST_IP" \
-    || c_warn "GO2_HOST_IP = $HOST_IP"
+    || c_warn "GO2_HOST_IP = $HOST_IP (${GO2_IFACE} is ${EXPECTED_IP:-unknown})"
 
 echo
 echo "--- 2. Costmap discovery ---"

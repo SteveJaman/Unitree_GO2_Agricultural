@@ -5,7 +5,7 @@
 #   ARM_IFACE=enp0s8        interface the arm is plugged into (auto-detected if unset)
 #   ARM_SUBNET=192.168.123  arm subnet (D1 factory default IP is .100)
 #   ARM_IP=192.168.123.100
-#   ARM_PEER=...            unicast discovery peer for the DDS test
+#   ARM_PEER=...            unicast discovery peer (not recommended: this firmware needs multicast)
 #   CONTAINER_NAME=go2-lidar3d
 set -uo pipefail
 
@@ -169,11 +169,13 @@ DDS_OUT="$(docker exec -u root "$CONTAINER" \
     --iface "$IFACE" "${PEER_ARGS[@]}" --verbose feedback status 2>&1 || true)"
 echo "$DDS_OUT" | sed 's/^/  /'
 
-if echo "$DDS_OUT" | grep -q "DDS match with arm: NO"; then
-    fail "arm not discovered over DDS (try ARM_PEER=$ARM_IP $0)"
-elif echo "$DDS_OUT" | grep -q "joint feedback: {"; then
+if echo "$DDS_OUT" | grep -q "Preflight failed"; then
+    fail "control script preflight failed; see output above"
+elif echo "$DDS_OUT" | grep -q "DDS discovery failed"; then
+    fail "arm not discovered over DDS (multicast; check cable, power, cyclonedds)"
+elif echo "$DDS_OUT" | grep -q "angles: {"; then
     pass "arm replied with joint feedback"
-elif echo "$DDS_OUT" | grep -q "DDS match with arm: YES"; then
+elif echo "$DDS_OUT" | grep -q "DDS match OK"; then
     warn "matched, but no joint feedback in 5s. Is the arm powered and fully booted?"
 else
     fail "DDS test crashed; see output above"

@@ -2,33 +2,28 @@
 """
 d1_arm_control.py
 
-Control the Unitree D1 arm over DDS (CycloneDDS), following the official
-"D1 Mechanical Arm Services Interface" protocol.
+Control the Unitree D1 arm over DDS (CycloneDDS).
 
-Topics (type unitree_arm::msg::dds_::ArmString_, one JSON string):
-  rt/arm_Command   host -> arm   (address 1)
-  rt/arm_Feedback  arm  -> host  (address 2 = telemetry @10Hz, address 3 = acks)
+Verified config (proven with move_test.py):
+    iface    = enp0s8
+    domain   = 0
+    discovery = MULTICAST  (do NOT pass --peer on this firmware)
 
-ALL ANGLES ARE IN DEGREES. Joints 0-5 are the arm, joint 6 is the gripper
-(the gripper command is a servo angle in degrees, not millimetres or metres).
+Topics:
+    rt/arm_Command   (write)  — JSON in ArmString_.data
+    rt/arm_Feedback  (read)   — JSON in ArmString_.data
 
-Enable uses mode 80000 (fully locked) by default. The official doc table says
-"1 = enable" but also "0..80000, 80000 = fully locked", and the working D1-550
-ros2_control driver (SofiaAbal/tfg_go2_arm) sends 80000, so that is the default.
+All angles are in DEGREES. Joints 0–5 are the arm, joint 6 is the gripper.
+Enable uses mode 80000 (fully locked) by default.
 
-Usage:
-    python3 d1_arm_control.py --iface enp0s8 enable sleep 2 home sleep 6
-    python3 d1_arm_control.py --iface enp0s8 joint 0 20
-    python3 d1_arm_control.py --iface enp0s8 joints 0 -30 30 0 20 0 0
-    python3 d1_arm_control.py --iface enp0s8 feedback
-    python3 d1_arm_control.py --iface enp0s8 status
-    python3 d1_arm_control.py --iface enp0s8 release
-
-Tips:
-  * Chain commands in ONE invocation: every new process has to rediscover the
-    arm over DDS, and exiting right after a write can drop the message.
-  * If multicast discovery fails (VMs, bridges), add  --peer 192.168.123.100
+Usage (chain-style):
+    python3 d1_arm_control.py state
+    python3 d1_arm_control.py enable sleep 2 joint 0 20 sleep 3
+    python3 d1_arm_control.py home sleep 6 release
+    python3 d1_arm_control.py lift --deg 45
+    python3 d1_arm_control.py sweep --pct 90
 """
+
 import argparse
 import json
 import os
@@ -37,7 +32,6 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
 
 try:
     from cyclonedds.domain import DomainParticipant
@@ -46,304 +40,446 @@ try:
     from cyclonedds.topic import Topic
     from cyclonedds.idl import IdlStruct
 except ImportError:
-    sys.exit("cyclonedds Python bindings not installed. Run: pip3 install cyclonedds")
+    sys.exit("cyclonedds not installed. Run: pip3 install cyclonedds")
 
-
-# ---------------------------------------------------------------------------
-# DDS type (matches unitree_arm/msg/ArmString.idl)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
     data: str = ""
 
 
-# Protocol constants (from the official doc)
-ADDR_CMD = 1          # command address
-ADDR_TELEMETRY = 2    # arm -> host telemetry
-ADDR_ACK = 3          # arm -> host acknowledgements
+ADDR_CMD, ADDR_TELEM, ADDR_ACK = 1, 2, 3
+FUNC_JOINT, FUNC_JOINTS, FUNC_ENABLE_ALL, FUNC_POWER, FUNC_ZERO = 1, 2, 5, 6, 7
+ENABLE_FULL = 80000
 
-FUNC_JOINT = 1
-FUNC_JOINTS = 2
-FUNC_JOINT_ENABLE = 4
-FUNC_ENABLE_ALL = 5
-FUNC_POWER = 6
-FUNC_ZERO = 7
+JOINT_LIMITS = {0: 135.0, 1: 90.0, 2: 90.0, 3: 135.0, 4: 90.0, 5: 135.0}
+JOINT_NAMES = {
+    0: "base",
+    1: "shoulder",
+    2: "elbow",
+    3: "wrist_roll",
+    4: "wrist_pitch",
+    5: "wrist_yaw",
+}
 
-ENABLE_FULL = 80000   # "fully locked" per the official doc; used by working drivers
-
-# Joint limits in degrees (from the spec sheet). Joint 6 = gripper (not limited here).
-JOINT_LIMITS_DEG = {0: 135.0, 1: 90.0, 2: 90.0, 3: 135.0, 4: 90.0, 5: 135.0}
+T_MOVE, T_HOME, T_ENABLE, T_RELEASE = 3.0, 6.0, 1.5, 0.5
+DEG_WAIT = 0.04
 
 
-# ---------------------------------------------------------------------------
-# CycloneDDS config
-# ---------------------------------------------------------------------------
-
-def build_cyclonedds_uri(iface: str, peer: Optional[str] = None) -> str:
-    """Bind CycloneDDS to one interface; optionally use unicast peer discovery."""
-    general = f'<NetworkInterface name="{iface}" multicast="default"/>'
-    allow_mc = "<AllowMulticast>false</AllowMulticast>" if peer else ""
-    discovery = (
-        f'<Discovery><Peers><Peer address="{peer}"/></Peers></Discovery>' if peer else ""
-    )
+def build_uri(iface, peer=None):
+    iface_xml = f'<NetworkInterface name="{iface}" multicast="default"/>'
+    if peer:
+        mc = "<AllowMulticast>false</AllowMulticast>"
+        disc = f'<Discovery><Peers><Peer address="{peer}"/></Peers></Discovery>'
+    else:
+        mc, disc = "", ""
     return (
         '<CycloneDDS xmlns="https://cdds.io/config">'
-        "<Domain id=\"any\">"
-        f"<General><Interfaces>{general}</Interfaces>{allow_mc}</General>"
-        f"{discovery}"
-        "</Domain></CycloneDDS>"
+        f'<Domain id="any"><General><Interfaces>{iface_xml}'
+        f"</Interfaces>{mc}</General>{disc}</Domain></CycloneDDS>"
     )
 
 
-def diagnose_interface(iface: str, verbose: bool) -> bool:
-    """Check the interface exists and has an IPv4 address (ip -brief has no 'inet')."""
+def preflight(iface, arm_ip, want_ping=True):
+    print("[preflight] Network diagnostics:")
     try:
         res = subprocess.run(
             ["ip", "-4", "-o", "addr", "show", "dev", iface],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
-    except Exception as e:  # `ip` missing in container, etc.
-        if verbose:
-            print(f"[d1] interface check skipped: {e}")
+    except FileNotFoundError:
+        print("    [!] `ip` not found")
         return True
-
-    addrs = re.findall(r"inet (\d+\.\d+\.\d+\.\d+/\d+)", res.stdout)
     if res.returncode != 0:
-        print(f"[d1] WARNING: interface '{iface}' not found", file=sys.stderr)
+        print(f"    [!] interface {iface} does not exist")
         return False
+    addrs = re.findall(r"inet (\d+\.\d+\.\d+\.\d+/\d+)", res.stdout)
     if not addrs:
-        print(f"[d1] WARNING: {iface} has no IPv4 address; DDS will fail", file=sys.stderr)
+        print(f"    [!] {iface} has no IPv4 address")
         return False
-    if verbose:
-        print(f"[d1] interface {iface}: {', '.join(addrs)}")
+    print(f"    [ok] {iface} = {', '.join(addrs)}")
+
+    res = subprocess.run(["ip", "route", "get", arm_ip], capture_output=True, text=True)
+    if iface not in res.stdout:
+        print(f"    [!] route to {arm_ip} does NOT go via {iface}")
+        return False
+    print(f"    [ok] route to {arm_ip} via {iface}")
+
+    if want_ping:
+        res = subprocess.run(
+            ["ping", "-c", "2", "-W", "2", arm_ip], capture_output=True, text=True
+        )
+        if res.returncode != 0:
+            print(f"    [!] {arm_ip} does NOT reply to ping")
+            return False
+        print(f"    [ok] {arm_ip} replies to ping")
     return True
 
 
-# ---------------------------------------------------------------------------
-# Arm controller
-# ---------------------------------------------------------------------------
-
 class D1Arm:
-    def __init__(self, iface: str, domain_id: int = 0, peer: Optional[str] = None,
-                 verbose: bool = False, match_timeout: float = 6.0):
+    def __init__(
+        self,
+        iface="enp0s8",
+        domain=0,
+        peer=None,
+        verbose=False,
+        match_timeout=20.0,
+        retries=3,
+    ):
         self.verbose = verbose
-        uri = build_cyclonedds_uri(iface, peer)
-        os.environ["CYCLONEDDS_URI"] = uri
+        self.seq = 0
+        os.environ["CYCLONEDDS_URI"] = build_uri(iface, peer)
         if verbose:
-            print(f"[d1] CYCLONEDDS_URI = {uri}")
-            print(f"[d1] DDS domain id  = {domain_id}")
+            print(f"      CYCLONEDDS_URI = {os.environ['CYCLONEDDS_URI']}")
+        self.ok = False
+        for attempt in range(1, retries + 1):
+            if verbose:
+                print(
+                    f"      discovery attempt {attempt}/{retries} "
+                    f"(timeout {match_timeout:.0f}s)..."
+                )
+            if self._init(domain, match_timeout):
+                self.ok = True
+                return
+        self.p = self.cmd_w = self.fb_r = None
 
-        self.participant = DomainParticipant(domain_id)
-        self.cmd_topic = Topic(self.participant, "rt/arm_Command", ArmString_)
-        self.cmd_writer = DataWriter(self.participant, self.cmd_topic)
-        self.fb_topic = Topic(self.participant, "rt/arm_Feedback", ArmString_)
-        self.fb_reader = DataReader(self.participant, self.fb_topic)
-
-        self._seq = 0
-        self.missing_acks = 0
-        self.connected = self._wait_for_arm(match_timeout)
-
-    # -- discovery ----------------------------------------------------------
-
-    def _wait_for_arm(self, timeout: float) -> bool:
-        """Block until the arm's endpoints are matched (i.e. DDS discovery worked)."""
+    def _init(self, domain, timeout):
+        try:
+            self.p = DomainParticipant(domain)
+            self.cmd_w = DataWriter(self.p, Topic(self.p, "rt/arm_Command", ArmString_))
+            self.fb_r = DataReader(self.p, Topic(self.p, "rt/arm_Feedback", ArmString_))
+        except Exception as e:
+            if self.verbose:
+                print(f"      participant init failed: {e}")
+            return False
         t0 = time.time()
         while time.time() - t0 < timeout:
             try:
-                w = self.cmd_writer.get_publication_matched_status().current_count
-                r = self.fb_reader.get_subscription_matched_status().current_count
+                w = self.cmd_w.get_publication_matched_status().current_count
+                r = self.fb_r.get_subscription_matched_status().current_count
             except Exception:
-                # Status API unavailable: just give discovery time and carry on.
-                time.sleep(min(timeout, 2.0))
+                time.sleep(1.0)
                 return True
             if w > 0 or r > 0:
-                time.sleep(0.3)  # let the other direction finish matching
+                time.sleep(0.5)
                 return True
-            time.sleep(0.1)
+            time.sleep(0.15)
         return False
 
-    # -- low level ----------------------------------------------------------
-
-    def _next_seq(self) -> int:
-        self._seq += 1
-        return self._seq
-
-    def _send(self, funcode: int, data: Any = None, repeat: int = 2,
-              wait_ack: bool = True) -> bool:
-        payload: Dict[str, Any] = {
-            "seq": self._next_seq(), "address": ADDR_CMD, "funcode": funcode,
-        }
+    def _send(self, funcode, data=None, repeat=3):
+        self.seq += 1
+        payload = {"seq": self.seq, "address": ADDR_CMD, "funcode": funcode}
         if data is not None:
-            payload["data"] = data  # nested JSON object, NOT a string
+            payload["data"] = data
         text = json.dumps(payload, separators=(",", ":"))
         if self.verbose:
-            print(f"[d1] -> {text}")
+            print(f"      -> {text}")
         msg = ArmString_(data=text)
         for _ in range(repeat):
-            self.cmd_writer.write(msg)
+            self.cmd_w.write(msg)
             time.sleep(0.1)
-        if not wait_ack:
-            return True
-        return self._wait_ack()
 
-    @staticmethod
-    def _parse(sample) -> Optional[dict]:
-        if sample is None or not getattr(sample, "data", ""):
-            return None
-        try:
-            obj = json.loads(sample.data)
-            return obj if isinstance(obj, dict) else None
-        except json.JSONDecodeError:
-            return None
-
-    def _wait_ack(self, timeout: float = 2.0) -> bool:
-        """Wait for the 'command received' ack (address 3, funcode 1)."""
+    def _latest(self, address, funcode, timeout=2.0):
+        found = None
         t0 = time.time()
         while time.time() - t0 < timeout:
-            for s in self.fb_reader.take(N=20):
-                m = self._parse(s)
-                if not m or m.get("address") != ADDR_ACK:
+            for s in self.fb_r.take(N=20):
+                try:
+                    m = json.loads(s.data)
+                except Exception:
                     continue
-                data = m.get("data") or {}
-                if m.get("funcode") == 1:
-                    ok = data.get("recv_status") == 1
-                    print(f"[d1]   ack: received={'OK' if ok else 'REJECTED (bad format)'}")
-                    if not ok:
-                        self.missing_acks += 1
-                    return ok
+                if m.get("address") == address and m.get("funcode") == funcode:
+                    found = m
+            if found:
+                break
             time.sleep(0.05)
-        print("[d1]   ack: none (arm did not confirm receipt)")
-        self.missing_acks += 1
-        return False
+        return found
 
-    # -- commands (degrees!) ------------------------------------------------
+    def state(self, timeout=2.0):
+        return self._latest(ADDR_TELEM, 3, timeout)
 
-    def enable(self, mode: int = ENABLE_FULL):
-        return self._send(FUNC_ENABLE_ALL, {"mode": mode})
+    def angles(self, timeout=2.0):
+        return self._latest(ADDR_TELEM, 1, timeout)
+
+    def ack(self):
+        return self._latest(ADDR_ACK, 1)
+
+    def enable(self, mode=ENABLE_FULL):
+        self._send(FUNC_ENABLE_ALL, {"mode": mode})
 
     def release(self):
-        return self._send(FUNC_ENABLE_ALL, {"mode": 0})
+        self._send(FUNC_ENABLE_ALL, {"mode": 0})
 
     def home(self):
-        return self._send(FUNC_ZERO)  # no "data" key per spec
+        self._send(FUNC_ZERO)
 
-    def power(self, on: bool):
-        return self._send(FUNC_POWER, {"power": 1 if on else 0})
+    def power(self, on):
+        self._send(FUNC_POWER, {"power": 1 if on else 0})
 
-    def joint(self, joint_id: int, angle_deg: float):
-        if not 0 <= joint_id <= 6:
-            raise ValueError(f"joint id must be 0-6, got {joint_id}")
-        lim = JOINT_LIMITS_DEG.get(joint_id)
-        if lim is not None and abs(angle_deg) > lim:
-            raise ValueError(f"joint {joint_id} limit is +/-{lim:.0f} deg, got {angle_deg}")
-        return self._send(FUNC_JOINT, {"id": joint_id, "angle": angle_deg, "delay_ms": 0})
-
-    def joints(self, angles_deg, mode: int = 1):
-        if len(angles_deg) != 7:
-            raise ValueError(f"need 7 values (6 joints + gripper), got {len(angles_deg)}")
-        for i, a in enumerate(angles_deg):
-            lim = JOINT_LIMITS_DEG.get(i)
-            if lim is not None and abs(a) > lim:
-                raise ValueError(f"joint {i} limit is +/-{lim:.0f} deg, got {a}")
-        data: Dict[str, Any] = {"mode": mode}
-        data.update({f"angle{i}": a for i, a in enumerate(angles_deg)})
-        return self._send(FUNC_JOINTS, data)
-
-    # -- feedback -----------------------------------------------------------
-
-    def read(self, address: int, funcode: int, timeout: float = 5.0) -> Optional[dict]:
-        """Return the first feedback message matching (address, funcode)."""
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            for s in self.fb_reader.take(N=20):
-                m = self._parse(s)
-                if m and m.get("address") == address and m.get("funcode") == funcode:
-                    return m
-            time.sleep(0.05)
-        return None
+    def joint(self, jid, angle):
+        if jid not in JOINT_LIMITS:
+            raise ValueError(f"joint {jid} has no known limit (valid 0..5)")
+        lim = JOINT_LIMITS[jid]
+        if abs(angle) > lim:
+            raise ValueError(f"joint {jid} limit ±{lim}°, got {angle}°")
+        self._send(FUNC_JOINT, {"id": jid, "angle": angle, "delay_ms": 0})
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def print_state(arm, label):
+    st = arm.state()
+    if st:
+        d = st.get("data", {})
+        print(
+            f"    [{label}] enable={d.get('enable_status')}  "
+            f"power={d.get('power_status')}  error={d.get('error_status')}"
+        )
+        return d
+    print(f"    [{label}] (no state)")
+    return {}
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--iface", default=os.environ.get("ARM_IFACE", "enp0s8"),
-                    help="wired interface the arm is on (default $ARM_IFACE or enp0s8)")
-    ap.add_argument("--domain", type=int, default=0, help="DDS domain id")
-    ap.add_argument("--peer", default=os.environ.get("ARM_PEER"),
-                    help="unicast peer IP (disables multicast), e.g. 192.168.123.100")
-    ap.add_argument("--enable-mode", type=int, default=ENABLE_FULL,
-                    help="enable value: 0 = release, 80000 = fully locked (default), "
-                         "1 = enable per doc table")
+
+def _do_sweep(arm, joints, pct, continue_on_error, yes):
+    print(f"[sweep] joints={joints}  pct={pct}%")
+    if not yes:
+        try:
+            if input("Continue sweep? [y/N] ").strip().lower() != "y":
+                print("aborted")
+                return 0
+        except EOFError:
+            print("aborted")
+            return 0
+    enabled_by_us = False
+    errors = []
+    try:
+        arm.enable(80000)
+        time.sleep(T_ENABLE)
+        st = print_state(arm, "after-enable")
+        if st.get("enable_status") != 1:
+            print("[!] enable failed")
+            return 3
+        enabled_by_us = True
+        for i, jid in enumerate(joints, 1):
+            lim = JOINT_LIMITS[jid]
+            tgt = round(lim * pct / 100.0, 1)
+            print(f"\n[{i}/{len(joints)}] joint {jid} ({JOINT_NAMES[jid]}) ±{tgt:.0f}°")
+            try:
+                arm.home()
+                time.sleep(T_HOME)
+                arm.joint(jid, +tgt)
+                time.sleep(T_MOVE + tgt * DEG_WAIT)
+                print_state(arm, f"j{jid}=+{tgt:.0f}")
+                arm.joint(jid, -tgt)
+                time.sleep(T_MOVE + tgt * DEG_WAIT)
+                print_state(arm, f"j{jid}=-{tgt:.0f}")
+                arm.joint(jid, 0.0)
+                time.sleep(T_MOVE)
+                print_state(arm, "zero")
+            except Exception as e:
+                print(f"[!] joint {jid}: {e}")
+                errors.append((jid, str(e)))
+                if not continue_on_error:
+                    raise
+    except KeyboardInterrupt:
+        print("\n[!] interrupted")
+    finally:
+        if enabled_by_us:
+            try:
+                arm.home()
+                time.sleep(T_HOME)
+            except Exception:
+                pass
+            try:
+                arm.release()
+                time.sleep(T_RELEASE)
+            except Exception:
+                pass
+            print_state(arm, "final")
+    if errors:
+        for jid, msg in errors:
+            print(f"  joint {jid}: {msg}")
+        return 1
+    return 0
+
+
+def _do_lift(arm, deg, yes):
+    print(f"[lift] shoulder (joint 1) -> {deg:+.1f}°")
+    if not yes:
+        try:
+            if input("Continue lift? [y/N] ").strip().lower() != "y":
+                print("aborted")
+                return 0
+        except EOFError:
+            print("aborted")
+            return 0
+    enabled_by_us = False
+    try:
+        arm.enable(80000)
+        time.sleep(T_ENABLE)
+        if print_state(arm, "after-enable").get("enable_status") != 1:
+            print("[!] enable failed")
+            return 3
+        enabled_by_us = True
+        arm.home()
+        time.sleep(T_HOME)
+        print_state(arm, "after-home")
+        arm.joint(1, deg)
+        time.sleep(T_MOVE + abs(deg) * DEG_WAIT)
+        print_state(arm, "after-lift")
+    finally:
+        if enabled_by_us:
+            try:
+                arm.home()
+                time.sleep(T_HOME)
+            except Exception:
+                pass
+            try:
+                arm.release()
+                time.sleep(T_RELEASE)
+            except Exception:
+                pass
+            print_state(arm, "final")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--iface", default=os.environ.get("ARM_IFACE", "enp0s8"))
+    ap.add_argument(
+        "--domain", type=int, default=int(os.environ.get("ARM_DOMAIN", "0"))
+    )
+    ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.100"))
+    ap.add_argument(
+        "--peer",
+        default=None,
+        help="unicast peer — DO NOT USE on this firmware; multicast works",
+    )
+    ap.add_argument("--enable-mode", type=int, default=ENABLE_FULL)
+    ap.add_argument("--match-timeout", type=float, default=20.0)
+    ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--verbose", "-v", action="store_true")
-    ap.add_argument("commands", nargs="+",
-                    help="enable | release | home | power <0|1> | joint <id> <deg> | "
-                         "joints <a0..a6> | feedback | status | motors | sleep <s>")
+    ap.add_argument("--yes", "-y", action="store_true")
+    ap.add_argument("--skip-preflight", action="store_true")
+    ap.add_argument("--deg", type=float, default=45.0, help="for 'lift' verb")
+    ap.add_argument("--pct", type=float, default=90.0, help="for 'sweep' verb")
+    ap.add_argument(
+        "--joints",
+        default="all",
+        help="for 'sweep': 'all' or comma-separated joint ids",
+    )
+    ap.add_argument("--continue-on-error", action="store_true")
+    ap.add_argument(
+        "commands",
+        nargs="*",
+        help="chain commands: state|enable|release|home|power 0|1|"
+        "joint J A|joints A0..A6|sleep S|feedback|status|motors|"
+        "lift|sweep",
+    )
+
     args = ap.parse_args()
 
-    diagnose_interface(args.iface, args.verbose)
-
-    try:
-        arm = D1Arm(args.iface, args.domain, args.peer, args.verbose)
-    except Exception as e:
-        print(f"[d1] ERROR: failed to initialize DDS: {e}", file=sys.stderr)
-        return 1
-
-    if arm.connected:
-        print("[d1] DDS match with arm: YES")
-    else:
-        print("[d1] DDS match with arm: NO")
-        print("[d1] The arm was not discovered. Check: cable/interface, host IP on the arm's "
-              "subnet (arm default 192.168.123.100), arm power (~1 min boot), "
-              "or try --peer <arm ip>.", file=sys.stderr)
+    if not args.skip_preflight and not preflight(args.iface, args.ip):
+        print("\n[!] Preflight failed")
         return 2
 
+    arm = D1Arm(
+        args.iface,
+        args.domain,
+        args.peer,
+        verbose=args.verbose,
+        match_timeout=args.match_timeout,
+        retries=args.retries,
+    )
+    if not arm.ok:
+        print("[!] DDS discovery failed")
+        return 2
+    print("[*] DDS match OK")
+
+    if not args.commands:
+        # Default: just print state
+        print_state(arm, "state")
+        return 0
+
+    # Dispatch sweep / lift directly (they're long-running)
+    if args.commands[0] == "sweep":
+        if args.joints.lower() == "all":
+            joints = sorted(JOINT_LIMITS.keys())
+        else:
+            joints = [int(x) for x in args.joints.split(",")]
+        return _do_sweep(arm, joints, args.pct, args.continue_on_error, args.yes)
+    if args.commands[0] == "lift":
+        return _do_lift(arm, args.deg, args.yes)
+
+    # Chain-style
     cmds = args.commands
     i = 0
     try:
         while i < len(cmds):
             c = cmds[i]
-            if c == "enable":
-                print("[d1] enable"); arm.enable(args.enable_mode); i += 1
-            elif c == "release":
-                print("[d1] release (arm goes limp!)"); arm.release(); i += 1
+            if c == "state":
+                print_state(arm, "state")
+                i += 1
+            elif c == "enable":
+                print("[d1] enable")
+                arm.enable(args.enable_mode)
+                i += 1
+            elif c in ("release", "disable"):
+                print("[d1] release")
+                arm.release()
+                i += 1
             elif c in ("home", "zero"):
-                print("[d1] home"); arm.home(); i += 1
+                print("[d1] home")
+                arm.home()
+                i += 1
             elif c == "power":
                 on = int(cmds[i + 1]) != 0
-                print(f"[d1] power {'on' if on else 'off'}"); arm.power(on); i += 2
+                print(f"[d1] power {'on' if on else 'off'}")
+                arm.power(on)
+                i += 2
             elif c == "joint":
                 jid, ang = int(cmds[i + 1]), float(cmds[i + 2])
-                print(f"[d1] joint {jid} -> {ang:.2f} deg"); arm.joint(jid, ang); i += 3
+                print(f"[d1] joint {jid} -> {ang:+.2f}°")
+                arm.joint(jid, ang)
+                i += 3
             elif c == "joints":
-                vals = cmds[i + 1:i + 8]
+                vals = [float(x) for x in cmds[i + 1 : i + 8]]
                 if len(vals) != 7:
-                    raise ValueError("joints needs exactly 7 values (6 joints + gripper)")
-                angles = [float(x) for x in vals]
-                print(f"[d1] joints (deg) -> {angles}"); arm.joints(angles); i += 8
+                    raise ValueError("joints needs 7 values (6 joints + gripper)")
+                # send one at a time to enforce limits
+                for jid in range(6):
+                    if vals[jid] != 0:
+                        arm.joint(jid, vals[jid])
+                        time.sleep(0.5)
+                i += 8
             elif c == "feedback":
-                fb = arm.read(ADDR_TELEMETRY, 1)
-                print(f"[d1] joint feedback: {json.dumps(fb) if fb else 'None'}"); i += 1
+                a = arm.angles()
+                print(f"[d1] angles: {json.dumps(a) if a else 'None'}")
+                i += 1
             elif c == "status":
-                st = arm.read(ADDR_TELEMETRY, 3)
-                print(f"[d1] arm status: {json.dumps(st) if st else 'None'}"); i += 1
+                s = arm.state()
+                print(f"[d1] state: {json.dumps(s) if s else 'None'}")
+                i += 1
             elif c == "motors":
-                st = arm.read(ADDR_TELEMETRY, 4)
-                print(f"[d1] motor status: {json.dumps(st) if st else 'None'}"); i += 1
+                m = arm._latest(ADDR_TELEM, 4, timeout=2.0)
+                print(f"[d1] motors: {json.dumps(m) if m else 'None'}")
+                i += 1
             elif c == "sleep":
-                s = float(cmds[i + 1]); print(f"[d1] sleep {s}s"); time.sleep(s); i += 2
+                s = float(cmds[i + 1])
+                print(f"[d1] sleep {s}s")
+                time.sleep(s)
+                i += 2
             else:
-                print(f"[d1] unknown command: {c}", file=sys.stderr); return 1
+                print(f"[d1] unknown command: {c}", file=sys.stderr)
+                return 1
     except (IndexError, ValueError) as e:
-        print(f"[d1] ERROR in command {cmds[i]!r}: {e}", file=sys.stderr)
+        print(f"[d1] error in command {cmds[i]!r}: {e}", file=sys.stderr)
         return 1
 
-    time.sleep(0.5)  # let the last writes flush before the participant is torn down
-    return 3 if arm.missing_acks else 0
+    time.sleep(0.3)
+    return 0
 
 
 if __name__ == "__main__":

@@ -24,16 +24,22 @@
 #   ./scripts/wifi_mapping.sh --diag             # laptop-side compute
 #   ./scripts/wifi_mapping.sh --jetson-setup     # one-time robot-side setup
 #   ./scripts/wifi_mapping.sh --check            # verify prerequisites only
+#   ./scripts/wifi_mapping.sh --host-ip <IP>     # override host IP detection
+#   ./scripts/wifi_mapping.sh --robot-ip <IP>    # override robot discovery
+#   ./scripts/wifi_mapping.sh --iface <IFACE>    # Wi-Fi interface (default enp0s3)
+#
+# Host and robot IPs are resolved at runtime (DHCP) by go2_net.sh.
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-WS_ROOT="$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
+WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
+
+# shellcheck source=go2_net.sh
+source "${SCRIPT_DIR}/go2_net.sh"
 
 # --- Configuration ---------------------------------------------------------
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
-GO2_HOST_IP="${GO2_HOST_IP:-192.168.1.4}"
-GO2_ROBOT_IP="${GO2_ROBOT_IP:-192.168.1.9}"
 GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
 
 # --- Parse args ------------------------------------------------------------
@@ -41,6 +47,10 @@ ACTION="map"          # map | jetson-setup | check
 LAUNCH_ARGS="--3d"
 export GO2_RECORD="${GO2_RECORD:-0}"
 export GO2_RVIZ="${GO2_RVIZ:-1}"
+HOST_IP_FLAG=""
+ROBOT_IP_FLAG=""
+
+need_arg() { [ -n "${2:-}" ] || { echo "ERROR: $1 needs a value" >&2; exit 1; }; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -49,11 +59,18 @@ while [ $# -gt 0 ]; do
         --diag)         LAUNCH_ARGS="--3d --laptop" ;;
         --jetson-setup) ACTION="jetson-setup" ;;
         --check)        ACTION="check" ;;
-        -h|--help)      sed -n '2,35p' "$0"; exit 0 ;;
+        --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
+        --robot-ip)     need_arg "$1" "${2:-}"; ROBOT_IP_FLAG="$2"; shift ;;
+        --iface)        need_arg "$1" "${2:-}"; GO2_IFACE="$2"; shift ;;
+        -h|--help)      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)              echo "Unknown option: $1" >&2; exit 1 ;;
     esac
     shift
 done
+
+# --- Network (DHCP) ---------------------------------------------------------
+echo "[net] Resolving network on ${GO2_IFACE} (arm interface ${ARM_IFACE} is ignored)..."
+go2_resolve_network "${HOST_IP_FLAG}" "${ROBOT_IP_FLAG}" true || { echo "ERROR: network resolution failed." >&2; exit 1; }
 
 # --- Banner ----------------------------------------------------------------
 echo "================================================================"
@@ -63,8 +80,9 @@ echo "  Action      : ${ACTION}"
 echo "  Launch args : ${LAUNCH_ARGS}"
 echo "  GO2_RECORD  : ${GO2_RECORD}"
 echo "  GO2_RVIZ    : ${GO2_RVIZ}"
-echo "  Host IP     : ${GO2_HOST_IP}"
-echo "  Robot IP    : ${GO2_ROBOT_IP}"
+echo "  Interface   : ${GO2_IFACE}  (arm ${ARM_IFACE}: ignored)"
+echo "  Host IP     : ${GO2_HOST_IP}  [${GO2_HOST_IP_SRC}]"
+echo "  Robot IP    : ${GO2_ROBOT_IP}  [${GO2_ROBOT_IP_SRC}]"
 echo "  Repo        : ${NAV2_WIFI_DIR}"
 echo
 
