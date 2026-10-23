@@ -36,7 +36,7 @@ has been verified on the robot yet except where noted.
 
 ### Repository structure
 
-```
+```text
 scripts/
 ├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
 │                go2_net.sh (sourced: IP detection / robot discovery)
@@ -54,8 +54,8 @@ Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scrip
 
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
-- [README](../README.md) rewritten for the current stack
-- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`3d_nav.md`](3d_nav.md), [`LAB-NAV-FIXES.md`](LAB-NAV-FIXES.md), [`troubleshooting.md`](troubleshooting.md)
+- Docs: [`setup.md`](setup.md), [`architecture.md`](architecture.md), [`3d_nav.md`](3d_nav.md), [`explorer.md`](explorer.md), [`scripts.md`](scripts.md), [`d1arm.md`](d1arm.md), [`camera.md`](camera.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md), [`LAB-NAV-FIXES.md`](LAB-NAV-FIXES.md), [`development.md`](development.md), [`roadmap.md`](roadmap.md)
+- README cut to a short landing page (2026-10-23); details moved into the docs above
 
 ### Navigation — verified working
 
@@ -156,6 +156,7 @@ the `go2-3d:local` image build, RTAB-Map on live data, the dashboard on the
 robot, click-to-go, `--export`.
 
 **Camera fusion + YOLO11s (2026-10-23).**
+
 - **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
   LiDAR-only), `go2-3d` adds:
   - the `base_link → camera_link` optical TF (Go2 URDF mount);
@@ -179,6 +180,7 @@ robot, click-to-go, `--export`.
 
 **AI nodes, `--resume`, named locations (2026-10-23).** `wifi_3d_nav.sh --ai`
 starts three nodes:
+
 - [`battery_manager.py`](../scripts/nodes/battery_manager.py), in
   `go2-lidar3d`: below 15 % it pauses the explorer and sends the dock goal;
   START is blocked until 20 %.
@@ -192,10 +194,12 @@ starts three nodes:
 - YOLO.
 
 The other two features:
+
 - `--resume` reopens the newest RTAB-Map database, after taking a `.bak` copy.
 - `--save-location` labels clicked points into `config/semantic_locations.json`.
 
 **Web dashboard (2026-10-23).**
+
 - **What it is:** [`twin/webapp`](../twin/webapp/), React + three.js + roslib,
   replacing Foxglove as the main viewer.
 - **Where it runs:** built into `go2-3d`, served on `:3000`, over rosbridge
@@ -216,6 +220,7 @@ The other two features:
   and the robot.
 
 Verified off-robot:
+
 - the `--ai` / `--no-*` flag logic;
 - the battery state machine: 15 % → pause + dock goal 2 s later, re-sent
   every 30 s, DOCKED within 0.5 m, START refused until 20 %;

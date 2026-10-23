@@ -71,6 +71,7 @@ waypoint becomes the active goal.
 ### 3. Add the local path
 
 Same as above but:
+
 - **Topic**: `/local_plan`
 - **Color**: cyan (`0; 255; 255`)
 
@@ -100,11 +101,11 @@ See [camera.md](camera.md) for the full camera setup.
 
 ### 6. Save the config
 
-**File → Save Config As**
+Use **File → Save Config As**.
 
 Save to:
 
-```
+```text
 ~/files/Unitree_GO2_Agricultural/config/tour.rviz
 ```
 
@@ -215,6 +216,7 @@ will fight your waypoints, and vice versa. If you want to switch:
 3. Then start the other
 
 If you want both available in the same session, the cleanest pattern is:
+
 - Use waypoint mode for a specific route (e.g. a tour capture pass)
 - Use the explorer for open-ended mapping
 

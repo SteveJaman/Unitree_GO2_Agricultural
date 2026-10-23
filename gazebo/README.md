@@ -32,7 +32,7 @@ The laptop side is **the real one**: `wifi_nav.sh --sim` launches the same
 `go2-session.sh start lidar3d-viz` (Nav2 + RViz) that `mapping.sh --3d --nav`
 launches, pointed at this machine instead of the robot.
 
-```
+```text
  go2-lidar3d container (unchanged)            go2-sim container (this folder)
  ───────────────────────────────              ─────────────────────────────────
  Nav2 + RViz + explorer  ── DDS domain 64 ──► sim_robot_bridge.py ◄─ ros_gz_bridge ◄─ Gazebo

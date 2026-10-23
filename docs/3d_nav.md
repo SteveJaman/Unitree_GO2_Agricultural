@@ -5,6 +5,7 @@
 [`scripts/runtime/wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs the
 normal 2D session and adds a live, dense 3D map of the building on top of it.
 When the Go2 camera publishes, the map is coloured from it. With `--ai`:
+
 - **YOLO11s** labels objects and can mark them as obstacles for Nav2.
 - **A local VLM** describes the view.
 - **The battery manager** brings the dog back to the dock on low battery.
@@ -20,7 +21,7 @@ exploration, and `wifi_3d_nav.sh` when you want the 3D view.
 
 ## Architecture
 
-```
+```text
 go2-lidar3d container (wifi_nav.sh, unchanged)       go2-3d container (wifi_3d_nav.sh)
 ──────────────────────────────────────────────       ─────────────────────────────────
 Point-LIO (Jetson) ─► /lidar3d/registered ──────────► RTAB-Map ─► /rtabmap/cloud_map
@@ -103,6 +104,7 @@ runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
 | `/yolo/obstacles` | `PointCloud2` in `lidar3d_map`: a 1 m-tall box of points for each obstacle-class detection |
 
 Each obstacle is placed by distance:
+
 - **LiDAR:** the 20th-percentile depth of the LiDAR points that project inside
   the box.
 - **Floor:** when there are fewer than 5 such points (glass, thin chair legs),
@@ -121,6 +123,7 @@ visible as `/data/…`).
 
 Nav2's costmap reads only the topics listed in its own config, which lives in
 the upstream go2-nav2-wifi repo.
+
 - **With `--ai`:** unless `--no-yolo` is also given, `wifi_3d_nav.sh` runs
   the patch script before the session starts. It is a no-op once applied. If
   it fails, the session still starts and the banner shows
@@ -142,6 +145,7 @@ cells stay lethal, so the planner routes around them. Once YOLO stops
 reporting the object, the LiDAR clears the cells as usual.
 
 Limits:
+
 - **Accuracy:** the obstacles are as accurate as the camera calibration.
 - **Range:** at 2 Hz, only objects within `max_range` (6 m) are injected.
 - **False positives** block the path too. Watch `/yolo/markers` on the first runs.
@@ -216,6 +220,7 @@ With `--resume`, it continues the newest one instead.
 `--ai` starts the autonomy loop. Each part can be left out (`--no-yolo`,
 `--no-vlm`, `--no-battery`, `--no-localize`). Logs are in `ws/log/3d/`:
 `yolo.log`, `vlm.log`, `battery.log`, `auto_localize.log`.
+
 - **YOLO11s**, with its obstacles patched into the Nav2 costmap (above).
 - **The VLM**, which pauses and docks on a confirmed `BLOCKED`.
 - **Battery docking.**
@@ -230,6 +235,7 @@ With `--resume`, it continues the newest one instead.
 start. It publishes the dock pose (x=0, y=0, yaw=0 in `lidar3d_map`) as
 `geometry_msgs/PoseWithCovarianceStamped` on `/initialpose`, then exits, so
 nobody has to click "2D Pose Estimate" after a reboot at the dock.
+
 - **Timing:** it waits up to 20 s for a subscriber, so the message is not
   lost to DDS discovery, then publishes it 3 times.
 - **Safety:** if TF shows the robot already more than 0.5 m from the origin
@@ -266,6 +272,7 @@ is no battery, so it stays idle.
 newest camera frame to an Ollama server (`llava:7b` by default) with the
 prompt *"…Do you see a hydroponic station? Or is the path ahead blocked by a
 desk?…"*.
+
 - It publishes `HYDROPONIC`, `BLOCKED`, `CLEAR` or `UNKNOWN` on
   `/vlm_decision`, and the full answer on `/vlm_decision/raw`.
 - It asks every 5 s at most, and only after the previous answer has arrived.
@@ -273,6 +280,7 @@ desk?…"*.
 
 **It acts on `BLOCKED`.** After `TWIN_VLM_CONFIRM` (2) `BLOCKED` answers in a
 row:
+
 1. It publishes `False` on `/explore/resume`, so the explorer stops and
    cancels its goal.
 2. One second later it publishes `/goal_pose` to the dock (`TWIN_DOCK`,
@@ -293,6 +301,7 @@ ollama pull llava:7b                             # ~4.7 GB
 
 llava:7b on the VM's CPU takes tens of seconds per answer. A Windows host with
 a GPU is much faster:
+
 1. Install Ollama on Windows.
 2. Set `OLLAMA_HOST=0.0.0.0` there.
 3. Allow port 11434 through the Windows firewall.
@@ -324,6 +333,7 @@ Labels are saved to [`config/semantic_locations.json`](../config/), with
 stored in `rtabmap_map`. Reusing a label replaces the old entry.
 
 Notes:
+
 - **The dog drives there too.** `go2_click_to_goal` also listens on
   `/clicked_point`, so every labelled click is also a goal. To label without
   driving, publish on `/label_point` instead (with Foxglove's Publish tool,
@@ -378,6 +388,7 @@ as frosted-glass panels, and no topic names or frame IDs are shown:
 | **Bottom right** | Camera picture-in-picture: **Live** / **AI** (YOLO boxes), click to enlarge | `/twin/camera/compressed`, `/twin/yolo/compressed` |
 
 **In the scene:**
+
 - **The robot:** a Go2 stand-in with a red navigation arrow. Its pose is
   smoothed (exponential lerp/slerp of the TF pose, about 100 ms), so it glides
   instead of stepping; jumps over 2 m snap.
@@ -413,6 +424,7 @@ and `Mesh/DecimationFactor` are not RTAB-Map parameters.)
 ```
 
 [`export_tour.py`](../scripts/tools/export_tour.py) (run inside the image) does:
+
 1. outlier removal;
 2. 2 cm voxel downsample;
 3. normals, estimated if missing and turned toward the scan's centre;
@@ -428,6 +440,7 @@ Tune with `TWIN_MESH_ARGS="--depth 10"` (finer) or `"--max-gap 0.15"` (fill
 more holes).
 
 The source is in [`twin/webapp`](../twin/webapp/):
+
 - [`App.jsx`](../twin/webapp/src/App.jsx): layout, waypoint, dock logic.
 - [`Scene.jsx`](../twin/webapp/src/Scene.jsx): the three.js scene.
 - [`MapMenu.jsx`](../twin/webapp/src/MapMenu.jsx).
@@ -592,6 +605,7 @@ The [Foxglove](https://foxglove.dev/download) app (or the open-source
 Start the session with `--foxglove` and connect **Open connection → Foxglove
 WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
 `ws://<VM IP>:9090`, which is always running.
+
 - **3D panel:**
   - display frame `lidar3d_map`;
   - topics `/rtabmap/cloud_map`, `/tf`, `/plan`, `/yolo/markers`,

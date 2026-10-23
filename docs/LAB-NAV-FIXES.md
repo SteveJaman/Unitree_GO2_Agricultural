@@ -23,6 +23,7 @@ bash ~/files/Unitree_GO2_Agricultural/scripts/tools/apply-lab-nav-fixes.sh
 Then follow the repo's normal setup (README and `docs/3D-QUICKSTART.md`) if you haven't already. That covers Docker, the robot Wi-Fi relay, and `./setup-lidar3d.sh`.
 
 What the script does:
+
 - **If the `go2-lidar3d` container already exists:** it installs the two extra Nav2 packages into it and rebuilds `go2_nav2`.
 - **If it doesn't exist yet:** run `./setup-lidar3d.sh` afterwards. The patched Dockerfile already includes the packages.
 - It adds a `go2sh` alias to `~/.bashrc` (see below).

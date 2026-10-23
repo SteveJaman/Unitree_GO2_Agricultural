@@ -1,3 +1,4 @@
+<!-- markdownlint-disable-file MD025 -- "Phase" sections are top-level on purpose -->
 # Roadmap
 
 [← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](tour.md) · [Camera](camera.md) · [Troubleshooting](troubleshooting.md)
@@ -15,6 +16,7 @@ colored 3D map, and produces a viewable "home tour" that can be replayed
 in a standalone viewer.
 
 **Definition of done:**
+
 1. Robot explores a 3×3 m room with no human input after START
 2. A dense colored PLY is exported
 3. The PLY opens in Open3D and looks like a room
@@ -72,6 +74,7 @@ live map. This is the single most important verification in Phase 1.
 | 2.5 | No re-sending of blacklisted goals | ⏳ |
 
 **Fix applied this session:**
+
 - `map_frame` default → `lidar3d_map` (was `map`)
 - `map_topic` default → `/global_costmap/costmap` (was `/map`, doesn't exist)
 - `min_frontier_size` → `4` (was 8, too strict)
@@ -191,6 +194,7 @@ and moves it through a repeatable scanning pattern over crop plants. Data
 is captured for later plant-analysis research.
 
 **Definition of done:**
+
 1. Arm responds to commands from the VM container
 2. Hyperspectral camera is mounted on the arm's end effector
 3. Arm moves the camera through a defined scan path over a plant
@@ -317,7 +321,7 @@ The long-term goal. An AI model commands both the dog and the arm.
 
 ## Order of work
 
-```
+```text
 Phase 1
     Milestone 0  ← foundation, must be green
          │

@@ -24,10 +24,30 @@ ros2 topic hz /camera/image_raw
 # expect ~10–30 Hz
 ```
 
+## Show it in RViz
+
+1. Click **Add** at the bottom of the Displays panel
+2. Select **Image** → OK
+3. Set **Topic** to `/camera/image_raw`
+4. Set **Reliability** to `Best Effort` (critical — default Reliable will drop frames)
+5. **File → Save Config As** to [`config/tour.rviz`](../config/tour.rviz) so it loads next time
+
+Or view outside RViz:
+
+```bash
+go2sh
+ros2 run rqt_image_view rqt_image_view /camera/image_raw
+```
+
+> **Note:** the hyperspectral camera on the D1-T arm is a separate device from
+> the Go2's front camera. Its ROS 2 / DDS interface will be documented in a
+> dedicated doc once the physical mount is in place.
+
 ## Who else uses the camera
 
 [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) picks up
 `/camera/image_raw` automatically ([3d_nav.md](3d_nav.md#camera-fusion-and-yolo)):
+
 - **Map colour:** the LiDAR is projected into the image and RTAB-Map colours
   the 3D map.
 - **Intrinsics:** [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py)
