@@ -4,18 +4,18 @@ import { useTopic } from './RosProvider.jsx';
 // JPEG copies made in go2-3d by twin/image_compressor.py: the raw
 // /camera/image_raw (~2.7 MB per 720p frame) is too heavy for rosbridge.
 const SOURCES = {
-  camera: { label: 'Camera', topic: '/twin/camera/compressed' },
-  yolo: { label: 'YOLO', topic: '/twin/yolo/compressed' },
+  camera: { label: 'Live', topic: '/twin/camera/compressed' },
+  yolo: { label: 'AI', topic: '/twin/yolo/compressed' },
 };
 
-/** Live camera (or YOLO-annotated) feed from sensor_msgs/CompressedImage. */
+/** Picture-in-picture camera, bottom right; click to enlarge. */
 export default function CameraFeed() {
   const [source, setSource] = useState('camera');
-  const [fps, setFps] = useState(0);
+  const [big, setBig] = useState(false);
   const [last, setLast] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const img = useRef();
   const url = useRef(null);
-  const frames = useRef(0);
 
   useTopic(SOURCES[source].topic, 'sensor_msgs/msg/CompressedImage', (m) => {
     if (!img.current) return;
@@ -26,37 +26,31 @@ export default function CameraFeed() {
       url.current = URL.createObjectURL(new Blob([m.data], { type: 'image/jpeg' }));
       img.current.src = url.current;
     }
-    frames.current += 1;
     setLast(Date.now());
   });
 
   useEffect(() => {
-    const id = setInterval(() => { setFps(frames.current); frames.current = 0; }, 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       clearInterval(id);
       if (url.current) URL.revokeObjectURL(url.current);
     };
   }, []);
 
-  const live = Date.now() - last < 3000;
+  const live = now - last < 3000;
   return (
-    <section className="camera">
-      <div className="camera-head">
-        {Object.entries(SOURCES).map(([key, s]) => (
-          <button key={key} className={`tab ${key === source ? 'active' : ''}`}
-                  onClick={() => setSource(key)}>{s.label}</button>
-        ))}
-        <span className="fps">{live ? `${fps} fps` : 'no frames'}</span>
+    <div className={`pip ${big ? 'big' : ''}`}>
+      <img ref={img} alt="" style={{ visibility: live ? 'visible' : 'hidden' }} onClick={() => setBig(!big)} />
+      {!live && <div className="pip-empty">Camera unavailable</div>}
+      <div className="pip-bar">
+        {live && <span className="live"><span className="live-dot" />LIVE</span>}
+        <div className="pip-tabs">
+          {Object.entries(SOURCES).map(([key, s]) => (
+            <button key={key} className={key === source ? 'active' : ''} onClick={() => setSource(key)}>{s.label}</button>
+          ))}
+          <button onClick={() => setBig(!big)} title={big ? 'Shrink' : 'Enlarge'}>{big ? '⤡' : '⤢'}</button>
+        </div>
       </div>
-      <div className="camera-body">
-        <img ref={img} alt="" style={{ visibility: live ? 'visible' : 'hidden' }} />
-        {!live && (
-          <div className="camera-empty">
-            Waiting for {SOURCES[source].topic}
-            <small>{source === 'yolo' ? 'YOLO runs with --ai and the camera' : 'camera relay must be publishing'}</small>
-          </div>
-        )}
-      </div>
-    </section>
+    </div>
   );
 }

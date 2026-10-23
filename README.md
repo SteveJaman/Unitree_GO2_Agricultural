@@ -428,7 +428,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`tune_costmap.sh`](scripts/tools/tune_costmap.sh) | Change inflation radius and footprint padding at runtime (`--safe`, `--wide`, `--tight`, `--show`) |
 | [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
-| [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
+| [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh from an RTAB-Map PLY (normals, distance trim, decimation); run by `wifi_3d_nav.sh --export --mesh` |
 | [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh --ai` (`--undo` restores) |
 | [`apply-lab-nav-fixes.sh`](scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](docs/LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
@@ -684,6 +684,8 @@ container ([`twin/`](twin/)) with:
 ./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
 ./scripts/runtime/wifi_3d_nav.sh --save-location  # 2nd terminal: name points clicked in the dashboard
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
+./scripts/runtime/wifi_3d_nav.sh --export --mesh  # + solid mesh for the dashboard "3D Scan"
+./scripts/runtime/wifi_3d_nav.sh --view           # show saved scans, no robot needed
 ```
 
 > **Before using `--ai`, Ollama must be running with the model pulled.** The
@@ -731,18 +733,30 @@ troubleshooting: [docs/3d_nav.md](docs/3d_nav.md).
 
 ### Web dashboard
 
-The custom web dashboard is the primary interface for the 3D session.
+The custom web dashboard is the primary interface for the 3D session. It
+has a full-screen dark 3D map with floating glass panels, like a navigation
+app.
 1. Start a session: `./scripts/runtime/wifi_3d_nav.sh` (plus `--ai` etc.).
 2. Wait for the `3D digital twin READY` block.
 3. **Open your browser and navigate to `http://localhost:3000`** on the VM, or
    `http://<VM IP>:3000` from the Windows host. The READY block prints the
    address.
 
-| Area | What you get |
+| Where | What you get |
 |---|---|
-| Top bar | rosbridge status, battery % / voltage (`/battery_state`), commanded speed (`/cmd_vel`), VLM decision (`/vlm_decision`), map size, explorer state with **START / STOP** |
-| 3D view | `/rtabmap/cloud_map`, the robot from TF (`lidar3d_map → base_link`), `/plan`, the active goal, YOLO boxes; **Click-to-go**, **Follow robot**, layer toggles |
-| Camera | Live camera and YOLO view (JPEG copies of `/camera/image_raw` and `/yolo/image`) |
+| Full screen | The map: **Solid** (live, voxel-filtered, lit and shadowed), **3D Scan** (exported mesh) or **Points**; the robot gliding with a red heading arrow; the waypoint pin and neon route; YOLO, VLM and named-place labels |
+| Top right | Link, speed, battery icon (red below 15 %) |
+| Top centre | AI vision toast: *Path blocked*, *Hydroponic station spotted* |
+| Bottom left | **Auto Explore** START/STOP, **Return to Dock**, **Tap to go**, **Follow** |
+| Bottom right | Camera picture-in-picture (Live / AI) |
+
+For presentations, build a solid mesh of the mapped building and show it
+without the robot:
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --export --mesh   # after a run
+./scripts/runtime/wifi_3d_nav.sh --view            # http://localhost:3000 -> 3D Scan
+```
 
 Behind it, `go2-3d` runs:
 - **rosbridge** (`rosbridge_websocket`) on 9090, unless something already
@@ -868,7 +882,7 @@ Unitree_GO2_Agricultural/
 │   ├── start_inside.sh               # starts rosbridge, dashboard server, click-to-goal, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
 │   ├── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
 │   ├── image_compressor.py           # JPEG camera copies for the dashboard
-│   └── webapp/                       # web dashboard: React + three.js (Vite), served on :3000
+│   └── webapp/                       # web dashboard: React + three.js (Vite), full-screen map + glass UI, :3000
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used

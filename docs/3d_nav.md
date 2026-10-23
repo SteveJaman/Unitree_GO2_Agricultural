@@ -192,6 +192,8 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--no-bridge` | RTAB-Map only: no rosbridge, no dashboard |
 | `--build` | Build the `go2-3d:local` image |
 | `--export [DB]` | Export the newest (or the given) database to a PLY point cloud |
+| `--export --mesh` | Also build the solid Poisson mesh `<db>_mesh.ply` (dashboard **3D Scan**) |
+| `--view` | Serve the dashboard and saved meshes without a robot or session |
 | `--stop` | Stop a running `go2-3d` and save its database |
 
 About 20–90 s after RViz opens, the terminal prints a `3D digital twin READY`
@@ -364,30 +366,91 @@ The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
 `lidar3d_map`), `?base=` (robot frame, default `base_link`).
 
-| Part | Shows | Topics |
+The 3D map fills the whole screen (dark theme). The controls float over it
+as frosted-glass panels, and no topic names or frame IDs are shown:
+
+| Where | What | Behind it |
 |---|---|---|
-| **Status bar** | rosbridge connection · battery % and voltage (orange/red below 30/15 %, dock state with `--ai`) · commanded speed · VLM decision and its age · map size · explorer state with **START / STOP** | `/battery_state`, `/battery_manager/status`, `/cmd_vel`, `/vlm_decision`, `/explore/status`, `/explore/resume` |
-| **3D view** | Dense map (camera colours, else height colours), robot, Nav2 plan (yellow), active goal (green), YOLO boxes with labels, optional live scan | `/rtabmap/cloud_map`, `/tf`, `/tf_static`, `/plan`, `/goal_pose`, `/yolo/markers`, `/lidar3d/registered` |
-| **Toolbar** | **Click-to-go**, **Follow robot**, layer toggles (3D map, live scan, plan, YOLO) | `/clicked_point` |
-| **Camera panel** | **Camera** / **YOLO** tabs, frame rate | `/twin/camera/compressed`, `/twin/yolo/compressed` |
+| **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
+| **Top centre** | **AI vision**: a toast for 5 s when the VLM reports *Path blocked* or *Hydroponic station spotted*, then a small badge | `/vlm_decision` |
+| **Top right** | Robot link · speed · **battery icon** (amber below 30 %, red and blinking below 15 %, *Docking* / *Docked* while the battery manager acts) | `/battery_state`, `/battery_manager/status`, `/cmd_vel` |
+| **Bottom left** | **Auto Explore** toggle (shows *Mapping the area*, *Heading home*, …) · **Return to Dock** · **Tap to go** · **Follow** · **Clear** | `/explore/resume`, `/explore/status`, `/goal_pose`, `/clicked_point` |
+| **Bottom right** | Camera picture-in-picture: **Live** / **AI** (YOLO boxes), click to enlarge | `/twin/camera/compressed`, `/twin/yolo/compressed` |
+
+**In the scene:**
+- **The robot:** a Go2 stand-in with a red navigation arrow. Its pose is
+  smoothed (exponential lerp/slerp of the TF pose, about 100 ms), so it glides
+  instead of stepping; jumps over 2 m snap.
+- **The goal:** the waypoint pin (glowing red orb on a beam, pulsing ring)
+  and the route to it (`/plan` as a thick neon cyan line).
+- **The dock:** a violet ring at the origin.
+- **Labels:** YOLO boxes with floating labels (*Chair · 2.1 m*), *Hydroponic
+  station* pins from the VLM, and named places from
+  `config/semantic_locations.json`.
 
 Mouse: left-drag orbit, right-drag pan, wheel zoom.
 
+### Map styles
+
+| Style | What it is | Performance |
+|---|---|---|
+| **Solid** (default) | The live `/rtabmap/cloud_map` through a **voxel grid filter** ([`voxelize`](../twin/webapp/src/ros/pointcloud.js)): one cube per occupied cell, mean colour, drawn as one instanced mesh, lit by sky + sun lights, casting shadows onto the scanned floor. | The voxel size starts at 6 cm (*Auto*) and grows until at most 80k voxels remain (~1M triangles, one draw call). Fixed sizes: *High* 5 cm, *Medium* 10 cm, *Low* 20 cm |
+| **3D Scan** | A real triangle mesh exported after a run (below), in the light blue/grey surface material or its real colours, with shadows. Works without the robot. | Decimated to 300k triangles at export |
+| **Points** | The raw cloud | |
+
+RTAB-Map itself publishes **no mesh topic**: `/rtabmap/cloud_map` is a point
+cloud. So live views are voxelized in the browser, and the real mesh is
+built from the saved map. The session runs RTAB-Map with
+`--Grid/RayTracing true --Grid/NormalsSegmentation false`, so floors stay in
+the cloud and space behind moving objects is cleared. (`Grid/MeshFromDepth`
+and `Mesh/DecimationFactor` are not RTAB-Map parameters.)
+
+### Presentation mesh
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --export --mesh   # after the run: <db>_mesh.ply (Poisson, Open3D in the image)
+./scripts/runtime/wifi_3d_nav.sh --view            # no robot needed: dashboard on :3000 -> 3D Scan
+```
+
+[`export_tour.py`](../scripts/tools/export_tour.py) (run inside the image) does:
+1. outlier removal;
+2. 2 cm voxel downsample;
+3. normals, estimated if missing and turned toward the scan's centre;
+4. Poisson depth 9;
+5. drops surface farther than 10 cm from any scan point, which removes
+   Poisson's invented "balloon" but keeps sparse LiDAR floors;
+6. decimation to `TWIN_MESH_TRIANGLES` (300k).
+
+Colours carry over from camera-mode runs. On a synthetic 10 × 8 m room
+(383k points) this took 8 s and produced a closed floor, walls and desk.
+Real results depend on scan coverage: walk the dog slowly, past every wall.
+Tune with `TWIN_MESH_ARGS="--depth 10"` (finer) or `"--max-gap 0.15"` (fill
+more holes).
+
 The source is in [`twin/webapp`](../twin/webapp/):
-- [`RosProvider.jsx`](../twin/webapp/src/RosProvider.jsx): connection,
-  automatic reconnect, `useTopic` / `usePublisher`.
+- [`App.jsx`](../twin/webapp/src/App.jsx): layout, waypoint, dock logic.
 - [`Scene.jsx`](../twin/webapp/src/Scene.jsx): the three.js scene.
+- [`MapMenu.jsx`](../twin/webapp/src/MapMenu.jsx).
 - [`StatusBar.jsx`](../twin/webapp/src/StatusBar.jsx).
+- [`VlmBadge.jsx`](../twin/webapp/src/VlmBadge.jsx).
+- [`ControlPanel.jsx`](../twin/webapp/src/ControlPanel.jsx).
 - [`CameraFeed.jsx`](../twin/webapp/src/CameraFeed.jsx).
-- [`src/ros/`](../twin/webapp/src/ros/): TF tree and PointCloud2 decoder,
-  with no `tf2_web_republisher` needed.
+- [`RosProvider.jsx`](../twin/webapp/src/RosProvider.jsx): connection,
+  reconnect, `useTopic` / `usePublisher`.
+- [`src/ros/`](../twin/webapp/src/ros/): TF tree, PointCloud2 decoder, voxel
+  filter.
 
 ### Click-to-go
 
-1. Turn on **Click-to-go** in the dashboard toolbar. The cursor becomes a
-   crosshair.
-2. Click the floor where the dog should go. Orbit drags are ignored. An orange
-   ring marks the click until Nav2's goal (green arrow) appears.
+1. **Tap to go** is on by default (bottom left). The cursor is a crosshair.
+2. Click the floor where the dog should go. Orbit drags are ignored.
+3. A glowing pin drops at the click at once. When Nav2's goal arrives, the pin
+   glides to it, since a click on furniture is snapped to free floor, and the
+   neon route appears.
+4. A new click replaces the pin and route. **Clear** hides them.
+
+**Return to Dock** first pauses the explorer, which would otherwise send its
+next frontier goal, then sends the goal (0, 0) and drops the pin at the dock.
 
 `go2_click_to_goal` transforms the point into the costmap frame
 (`lidar3d_map`) and **snaps it to the nearest navigable floor**. It then faces
@@ -550,8 +613,10 @@ WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
 - **Waypoint queue in the dashboard.** Each click replaces the current goal.
   For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
-- **Costmap and named locations in the dashboard.** These aren't drawn yet.
-  Use RViz or Foxglove (`--foxglove`) for the costmap.
+- **Costmap in the dashboard.** Not drawn; use RViz or Foxglove
+  (`--foxglove`). Named locations are drawn.
+- **Live mesh.** The live view is voxels. A triangle mesh exists only after
+  `--export --mesh`.
 - **More VLM actions and named locations.** Only `BLOCKED` acts (pause +
   dock). `HYDROPONIC` and `config/semantic_locations.json` are not yet used
   to steer the dog. For example, nothing yet does "go to Hydroponic_Station"

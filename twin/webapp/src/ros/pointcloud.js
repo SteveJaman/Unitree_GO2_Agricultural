@@ -71,8 +71,59 @@ export function decodeCloud(msg, maxPoints = 400000) {
     colors: colors.subarray(0, 3 * k),
     count: k,
     total: n,
+    hasColor: !!rgb,
     frame: (msg.header && msg.header.frame_id) || '',
   };
+}
+
+/**
+ * Voxel grid filter: one voxel per occupied size^3 cell (centre + mean
+ * colour). If more than maxVoxels remain, the size grows by 1.25x and the
+ * grid is rebuilt, so the triangle budget (12 per voxel cube) holds no
+ * matter how big the map gets. Returns centres in the cloud's frame, plus
+ * floorZ (2nd percentile of z) for the shadow-catching floor.
+ */
+export function voxelize(cloud, size = 0.08, maxVoxels = 80000, minPoints = 1) {
+  const { positions, colors, count } = cloud;
+  const OFF = 65536, K = 131072;            // keys stay below 2^53
+  for (let attempt = 0; attempt < 12; attempt++, size *= 1.25) {
+    const inv = 1 / size;
+    const cells = new Map();
+    for (let i = 0; i < count; i++) {
+      const ix = Math.floor(positions[3 * i] * inv) + OFF;
+      const iy = Math.floor(positions[3 * i + 1] * inv) + OFF;
+      const iz = Math.floor(positions[3 * i + 2] * inv) + OFF;
+      const key = (ix * K + iy) * K + iz;
+      let c = cells.get(key);
+      if (!c) {
+        if (cells.size >= maxVoxels * 1.5) break;   // clearly too fine: next size
+        c = [ix, iy, iz, 0, 0, 0, 0];
+        cells.set(key, c);
+      }
+      c[3] += colors[3 * i]; c[4] += colors[3 * i + 1]; c[5] += colors[3 * i + 2]; c[6]++;
+    }
+    let kept = 0;
+    for (const c of cells.values()) if (c[6] >= minPoints) kept++;
+    if (kept > maxVoxels && attempt < 11) continue;
+
+    const centers = new Float32Array(kept * 3);
+    const vcolors = new Float32Array(kept * 3);
+    const zs = new Float32Array(kept);
+    let j = 0;
+    for (const c of cells.values()) {
+      if (c[6] < minPoints) continue;
+      centers[3 * j] = (c[0] - OFF + 0.5) * size;
+      centers[3 * j + 1] = (c[1] - OFF + 0.5) * size;
+      centers[3 * j + 2] = (c[2] - OFF + 0.5) * size;
+      vcolors[3 * j] = c[3] / c[6]; vcolors[3 * j + 1] = c[4] / c[6]; vcolors[3 * j + 2] = c[5] / c[6];
+      zs[j] = centers[3 * j + 2];
+      j++;
+    }
+    const sorted = zs.slice().sort();
+    const floorZ = kept ? sorted[Math.floor(kept * 0.02)] - size / 2 : 0;
+    return { centers, colors: vcolors, count: kept, size, floorZ, hasColor: cloud.hasColor, frame: cloud.frame };
+  }
+  return { centers: new Float32Array(0), colors: new Float32Array(0), count: 0, size, floorZ: 0, hasColor: false, frame: cloud.frame };
 }
 
 function heightColors(positions, colors, count, zMin, zMax) {

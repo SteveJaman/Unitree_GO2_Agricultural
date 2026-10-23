@@ -145,8 +145,15 @@ if [ "$TWIN_WEB" = 1 ]; then
     elif port_busy "$TWIN_WEB_PORT"; then
         echo "[go2-3d] WARN: port ${TWIN_WEB_PORT} already in use; dashboard not served"
     else
-        start web python3 -m http.server "$TWIN_WEB_PORT" --bind 0.0.0.0 --directory "$WEBROOT"
-        echo "[go2-3d] dashboard: ${WEBROOT} on port ${TWIN_WEB_PORT}"
+        # One served root: the app, maps/ (databases and *_mesh.ply from
+        # --export --mesh) and config/ (semantic_locations.json).
+        SERVE=/tmp/go2-3d-web
+        rm -rf "$SERVE" && mkdir -p "$SERVE"
+        for f in "$WEBROOT"/*; do ln -s "$f" "$SERVE/"; done
+        ln -s /data "$SERVE/maps"
+        ln -s /config "$SERVE/config"
+        start web python3 -m http.server "$TWIN_WEB_PORT" --bind 0.0.0.0 --directory "$SERVE"
+        echo "[go2-3d] dashboard: ${WEBROOT} on port ${TWIN_WEB_PORT} (+ maps/, config/)"
     fi
 fi
 if [ "$TWIN_FOXGLOVE" = 1 ]; then
@@ -227,6 +234,12 @@ RTAB_PARAMS=(
     --Icp/Iterations 10 --Icp/Epsilon 0.001 --Icp/MaxTranslation 3
     --Icp/MaxCorrespondenceDistance 1 --Icp/CorrespondenceRatio 0.2
     --RGBD/CreateOccupancyGrid true --Grid/3D true --Grid/CellSize 0.05 --Grid/RangeMax 15
+    # Denser surfaces for the dashboard: ray tracing clears space behind
+    # moving objects; without normals segmentation every surface (floor too)
+    # stays in /rtabmap/cloud_map. RTAB-Map publishes no mesh topic: the
+    # dashboard renders this cloud as solid voxels, and a real triangle mesh
+    # comes from wifi_3d_nav.sh --export --mesh.
+    --Grid/RayTracing true --Grid/NormalsSegmentation false
 )
 ROS_ARGS=(
     -r __node:=rtabmap -r __ns:=/rtabmap

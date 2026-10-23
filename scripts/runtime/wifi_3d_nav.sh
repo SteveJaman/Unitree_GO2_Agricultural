@@ -41,6 +41,8 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --no-web        # rosbridge only, no dashboard server
 #   ./scripts/runtime/wifi_3d_nav.sh --no-bridge     # RTAB-Map only (no dashboard)
 #   ./scripts/runtime/wifi_3d_nav.sh --export [DB]   # newest (or DB) -> PLY
+#   ./scripts/runtime/wifi_3d_nav.sh --export --mesh # + solid Poisson mesh <db>_mesh.ply (dashboard "Mesh")
+#   ./scripts/runtime/wifi_3d_nav.sh --view          # dashboard + saved meshes only, no robot (presentations)
 #   ./scripts/runtime/wifi_3d_nav.sh --stop          # stop go2-3d, save DB
 #
 # Environment:
@@ -58,6 +60,7 @@
 #   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
 #   TWIN_EXPORT_ARGS="--voxel 0.02"        extra rtabmap-export options (--export)
+#   TWIN_MESH_TRIANGLES=300000  TWIN_MESH_ARGS="--depth 10 --trim 0.08"   (--mesh)
 #   TWIN_DB_DIR=$NAV2_WIFI_DIR/ws/maps/rtabmap   TWIN_LOG_DIR=$NAV2_WIFI_DIR/ws/log/3d
 #   TWIN_START_TIMEOUT=300   TWIN_STOP_TIMEOUT=60 (seconds RTAB-Map gets to save)
 # ---------------------------------------------------------------------------
@@ -116,6 +119,8 @@ while [ $# -gt 0 ]; do
         --stop)       ACTION="stop" ;;
         --export)     ACTION="export"
                       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then EXPORT_DB="$2"; shift; fi ;;
+        --mesh)       MESH="true" ;;
+        --view)       ACTION="view" ;;
         --check|--clean|--setup-ssh)
                       ACTION="passthru"; PASSTHRU+=("$1") ;;
         --host-ip|--robot-ip|--iface)
@@ -153,6 +158,8 @@ fi
 TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
 
 TWIN_WEB_PORT="${TWIN_WEB_PORT:-3000}"
+TWIN_MESH_TRIANGLES="${TWIN_MESH_TRIANGLES:-300000}"   # browser-friendly (60 fps)
+[ "${MESH:-false}" = "true" ] && [ "${ACTION}" = "run" ] && ACTION="export"
 TWIN_ROSBRIDGE_PORT="${TWIN_ROSBRIDGE_PORT:-9090}"
 TWIN_FOXGLOVE_PORT="${TWIN_FOXGLOVE_PORT:-8765}"
 
@@ -205,7 +212,48 @@ do_export() {
         -v "${dir}:/data" "${TWIN_IMAGE}" bash -c \
         "source /opt/ros/humble/setup.bash && rtabmap-export --scan ${TWIN_EXPORT_ARGS:-} --output_dir '/data/${name}-export' '/data/${name}.db'"
     ls -1 "${out}"
-    echo "[3d] Mesh it with:  python3 scripts/tools/export_tour.py <file.ply> --from-ply -o ${name}_mesh.ply"
+    if [ "${MESH}" != "true" ]; then
+        echo "[3d] Solid mesh for the dashboard:  $0 --export --mesh"
+        return 0
+    fi
+
+    # Poisson mesh (Open3D, in the image) -> <db>_mesh.ply next to the database,
+    # where the dashboard's "Mesh" view finds it (served as maps/).
+    local cloud="" f
+    for f in "${out}"/*.ply; do   # the largest exported cloud
+        [ -f "${f}" ] || continue
+        if [ -z "${cloud}" ] || [ "$(stat -c %s "${f}")" -gt "$(stat -c %s "${cloud}")" ]; then cloud="${f}"; fi
+    done
+    [ -n "${cloud}" ] || die "rtabmap-export wrote no .ply in ${out}"
+    echo "[3d] Meshing $(basename "${cloud}") -> ${dir}/${name}_mesh.ply (Poisson, <= ${TWIN_MESH_TRIANGLES} triangles; minutes for a big map)..."
+    # shellcheck disable=SC2086
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "${dir}:/data" -v "${REPO_DIR}/scripts/tools:/tools:ro" "${TWIN_IMAGE}" \
+        python3 /tools/export_tour.py "/data/${name}-export/$(basename "${cloud}")" --from-ply \
+            -o "/data/${name}_mesh.ply" --max-triangles "${TWIN_MESH_TRIANGLES}" ${TWIN_MESH_ARGS:-}
+    echo "[3d] Mesh ready: ${dir}/${name}_mesh.ply"
+    echo "[3d] View it: dashboard -> 3D Scan (http://<VM IP>:${TWIN_WEB_PORT}) during a session,"
+    echo "     or without the robot: $0 --view   (docs/3d_nav.md#presentation-mesh)"
+}
+
+# Dashboard + saved meshes without a robot or session (presentations).
+# Same served layout as start_inside.sh: app, maps/, config/. Ctrl+C stops.
+do_view() {
+    image_present || die "image ${TWIN_IMAGE} missing: run $0 --build"
+    twin_running && die "${TWIN_CONTAINER} is running: its dashboard already serves the meshes (port ${TWIN_WEB_PORT})."
+    mkdir -p "${TWIN_DB_DIR}" "${REPO_DIR}/config"
+    local meshes
+    meshes="$(ls -1t "${TWIN_DB_DIR}"/*_mesh.ply 2>/dev/null | head -3 || true)"
+    [ -n "${meshes}" ] || echo "[3d] NOTE: no *_mesh.ply in ${TWIN_DB_DIR} yet: run $0 --export --mesh first"
+    echo "[3d] Dashboard (view only) on http://localhost:${TWIN_WEB_PORT}  ->  View: Mesh. Ctrl+C to stop."
+    docker run --rm -it --name go2-3d-view --network host --user "$(id -u):$(id -g)" \
+        -v "${TWIN_DB_DIR}:/data:ro" -v "${REPO_DIR}/config:/config:ro" -v "${TWIN_DIR}:/twin:ro" \
+        "${TWIN_IMAGE}" bash -c '
+            root=/opt/webapp
+            [ /twin/webapp/dist/index.html -nt /opt/webapp/index.html ] && root=/twin/webapp/dist
+            mkdir -p /tmp/view && for f in "$root"/*; do ln -s "$f" /tmp/view/; done
+            ln -s /data /tmp/view/maps && ln -s /config /tmp/view/config
+            exec python3 -m http.server '"${TWIN_WEB_PORT}"' --bind 0.0.0.0 --directory /tmp/view'
 }
 
 # Float ROS parameters reject "15"; make it "15.0".
@@ -372,6 +420,7 @@ check_docker
 case "${ACTION}" in
     build)  do_build; exit 0 ;;
     export) do_export; exit 0 ;;
+    view)   do_view; exit 0 ;;
     stop)   stop_twin; echo "[3d] Done."; exit 0 ;;
     save-location)
         twin_running || die "${TWIN_CONTAINER} is not running: start a session first (wifi_3d_nav.sh), then run this in a second terminal."

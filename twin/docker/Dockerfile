@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-vision-msgs \
         ros-humble-sensor-msgs-py \
         ros-humble-nav2-msgs \
-        python3-pip libgl1 libglib2.0-0 \
+        python3-pip libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # YOLO11 on the CPU. The CPU wheel index avoids the multi-GB CUDA build of
@@ -43,6 +43,10 @@ RUN python3 -m pip install --no-cache-dir \
     && python3 -m pip install --no-cache-dir \
         'numpy<2' 'opencv-python<4.12' 'ultralytics==8.3.40' \
     && python3 -c 'import numpy, cv2, torch, ultralytics; print("numpy", numpy.__version__, "cv2", cv2.__version__, "torch", torch.__version__, "ultralytics", ultralytics.__version__)'
+
+# Open3D: Poisson meshing for wifi_3d_nav.sh --export --mesh (scripts/tools/export_tour.py).
+RUN python3 -m pip install --no-cache-dir 'numpy<2' 'open3d==0.18.0' \
+    && python3 -c 'import open3d, numpy; print("open3d", open3d.__version__, "numpy", numpy.__version__)'
 
 # Bake the weights in, so the robot network needs no internet at run time,
 # and run one inference so a broken install fails the build, not the robot run.

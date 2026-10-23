@@ -15,6 +15,8 @@ Foxglove is the optional alternative (`--foxglove`).
 | Feature | State |
 |---|---|
 | Web dashboard (3D map, robot, plan, camera, battery, VLM, click-to-go, explorer START/STOP) | **Implemented (pending physical test)**: tested against a mock rosbridge |
+| Dashboard UI overhaul: full-screen map, glass panels, waypoint pin + neon route, smoothed robot, Auto Explore / Return to Dock, battery icon, VLM toasts, camera PiP | **Implemented (pending physical test)**: tested against a mock rosbridge (2026-10-23) |
+| Solid map (live voxels, lighting, shadows) and presentation mesh (`--export --mesh`, `--view`) | **Implemented**: meshing tested on a synthetic room (Open3D); real scans pending |
 | Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
 | VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
 | Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
@@ -281,6 +283,9 @@ relay is unconfirmed.
 | 35 | VLM action | explorer running, block the path with a desk / board | `vlm.log`: `BLOCKED 1/2`, then `path BLOCKED (confirmed)`; explorer stops, dog returns to the dock |
 | 36 | VLM false alarm | `TWIN_VLM_ACT=0 … --ai`, normal run | count how often `BLOCKED` appears on a clear path before trusting the action |
 | 37 | Battery-swap restart | Ctrl+C, swap, dog at the dock, `--ai --resume` | READY shows `[resumed …]`, auto-localized, map continues |
+| 38 | Solid map frame rate | dashboard Solid, big map, ⚙ shows fps | ≥ 50 fps on the presentation laptop (else Detail: Medium) |
+| 39 | Presentation mesh | after a run: `--export --mesh`, then `--view` | 3D Scan shows closed walls and floor; < 1 min meshing |
+| 40 | Return to Dock | explorer running, press Return to Dock | explorer stops, pin at the dock, route drawn, dog drives home |
 
 ---
 
