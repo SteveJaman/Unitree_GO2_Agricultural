@@ -123,13 +123,14 @@ The pipeline that produces the dense 3D tour.
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
 | 4.11 | YOLO semantic layer (detections → 3D markers in the dashboard) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
 | 4.12 | Go2 camera + LiDAR fusion (LiDAR → depth image, coloured map) | ✅ written in `twin/start_inside.sh`, ⏳ verify; accuracy needs 3.4 |
-| 4.13 | YOLO obstacles in the Nav2 costmap | ✅ opt-in [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), ⏳ verify |
+| 4.13 | YOLO obstacles in the Nav2 costmap | ✅ [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), run automatically with `--ai`, ⏳ verify |
 | 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ |
 | 4.15 | Low-battery return to the dock (`--ai`) | ✅ [`battery_manager.py`](../scripts/nodes/battery_manager.py) written, ⏳ verify |
 | 4.16 | Local VLM scene reasoning (Ollama llava) → `/vlm_decision` | ✅ [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) written, ⏳ verify; nothing acts on it yet |
 | 4.17 | Resume a map after a battery swap (`--resume`) | ✅ written, ⏳ verify |
 | 4.18 | Named semantic locations from clicked points | ✅ [`save_location.py`](../scripts/nodes/save_location.py) written, ⏳ verify |
-| 4.19 | Act on `/vlm_decision` and named locations (e.g. "go to Hydroponic_Station") | ⏳ |
+| 4.19 | Act on `/vlm_decision` | ✅ `BLOCKED` (2× in a row) → pause explorer + dock, ⏳ verify; `HYDROPONIC` / named-location goals ⏳ |
+| 4.21 | Zero-touch localization at the dock (`--ai` / `--resume`) | ✅ [`auto_localize.py`](../scripts/nodes/auto_localize.py) written, ⏳ verify |
 | 4.20 | Dashboard: costmap layer, named locations, waypoint queue | ⏳ |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;

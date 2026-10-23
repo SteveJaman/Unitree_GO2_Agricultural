@@ -30,8 +30,10 @@ camera relay ─► /camera/image_raw ──────────────
                                                         (LiDAR projected into the image → RTAB-Map RGB-D)
                                                       static TF base_link → camera_link
                                                       yolo_node (YOLO11s) ─► /yolo/detections, /yolo/image,
-Nav2 costmap ◄── /yolo/obstacles (opt-in) ◄──────────     /yolo/markers, /yolo/obstacles     (--ai)
+Nav2 costmap ◄── /yolo/obstacles (auto with --ai) ◄──     /yolo/markers, /yolo/obstacles     (--ai)
                                                       vlm_reasoning_node ─► Ollama ─► /vlm_decision (--ai)
+explorer, Nav2 ◄── /explore/resume False, /goal_pose ─┘ (2x BLOCKED → pause + dock)
+                                                      auto_localize ─► /initialpose (0,0,0) once (--ai / --resume)
 Nav2 ◄── /goal_pose ◄───────────────────────────────── go2_click_to_goal ◄── /clicked_point
 battery_manager (--ai) ◄── /lf/lowstate                save_location (--save-location) ◄── /clicked_point
   └─► /explore/resume False, /goal_pose → dock
@@ -115,15 +117,23 @@ a glass door. For that, train a model on doors and glass and pass it with
 `TWIN_YOLO_MODEL=/data/my_model.pt` (any file in the `TWIN_DB_DIR` folder is
 visible as `/data/…`).
 
-### Let Nav2 avoid what YOLO sees (opt-in)
+### Let Nav2 avoid what YOLO sees (automatic with `--ai`)
 
 Nav2's costmap reads only the topics listed in its own config, which lives in
-the upstream go2-nav2-wifi repo. Run this once on the VM:
+the upstream go2-nav2-wifi repo.
+- **With `--ai`:** unless `--no-yolo` is also given, `wifi_3d_nav.sh` runs
+  the patch script before the session starts. It is a no-op once applied. If
+  it fails, the session still starts and the banner shows
+  `YOLO → Nav2 : FAILED`.
+- **By hand:**
 
 ```bash
 ./scripts/tools/add-yolo-costmap-source.sh          # adds /yolo/obstacles, rebuilds go2_nav2
 ./scripts/tools/add-yolo-costmap-source.sh --undo   # back to the original config
 ```
+
+The change stays after the session. Sessions without `--ai` just have a
+`yolo` source with no data, which is harmless. `--undo` removes it.
 
 The script adds a `yolo` observation source (marking only) to the global
 costmap's obstacle layer in `go2_nav2/config/lidar3d_planner.yaml`. The local
@@ -201,9 +211,33 @@ With `--resume`, it continues the newest one instead.
 
 ## AI nodes (`--ai`)
 
-`--ai` starts three nodes. Each one can be left out (`--no-yolo`,
-`--no-vlm`, `--no-battery`). Their logs are in `ws/log/3d/` (`yolo.log`,
-`vlm.log`, `battery.log`).
+`--ai` starts the autonomy loop. Each part can be left out (`--no-yolo`,
+`--no-vlm`, `--no-battery`, `--no-localize`). Logs are in `ws/log/3d/`:
+`yolo.log`, `vlm.log`, `battery.log`, `auto_localize.log`.
+- **YOLO11s**, with its obstacles patched into the Nav2 costmap (above).
+- **The VLM**, which pauses and docks on a confirmed `BLOCKED`.
+- **Battery docking.**
+- **Auto-localization**, also with `--resume`.
+
+**Prerequisite:** run `ollama serve` with `ollama pull llava:7b` done (see
+[VLM reasoning](#vlm-reasoning-ollama)). The script checks it at start.
+
+### Auto-localization (`--ai`, `--resume`)
+
+[`auto_localize.py`](../scripts/nodes/auto_localize.py) runs once at session
+start. It publishes the dock pose (x=0, y=0, yaw=0 in `lidar3d_map`) as
+`geometry_msgs/PoseWithCovarianceStamped` on `/initialpose`, then exits, so
+nobody has to click "2D Pose Estimate" after a reboot at the dock.
+- **Timing:** it waits up to 20 s for a subscriber, so the message is not
+  lost to DDS discovery, then publishes it 3 times.
+- **Safety:** if TF shows the robot already more than 0.5 m from the origin
+  (the session has been driven), it does **not** publish. Re-anchoring a
+  robot that is elsewhere would be wrong.
+- **If nothing listens:** nothing in this repo subscribes to `/initialpose`,
+  and Point-LIO already starts every session at the `lidar3d_map` origin.
+  With no subscriber, the log says so and the dock pose is right anyway, as
+  long as **the dog starts at the dock**.
+- **Opt out** with `--no-localize`.
 
 ### Battery manager
 
@@ -235,7 +269,18 @@ desk?…"*.
 - It asks every 5 s at most, and only after the previous answer has arrived.
 - While Ollama is unreachable it logs a warning and publishes nothing.
 
-**`/vlm_decision` is informational for now.** No node steers the dog on it.
+**It acts on `BLOCKED`.** After `TWIN_VLM_CONFIRM` (2) `BLOCKED` answers in a
+row:
+1. It publishes `False` on `/explore/resume`, so the explorer stops and
+   cancels its goal.
+2. One second later it publishes `/goal_pose` to the dock (`TWIN_DOCK`,
+   default 0 0 0).
+3. It then waits 60 s before it can act again.
+
+Any other answer resets the count, since a single misread frame must not
+abort a mission. The explorer is not restarted automatically; click START in
+the dashboard. `TWIN_VLM_ACT=0` makes the VLM report only. `HYDROPONIC`
+does not trigger anything yet.
 
 Ollama setup (once):
 
@@ -416,6 +461,8 @@ camera images. The database also opens in
 | `TWIN_YOLO_CLASSES` | furniture, people, pets | Comma list of classes that become obstacles, or `all` |
 | `TWIN_VLM_URL` | `http://localhost:11434/api/generate` | Ollama endpoint |
 | `TWIN_VLM_MODEL` / `TWIN_VLM_PERIOD` | `llava:7b` / `5` | VLM model, minimum seconds between requests |
+| `TWIN_VLM_ACT` / `TWIN_VLM_CONFIRM` | `1` / `2` | Act on `BLOCKED` (0 = report only) / answers in a row needed |
+| `TWIN_AUTOLOCALIZE` | `1` with `--ai`/`--resume` | `/initialpose` at the dock on start (`--no-localize` = 0) |
 | `TWIN_BATTERY_LOW` / `TWIN_BATTERY_RESUME` | `15` / `20` | % to return to the dock / to allow exploring again |
 | `TWIN_DOCK` | `0 0 0` | Dock `x y yaw` in `lidar3d_map` |
 | `TWIN_DEPTH_TOPIC` / `TWIN_CAMINFO_TOPIC` | RealSense defaults | `--rgbd` inputs |
@@ -446,7 +493,9 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Map colours land on the wrong surfaces | Camera intrinsics / `TWIN_CAMERA_TF` are off: calibrate (see [Camera fusion and YOLO](#camera-fusion-and-yolo)) |
 | `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → camera_link` must resolve |
 | YOLO boxes in `/yolo/image` but no `/yolo/markers` | Box bottom above the horizon and no LiDAR points inside it, or farther than 6 m. `tail …/ws/log/3d/yolo.log` |
-| Nav2 ignores YOLO obstacles | Run `./scripts/tools/add-yolo-costmap-source.sh` once. With a VoxelLayer, check its z range covers the boxes |
+| Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
+| Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
+| `initial pose NOT published` in `auto_localize.log` | The robot was more than 0.5 m from the origin at start: start the session with the dog at the dock |
 | `Ollama not reachable` in `vlm.log` | Start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
 | `no battery data` in `battery.log` | The relay does not forward `/lf/lowstate`; check in `go2sh`: `ros2 topic hz /lf/lowstate` |
 | Low battery but the dog doesn't go home | `battery.log` shows `dock goal sent`? Then check Nav2 (`/plan`); the dock is `TWIN_DOCK` in `lidar3d_map` |
@@ -503,8 +552,9 @@ WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
   For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
 - **Costmap and named locations in the dashboard.** These aren't drawn yet.
   Use RViz or Foxglove (`--foxglove`) for the costmap.
-- **Acting on the VLM and named locations.** `/vlm_decision` and
-  `config/semantic_locations.json` are not yet used to steer the dog. For
-  example, nothing yet does "go to Hydroponic_Station" (roadmap 4.19).
+- **More VLM actions and named locations.** Only `BLOCKED` acts (pause +
+  dock). `HYDROPONIC` and `config/semantic_locations.json` are not yet used
+  to steer the dog. For example, nothing yet does "go to Hydroponic_Station"
+  (roadmap 4.19).
 - **Automatic docking/charging.** The battery manager only drives back to the
   dock pose. Swapping or charging the battery is manual.

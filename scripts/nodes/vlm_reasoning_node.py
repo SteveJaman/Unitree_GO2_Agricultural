@@ -8,14 +8,25 @@ model's speed (llava:7b on a VM CPU: tens of seconds per frame).
 
 The answer is reduced to one word: the first of HYDROPONIC / BLOCKED / CLEAR
 it contains, else UNKNOWN. Nothing is published while the server is
-unreachable. The decision is informational: no node drives on it yet.
+unreachable.
+
+Action (act_on_blocked): after `blocked_confirmations` BLOCKED answers in a
+row (default 2: one misread frame must not abort a mission), the node
+  1. publishes False on /explore/resume (the explorer stops, cancels its goal),
+  2. 1 s later publishes /goal_pose to the dock (dock_x, dock_y, dock_yaw in
+     map_frame, default the origin = where the session started),
+then waits `cooldown` s before it can act again. CLEAR / HYDROPONIC /
+UNKNOWN reset the count. The explorer is not restarted automatically.
 
 Subscribes: /camera/image_raw  (sensor_msgs/Image, bgr8 / rgb8 / mono8)
 Publishes:  /vlm_decision      (std_msgs/String: HYDROPONIC | BLOCKED | CLEAR | UNKNOWN)
             /vlm_decision/raw  (std_msgs/String: the model's full answer)
+            /explore/resume    (std_msgs/Bool, False on a confirmed BLOCKED)
+            /goal_pose         (geometry_msgs/PoseStamped, the dock)
 """
 import base64
 import json
+import math
 import threading
 import time
 import urllib.error
@@ -26,8 +37,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 DEFAULT_PROMPT = ("You are a robot dog. Do you see a hydroponic station? Or is the path "
                   "ahead blocked by a desk? Answer 'HYDROPONIC', 'BLOCKED', or 'CLEAR'.")
@@ -68,7 +80,22 @@ class VlmReasoning(Node):
         self.declare_parameter('period', 5.0)          # s between requests (minimum)
         self.declare_parameter('timeout', 120.0)       # s per request
         self.declare_parameter('max_width', 672)       # px, frames are downscaled to this
+        self.declare_parameter('act_on_blocked', True)
+        self.declare_parameter('blocked_confirmations', 2)
+        self.declare_parameter('cooldown', 60.0)       # s after acting
+        self.declare_parameter('dock_x', 0.0)
+        self.declare_parameter('dock_y', 0.0)
+        self.declare_parameter('dock_yaw', 0.0)
+        self.declare_parameter('map_frame', 'lidar3d_map')
         gp = lambda k: self.get_parameter(k).value  # noqa: E731
+
+        self.act = bool(gp('act_on_blocked'))
+        self.confirmations = max(1, int(gp('blocked_confirmations')))
+        self.cooldown = float(gp('cooldown'))
+        self.dock = (float(gp('dock_x')), float(gp('dock_y')), float(gp('dock_yaw')))
+        self.map_frame = gp('map_frame')
+        self.blocked_count = 0
+        self.last_action = -math.inf
 
         self.url, self.model, self.prompt = gp('url'), gp('model'), gp('prompt')
         self.timeout = float(gp('timeout'))
@@ -79,10 +106,16 @@ class VlmReasoning(Node):
 
         self.pub = self.create_publisher(String, '/vlm_decision', 10)
         self.raw_pub = self.create_publisher(String, '/vlm_decision/raw', 10)
+        self.resume_pub = self.create_publisher(Bool, '/explore/resume', 10)
+        self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
         self.create_subscription(Image, gp('image_topic'), self.on_image, qos_profile_sensor_data)
         self.create_timer(float(gp('period')), self.tick)
         self.get_logger().info(f'VLM {self.model} at {self.url} every >= {gp("period")} s '
                                f'on {gp("image_topic")}')
+        if self.act:
+            self.get_logger().info(
+                f'{self.confirmations} BLOCKED in a row -> pause explorer, dock at '
+                f'({self.dock[0]:.2f}, {self.dock[1]:.2f}) in {self.map_frame}')
 
     def on_image(self, msg):
         self.image = msg
@@ -121,6 +154,7 @@ class VlmReasoning(Node):
             self.pub.publish(String(data=decision))
             self.raw_pub.publish(String(data=answer))
             self.get_logger().info(f'{decision} ({time.monotonic() - t0:.1f} s): {answer[:120]!r}')
+            self.on_decision(decision)
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors='replace')[:200]
             self.get_logger().warn(f'Ollama HTTP {e.code}: {detail} '
@@ -134,6 +168,34 @@ class VlmReasoning(Node):
         finally:
             with self.lock:
                 self.busy = False
+
+    # ------------------------------------------------------------ action
+    def on_decision(self, decision):
+        """Debounced BLOCKED -> pause the explorer and send the dog to the dock."""
+        if not self.act:
+            return
+        if decision != 'BLOCKED':
+            self.blocked_count = 0
+            return
+        self.blocked_count += 1
+        now = time.monotonic()
+        if self.blocked_count < self.confirmations:
+            self.get_logger().info(f'BLOCKED {self.blocked_count}/{self.confirmations}, waiting to confirm')
+            return
+        if now - self.last_action < self.cooldown:
+            return
+        self.last_action = now
+        self.blocked_count = 0
+        self.get_logger().warn('path BLOCKED (confirmed): pausing the explorer, returning to the dock')
+        self.resume_pub.publish(Bool(data=False))
+        time.sleep(1.0)   # worker thread: let the explorer finish its stop first
+        goal = PoseStamped()
+        goal.header.frame_id = self.map_frame
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.position.x, goal.pose.position.y = self.dock[0], self.dock[1]
+        goal.pose.orientation.z = math.sin(self.dock[2] / 2.0)
+        goal.pose.orientation.w = math.cos(self.dock[2] / 2.0)
+        self.goal_pub.publish(goal)
 
 
 def main():

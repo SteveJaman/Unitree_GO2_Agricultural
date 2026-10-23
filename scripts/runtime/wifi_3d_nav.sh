@@ -28,6 +28,10 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
 #   ./scripts/runtime/wifi_3d_nav.sh --ai            # + YOLO, VLM, battery manager
 #   ./scripts/runtime/wifi_3d_nav.sh --ai --no-yolo  # --ai without YOLO (also --no-vlm, --no-battery)
+#                      --ai also: adds /yolo/obstacles to the Nav2 costmap config
+#                      (add-yolo-costmap-source.sh), VLM BLOCKED -> pause + dock,
+#                      and auto-localization (as --resume). Needs Ollama for the VLM.
+#   ./scripts/runtime/wifi_3d_nav.sh --no-localize   # with --ai/--resume: no /initialpose
 #   ./scripts/runtime/wifi_3d_nav.sh --resume        # continue the newest map (after a battery swap)
 #   ./scripts/runtime/wifi_3d_nav.sh --save-location # (2nd terminal) label clicked points
 #   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion (no YOLO/VLM)
@@ -49,6 +53,7 @@
 #   TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2  TWIN_YOLO_CLASSES=chair,...|all
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
+#   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC                       (--rgbd)
 #   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
@@ -100,6 +105,7 @@ while [ $# -gt 0 ]; do
         --no-yolo|--no-vlm|--no-battery)
                       NO_AI+=("${1#--no-}") ;;
         --resume)     RESUME="true" ;;
+        --no-localize) NO_LOCALIZE="true" ;;
         --save-location) ACTION="save-location" ;;
         --sim)        SIM="true"; PASSTHRU+=("$1") ;;
         --foxglove)   TWIN_FOXGLOVE="1" ;;
@@ -129,6 +135,13 @@ TWIN_BATTERY="${TWIN_BATTERY:-$(ai_default battery)}"
 TWIN_BATTERY_LOW="${TWIN_BATTERY_LOW:-15}"
 TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
 TWIN_DOCK="${TWIN_DOCK:-0 0 0}"
+TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
+TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
+# Zero-touch localization at the dock whenever --ai or --resume is used.
+if { [ "${AI}" = "true" ] || [ "${RESUME}" = "true" ]; } && [ "${NO_LOCALIZE:-false}" != "true" ]; then
+    TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-1}"
+fi
+TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 
 if [ "${TWIN_MODE}" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
@@ -302,6 +315,8 @@ start_twin_when_ready() {
             -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC -e TWIN_CAMERA_TF -e TWIN_CAMERA_FRAME \
             -e TWIN_YOLO_MODEL -e TWIN_YOLO_RATE -e TWIN_YOLO_CLASSES -e TWIN_RTAB_ARGS \
             -e TWIN_VLM_URL -e TWIN_VLM_MODEL -e TWIN_VLM_PERIOD \
+            -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
+            -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
@@ -379,13 +394,40 @@ image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, nee
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
          "${NODES_DIR}/battery_manager.py" "${NODES_DIR}/vlm_reasoning_node.py" \
-         "${NODES_DIR}/save_location.py"; do
+         "${NODES_DIR}/save_location.py" "${NODES_DIR}/auto_localize.py"; do
     [ -f "${f}" ] || die "${f} not found."
 done
+
+# The VLM needs Ollama up with the model pulled before the session starts.
+if [ "${TWIN_VLM}" = 1 ] && command -v curl >/dev/null 2>&1; then
+    vlm_url="${TWIN_VLM_URL:-http://localhost:11434/api/generate}"
+    vlm_model="${TWIN_VLM_MODEL:-llava:7b}"
+    if ! tags="$(curl -s -m 3 "${vlm_url%/api/*}/api/tags")"; then
+        echo "[checks] WARN: Ollama not reachable at ${vlm_url%/api/*}: run 'ollama serve' (the VLM stays idle until it answers)"
+    elif ! grep -q "\"${vlm_model}\"" <<< "${tags}"; then
+        echo "[checks] WARN: Ollama has no ${vlm_model}: run 'ollama pull ${vlm_model}'"
+    else
+        echo "[checks] Ollama ${vlm_model} at ${vlm_url%/api/*} ............ OK"
+    fi
+fi
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
 
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin
+
+# --ai with YOLO: make sure Nav2's costmap reads /yolo/obstacles. Idempotent
+# (a no-op once applied); a failure is reported but never blocks the session.
+YOLO_COSTMAP="off"
+if [ "${TWIN_YOLO}" = 1 ]; then
+    echo "[3d] Adding /yolo/obstacles to the Nav2 costmap config (add-yolo-costmap-source.sh)..."
+    if NAV2_WIFI_DIR="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" \
+            bash "${REPO_DIR}/scripts/tools/add-yolo-costmap-source.sh" 2>&1 | sed 's/^/    /'; then
+        YOLO_COSTMAP="on (Nav2 avoids YOLO obstacles; undo: add-yolo-costmap-source.sh --undo)"
+    else
+        YOLO_COSTMAP="FAILED (YOLO runs, Nav2 ignores it; see the messages above)"
+        echo "[3d] WARN: costmap patch failed; continuing without YOLO obstacles in Nav2"
+    fi
+fi
 
 T0="$(date +%s)"
 if [ "${RESUME}" = "true" ]; then
@@ -408,7 +450,9 @@ echo "================================================================"
 echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC}$( [ "${TWIN_MODE}" != lidar ] && echo ", camera ${TWIN_RGB_TOPIC}" )"
 on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ]; } && echo "on if the camera publishes" || echo off; }
 echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
-echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate})" )"
+echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"
+echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> pause + dock" || echo "report only" ))" )"
+echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialpose at the dock (0 0 0) on start" || echo "manual" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"

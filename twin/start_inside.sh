@@ -13,7 +13,9 @@
 #                         (JPEG copies for the dashboard)
 #   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
 #   * yolo_node.py        (TWIN_YOLO=1 and camera) /yolo/detections, /yolo/obstacles
-#   * vlm_reasoning_node  (TWIN_VLM=1 and camera) Ollama llava -> /vlm_decision
+#   * vlm_reasoning_node  (TWIN_VLM=1 and camera) Ollama llava -> /vlm_decision;
+#                         confirmed BLOCKED pauses the explorer and docks (TWIN_VLM_ACT)
+#   * auto_localize       (TWIN_AUTOLOCALIZE=1) one-shot /initialpose at the dock
 #
 # A TWIN_DB that already exists is continued: RTAB-Map adds a new session to
 # it and links it to the old map once it recognises a place (--resume).
@@ -47,7 +49,8 @@
 #   TWIN_CAMERA_HFOV_DEG=120    used when the camera has no camera_info
 #   TWIN_YOLO=0|1  TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2
 #   TWIN_VLM=0|1   TWIN_VLM_URL=http://localhost:11434/api/generate
-#   TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
+#   TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5  TWIN_VLM_ACT=1  TWIN_VLM_CONFIRM=2
+#   TWIN_AUTOLOCALIZE=0|1    TWIN_DOCK="0 0 0"  (x y yaw in TWIN_MAP_FRAME)
 #   TWIN_YOLO_CLASSES="chair,person,..."|all
 #   TWIN_MAP_FRAME=lidar3d_map  TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="..."        extra RTAB-Map parameters, e.g. "--Grid/CellSize 0.1"
@@ -80,6 +83,10 @@ TWIN_VLM="${TWIN_VLM:-0}"
 TWIN_VLM_URL="${TWIN_VLM_URL:-http://localhost:11434/api/generate}"
 TWIN_VLM_MODEL="${TWIN_VLM_MODEL:-llava:7b}"
 TWIN_VLM_PERIOD="${TWIN_VLM_PERIOD:-5}"
+TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
+TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
+TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
+read -r DOCK_X DOCK_Y DOCK_YAW <<< "${TWIN_DOCK:-0 0 0}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
 GO2_CAMINFO_TOPIC=/camera/camera_info      # published by go2_camera_info.py
@@ -148,6 +155,15 @@ if [ "$TWIN_FOXGLOVE" = 1 ]; then
 fi
 start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
     -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+
+# One-shot: /initialpose at the session's start pose (the dock), then exits.
+# Not in PIDS, so its normal exit is not reported as a crash.
+if [ "$TWIN_AUTOLOCALIZE" = 1 ]; then
+    python3 -u /nodes/auto_localize.py --ros-args \
+        -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME" \
+        > "$LOGS/auto_localize.log" 2>&1 &
+    echo "[go2-3d] auto_localize started (log ${LOGS}/auto_localize.log)"
+fi
 
 # --- Camera: wait for the first frame, learn its TF frame -------------------
 CAMERA_FRAME=""
@@ -269,7 +285,11 @@ fi
 if [ "$TWIN_VLM" = 1 ] && [ "$TWIN_MODE" = camera ]; then
     start vlm python3 -u /nodes/vlm_reasoning_node.py --ros-args \
         -p image_topic:="$TWIN_RGB_TOPIC" -p url:="$TWIN_VLM_URL" \
-        -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")"
+        -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")" \
+        -p act_on_blocked:="$( [ "$TWIN_VLM_ACT" = 1 ] && echo true || echo false )" \
+        -p blocked_confirmations:="$TWIN_VLM_CONFIRM" \
+        -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" -p dock_yaw:="$(float "$DOCK_YAW")" \
+        -p map_frame:="$TWIN_MAP_FRAME"
 elif [ "$TWIN_VLM" = 1 ]; then
     echo "[go2-3d] VLM off (needs the Go2 camera: TWIN_MODE=camera)"
 fi

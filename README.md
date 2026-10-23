@@ -250,6 +250,7 @@ cd ~/files/Unitree_GO2_Agricultural
 # 3. In RViz (opens automatically):
 #    a. Wait ~12 s for the map to appear
 #    b. "2D Pose Estimate" — click the dog's position
+#       (not needed with wifi_3d_nav.sh --ai / --resume: auto-localized at the dock)
 #    c. Click "Auto Explore: START" in the Go2 Explore panel
 ```
 
@@ -407,7 +408,8 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_camera_info.py`](scripts/nodes/go2_camera_info.py) | `/camera/camera_info` for a camera without one (pinhole from a field of view, or fx/fy/cx/cy) |
 | [`battery_manager.py`](scripts/nodes/battery_manager.py) | Always: `/battery_state` for the dashboard. With `--ai`: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
-| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | `--ai`: camera frame → local Ollama `llava:7b` → `/vlm_decision` |
+| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | `--ai`: camera frame → local Ollama `llava:7b` → `/vlm_decision`; confirmed `BLOCKED` → pause explorer + dock |
+| [`auto_localize.py`](scripts/nodes/auto_localize.py) | `--ai` / `--resume`: one-shot `/initialpose` at the dock (0, 0, 0) |
 | [`save_location.py`](scripts/nodes/save_location.py) | `--save-location`: label clicked points → `config/semantic_locations.json` |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Dashboard (or Foxglove) `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
@@ -427,7 +429,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
-| [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) | Opt-in: add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi (`--undo` restores) |
+| [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh --ai` (`--undo` restores) |
 | [`apply-lab-nav-fixes.sh`](scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](docs/LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
@@ -660,8 +662,8 @@ container ([`twin/`](twin/)) with:
 - **YOLO11s ([`twin/yolo_node.py`](twin/yolo_node.py), with `--ai`).** It publishes
   `/yolo/detections`, `/yolo/image` and `/yolo/markers`, plus `/yolo/obstacles`
   (3D boxes). With
-  [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh)
-  Nav2 plans around them.
+  [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh),
+  run automatically with `--ai`, Nav2 plans around them.
 - **Web dashboard on `:3000`** ([`twin/webapp`](twin/webapp/), React +
   three.js + roslib), over **rosbridge on `:9090`**. It shows:
   - the dense map, the robot moving, the Nav2 plan, the goal and YOLO boxes;
@@ -684,21 +686,36 @@ container ([`twin/`](twin/)) with:
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
 ```
 
-**`--ai`** starts the autonomy helpers in the background once Nav2 is up.
-Leave any one out with `--no-yolo`, `--no-vlm` or `--no-battery`.
+> **Before using `--ai`, Ollama must be running with the model pulled.** The
+> VLM needs it:
+> ```bash
+> ollama serve            # keep it running (or as the systemd service the installer sets up)
+> ollama pull llava:7b    # once, ~4.7 GB
+> ```
+> `wifi_3d_nav.sh` checks this at start and warns if Ollama is unreachable or
+> the model is missing. Without Ollama the VLM stays idle; everything else
+> runs. Ollama on a Windows host with a GPU is much faster; see
+> [docs/3d_nav.md](docs/3d_nav.md#vlm-reasoning-ollama).
+
+**`--ai`** starts the autonomy loop in the background once Nav2 is up. Leave
+any part out with `--no-yolo`, `--no-vlm` or `--no-battery`.
 
 | Node | What it does |
 |---|---|
 | [`battery_manager.py`](scripts/nodes/battery_manager.py) (in `go2-lidar3d`) | Below **15 %**: pauses the explorer (`/explore/resume` False) and sends `/goal_pose` to the dock, the map origin (`TWIN_DOCK`). Explorer START is refused until **20 %** |
-| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | Every ≥ 5 s asks a local Ollama `llava:7b` about the camera view → `/vlm_decision` (`HYDROPONIC` / `BLOCKED` / `CLEAR` / `UNKNOWN`). Informational; needs Ollama (`ollama pull llava:7b`) |
-| [`twin/yolo_node.py`](twin/yolo_node.py) | YOLO11s detections and 3D obstacles (`/yolo/*`) |
+| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | Every ≥ 5 s asks a local Ollama `llava:7b` about the camera view → `/vlm_decision` (`HYDROPONIC` / `BLOCKED` / `CLEAR` / `UNKNOWN`). **Two `BLOCKED` in a row → pauses the explorer and sends the dog to the dock** (then 60 s cooldown; `TWIN_VLM_ACT=0` = report only) |
+| [`twin/yolo_node.py`](twin/yolo_node.py) | YOLO11s detections and 3D obstacles (`/yolo/*`). `--ai` also runs [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) before the session, so Nav2's costmap always reads `/yolo/obstacles` |
+| [`auto_localize.py`](scripts/nodes/auto_localize.py) | Publishes the dock pose (0, 0, 0) on `/initialpose` at start, so there's no "2D Pose Estimate" click. Skipped if the robot has already moved > 0.5 m |
 
-YOLO and the VLM need the camera. Without it they are skipped and the battery
-manager still runs.
+YOLO and the VLM need the camera. Without it they are skipped, and the
+battery manager and auto-localization still run.
 
 **`--resume`** is for restarting after a battery swap.
 - It reopens the newest `rtabmap-*.db` (after copying it to `<db>.bak-<time>`)
   instead of creating a new database.
+- It **automatically localizes the robot at the dock**: `auto_localize.py`
+  publishes `/initialpose` (0, 0, 0), as with `--ai`. Disable it with
+  `--no-localize`.
 - RTAB-Map adds the run as a new session and joins it to the old map when it
   recognises a place. That works best in camera mode.
 - Start the dog from the same spot (the dock): Nav2's `lidar3d_map`, the dock
@@ -820,7 +837,8 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_click_to_goal.py      # dashboard click -> Nav2 goal
 │   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
 │   │   ├── battery_manager.py        # --ai: low battery -> dock
-│   │   ├── vlm_reasoning_node.py     # --ai: Ollama llava -> /vlm_decision
+│   │   ├── vlm_reasoning_node.py     # --ai: Ollama llava -> /vlm_decision; BLOCKED -> dock
+│   │   ├── auto_localize.py          # --ai/--resume: /initialpose at the dock
 │   │   ├── save_location.py          # --save-location: named points
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
@@ -835,7 +853,7 @@ Unitree_GO2_Agricultural/
 │       ├── verify_costmap.sh
 │       ├── save_rviz_config.sh
 │       ├── export_tour.py
-│       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (opt-in)
+│       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (automatic with --ai)
 │       ├── apply-lab-nav-fixes.sh    # one-time upstream go2-nav2-wifi fixes
 │       ├── diag_arm.sh               # D1 arm diagnostic
 │       └── calibrate_arm.py          # D1 arm per-joint offset calibration
@@ -1058,7 +1076,9 @@ and manual waypoint navigation via RViz. This repo adds:
   - PLY export and mesh.
 - **AI helpers** — `wifi_3d_nav.sh --ai`:
   - YOLO11s obstacles, optionally fed to the Nav2 costmap;
-  - local VLM scene reasoning (Ollama llava);
+  - local VLM scene reasoning (Ollama llava) that pauses and docks on a
+    blocked path;
+  - zero-touch localization at the dock;
   - low-battery return to the dock;
   - named locations from clicked points.
 

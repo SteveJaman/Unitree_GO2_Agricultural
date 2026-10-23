@@ -6,6 +6,27 @@ Last updated: 2026-10-23
 
 ---
 
+## Physical test readiness (2026-10-23)
+
+**Primary interface: the web dashboard** at `http://<VM IP>:3000`, started by
+`./scripts/runtime/wifi_3d_nav.sh`. RViz still opens with the session, and
+Foxglove is the optional alternative (`--foxglove`).
+
+| Feature | State |
+|---|---|
+| Web dashboard (3D map, robot, plan, camera, battery, VLM, click-to-go, explorer START/STOP) | **Implemented (pending physical test)**: tested against a mock rosbridge |
+| Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
+| VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
+| Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
+| YOLO obstacles in the Nav2 costmap (patched automatically with `--ai`) | **Implemented (pending physical test)** |
+| `--resume` after a battery swap | **Implemented (pending physical test)** |
+| D1 arm over Wi-Fi | Not started (later) |
+
+Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
+and the [Next session plan](#next-session-plan).
+
+---
+
 ## What's complete (code)
 
 Everything below is written, committed, and wired together. None of it
@@ -144,7 +165,8 @@ robot, click-to-go, `--export`.
   `/yolo/obstacles`. Obstacles are placed by LiDAR depth, or by the floor plane
   when no LiDAR points fall inside the box.
 - **Nav2:** [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh)
-  is an opt-in patch that adds `/yolo/obstacles` to the costmap config.
+  adds `/yolo/obstacles` to the costmap config. Since 2026-10-23 it runs
+  automatically with `--ai`.
 - **Verified off-robot:**
   - optical TF axes;
   - LiDAR and floor depth for a synthetic object (exact match);
@@ -159,7 +181,12 @@ starts three nodes:
   `go2-lidar3d`: below 15 % it pauses the explorer and sends the dock goal;
   START is blocked until 20 %.
 - [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py): Ollama
-  `llava:7b` → `/vlm_decision`.
+  `llava:7b` → `/vlm_decision`. Since 2026-10-23, two `BLOCKED` answers in a
+  row pause the explorer and send the dock goal.
+- [`auto_localize.py`](../scripts/nodes/auto_localize.py) (2026-10-23, also
+  with `--resume`): one-shot `/initialpose` at the dock (0, 0, 0). Skipped if
+  the robot is already more than 0.5 m from the origin. Verified off-robot:
+  publishes ×3 near the origin, refuses at 2.3 m; VLM debounce and cooldown.
 - YOLO.
 
 The other two features:
@@ -241,15 +268,19 @@ relay is unconfirmed.
 | 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
 | 23 | Camera TF / intrinsics | dashboard: coloured map vs camera panel | colours on the right surfaces (else calibrate, roadmap 3.4) |
 | 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
-| 25 | YOLO → Nav2 | `add-yolo-costmap-source.sh`, chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
+| 25 | YOLO → Nav2 | `--ai` (banner `YOLO → Nav2 : on`), chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
 | 26 | Battery data | `go2sh; ros2 topic echo /lf/lowstate --field bms_state.soc` | matches the app's battery % |
 | 27 | Low-battery dock | `TWIN_BATTERY_LOW=95 wifi_3d_nav.sh --ai` (test threshold), explorer running | explorer stops, dog drives to the start point, START refused |
-| 28 | VLM | Ollama + `llava:7b`, `--ai` | `/vlm_decision` updates; `vlm.log` shows answer times |
+| 28 | VLM | `ollama serve` + `llava:7b`, `--ai` | `[checks] Ollama llava:7b … OK`; `/vlm_decision` updates in the dashboard |
 | 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
 | 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
 | 31 | Dashboard | open `http://<VM IP>:3000` from Windows | green rosbridge dot, robot moves with the dog, battery % matches the app |
 | 32 | Dashboard camera | camera mode, dashboard Camera / YOLO tabs | ~5 fps each |
 | 33 | Dashboard STOP | explorer running, click STOP | dog stops, explorer `IDLE` |
+| 34 | Auto-localization | `--ai` with the dog at the dock | `auto_localize.log`: `initial pose … published`; no manual 2D Pose Estimate needed |
+| 35 | VLM action | explorer running, block the path with a desk / board | `vlm.log`: `BLOCKED 1/2`, then `path BLOCKED (confirmed)`; explorer stops, dog returns to the dock |
+| 36 | VLM false alarm | `TWIN_VLM_ACT=0 … --ai`, normal run | count how often `BLOCKED` appears on a clear path before trusting the action |
+| 37 | Battery-swap restart | Ctrl+C, swap, dog at the dock, `--ai --resume` | READY shows `[resumed …]`, auto-localized, map continues |
 
 ---
 
@@ -350,10 +381,27 @@ ros2 topic echo /explore/status            # watch goals_sent
 # 8. Commit any config/tour.rviz that gets saved
 ```
 
-3D twin (instead of step 3, once `--build` has run):
-`./scripts/runtime/wifi_3d_nav.sh --ai`, then open `http://<VM IP>:3000`.
-After a battery swap, restart from the same spot with `--ai --resume`. Work
-through checks 17–30 above (see [3d_nav.md](3d_nav.md)).
+### Autonomous loop test (3D twin)
+
+```bash
+# Once, with internet: image (incl. dashboard) + VLM model
+./scripts/runtime/wifi_3d_nav.sh --build
+ollama pull llava:7b
+
+# Every run
+ollama serve &                                   # unless already running as a service
+# Dog standing AT THE DOCK (the map origin, dock goal and auto-localization assume it)
+./scripts/runtime/wifi_3d_nav.sh --ai            # banner: YOLO → Nav2 on, Ollama OK, Localize auto
+# Open http://<VM IP>:3000 (READY block); START the explorer from the dashboard
+# Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh --ai
+# VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --ai
+
+# After a battery swap: dog back at the dock, then
+./scripts/runtime/wifi_3d_nav.sh --ai --resume
+```
+
+Work through checks 17–37 above (see [3d_nav.md](3d_nav.md)). Keep the
+handheld remote as the emergency stop.
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
 once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).
