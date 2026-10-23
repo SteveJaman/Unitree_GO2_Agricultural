@@ -5,6 +5,11 @@
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
 # using the go2-nav2-wifi stack, with a CUSTOM frontier explorer.
 #
+# --omni: full Go2 mobility. MPPI (Omni) walks backwards and sidesteps as well
+# as forward, the planner uses omnidirectional lattice moves, and
+# go2_stuck_recovery.py steps back/aside and retries when a leg is aborted
+# (config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py).
+#
 # One-command workflow:
 #   1. Power on the dog and stand it
 #   2. Run:  ./wifi_nav.sh
@@ -26,6 +31,7 @@ MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
 ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
+RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # go2_camera_wifi.{sh,py}
@@ -61,6 +67,7 @@ ACTION="run"
 EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
+OMNI="false"
 START_RELAY="true"
 ARM="false"
 SIM="false"
@@ -87,6 +94,7 @@ while [ $# -gt 0 ]; do
         --setup-ssh)    ACTION="setup-ssh" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
+        --omni)         OMNI="true" ;;
         --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
         --robot-ip)     need_arg "$1" "${2:-}"; ROBOT_IP_FLAG="$2"; shift ;;
@@ -113,6 +121,22 @@ kill_explore_inside_container() {
         fi
         sleep 1
     ' 2>/dev/null || true
+}
+
+kill_recovery_inside_container() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c \
+        'pkill -f "^python3 /tmp/go2_stuck_recovery.py" 2>/dev/null || true' 2>/dev/null || true
+}
+
+# MPPI is not in the upstream go2-lidar3d image; install it on first use.
+ensure_mppi() {
+    if docker exec "${CONTAINER_NAME}" test -d /opt/ros/humble/share/nav2_mppi_controller; then
+        return 0
+    fi
+    echo "[omni] Installing ros-humble-nav2-mppi-controller in ${CONTAINER_NAME} (needs internet)..."
+    docker exec -u root "${CONTAINER_NAME}" bash -c \
+        'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ros-humble-nav2-mppi-controller' \
+        >/dev/null 2>&1
 }
 
 kill_floor_filter_inside_container() {
@@ -233,6 +257,7 @@ do_clean() {
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         echo "[clean] Killing stale helpers inside container..."
         kill_explore_inside_container
+        kill_recovery_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
     fi
@@ -474,6 +499,7 @@ echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
+echo "  Omni        : ${OMNI}$( [ "${OMNI}" = "true" ] && echo "  (MPPI: reverse + sidestep, stuck recovery)" )"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
 echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
@@ -702,9 +728,13 @@ cleanup() {
         kill_explore_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
+        kill_recovery_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     stop_robot_relay
+    if [ "${OMNI}" = "true" ]; then
+        python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" --disable "${NAV2_WIFI_DIR}" || true
+    fi
     # Leave go2-nav2-wifi's planner config without the camera source, so a
     # later mapping.sh run never waits on camera obstacles that never come.
     if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then
@@ -731,9 +761,19 @@ else
 fi
 echo
 
-if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ]; then
+if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ] || [ "${OMNI}" = "true" ]; then
     (
         sleep 20
+
+        if [ "${OMNI}" = "true" ]; then
+            kill_recovery_inside_container
+            docker cp "${RECOVERY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_stuck_recovery.py" 2>/dev/null || true
+            # The explorer picks its own next goal; only re-send goals when it is off.
+            retry_goal=true; [ "${EXPLORE}" = "true" ] && retry_goal=false
+            echo "[omni] Starting stuck recovery (retry goal: ${retry_goal})..."
+            docker exec -u root "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args -p retry_goal:=${retry_goal} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
+        fi
 
         if [ "${FLOOR_FILTER}" = "true" ]; then
             docker exec -u root "${CONTAINER_NAME}" bash -c '
@@ -820,6 +860,14 @@ if [ "${ARM}" = "true" ]; then
     ) &
     ARM_PID=$!
 fi
+
+# Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.
+if [ "${OMNI}" = "true" ] && ! ensure_mppi; then
+    echo "[omni] WARN: MPPI install failed; continuing forward-only"
+    OMNI="false"
+fi
+if [ "${OMNI}" = "true" ]; then omni_arg=--enable; else omni_arg=--disable; fi
+python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" "${omni_arg}" "${NAV2_WIFI_DIR}" || true
 
 # Camera obstacles in the Nav2 costmaps only for wifi_3d_nav.sh --camera-obstacles:
 # the source makes Nav2 stop when camera data stops, so every other session removes it.

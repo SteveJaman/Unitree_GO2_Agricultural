@@ -91,6 +91,7 @@ both the dog and the arm — is the long-term goal.
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/camera_lidar_fusion.md](docs/camera_lidar_fusion.md) | Camera intrinsic calibration and the camera–LiDAR overlay check |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, commands, calibration, troubleshooting |
+| [docs/omni_nav.md](docs/omni_nav.md) | `--omni`: full Go2 mobility (MPPI reverse + sidestep, stuck recovery) |
 | [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + Foxglove, click-to-go, export |
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
@@ -344,6 +345,7 @@ See [D1-T Arm Control](#d1-t-arm-control) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
+| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning, stuck recovery. See [docs/omni_nav.md](docs/omni_nav.md) |
 | `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |
 | `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](docs/tour.md) |
 | `--no-camera` | Skip the camera relay |
@@ -393,6 +395,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Robot JPEG frames (`/go2/front_camera/compressed`) → `/camera/image_raw` (bgr8) + `/camera/camera_info` |
 | [`scripts/robot/go2_camera_wifi.sh`](scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`go2_stuck_recovery.py`](scripts/nodes/go2_stuck_recovery.py) | `--omni`: on an aborted leg, step back/aside into free space and retry the goal |
 | [`go2_camera_obstacles.py`](scripts/nodes/go2_camera_obstacles.py) | `--camera-obstacles`: Depth Anything V2-Small depth, scaled by the LiDAR → `/camera/obstacle_points` for the Nav2 costmap |
 | [`go2_fusion_camera.py`](scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
 | [`go2_lidar_overlay.py`](scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |
@@ -417,6 +420,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`lidar_overlay.sh`](scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
 | [`rviz_add_camera.py`](scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
 | [`nav2_camera_source.py`](scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`) |
+| [`nav2_omni.py`](scripts/tools/nav2_omni.py) | Switches go2-nav2-wifi between forward-only RPP and MPPI Omni ([`config/nav2/go2_omni.yaml`](config/nav2/go2_omni.yaml); run by `wifi_nav.sh`) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
@@ -757,6 +761,7 @@ Unitree_GO2_Agricultural/
 ├── config/
 │   ├── README.md
 │   ├── camera/                       # front_camera.yaml (calibration), sim_front_camera.yaml
+│   ├── nav2/go2_omni.yaml            # --omni: MPPI Omni + omni lattice settings
 │   ├── foxglove_layout.json          # Foxglove layout (3D twin + camera), import in Foxglove
 │   └── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
 ├── docs/

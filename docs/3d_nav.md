@@ -70,6 +70,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | Option | Effect |
 |---|---|
 | `--fusion` | **Camera + LiDAR fusion.** RTAB-Map colours the 3D map from the built-in front camera, using the LiDAR as depth. Also publishes `/camera/lidar_overlay`. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
+| `--omni` | Full Go2 mobility: walk backwards, sidestep, stuck recovery. See [omni_nav.md](omni_nav.md) |
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration and `--build`. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
 | `--rgbd` | Also feed RealSense colour + depth to RTAB-Map (coloured map). Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--rosbridge` | rosbridge on `:9090` instead of foxglove_bridge on `:8765` |
