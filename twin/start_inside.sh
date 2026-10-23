@@ -15,7 +15,8 @@
 #
 # Environment (set by wifi_3d_nav.sh; ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI
 # are copied from the running wifi_nav.sh session):
-#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=lidar|rgbd
+#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=lidar|rgbd|fusion
+#   TWIN_CAMERA_INFO=/camera_cfg/front_camera.yaml   (fusion: lens calibration)
 #   TWIN_BRIDGE=foxglove|rosbridge|none   TWIN_BRIDGE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode)
@@ -33,6 +34,8 @@ TWIN_DEPTH_TOPIC="${TWIN_DEPTH_TOPIC:-/camera/depth/image_rect_raw}"
 TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
+TWIN_CAMERA_INFO="${TWIN_CAMERA_INFO:-}"
+TWIN_IMAGE_TOPIC="${TWIN_IMAGE_TOPIC:-/camera/image_raw}"
 LOGS=/logs
 
 mkdir -p "${HOME:-/tmp/go2-3d-home}" "$LOGS"
@@ -64,7 +67,20 @@ ROS_ARGS=(
     -p subscribe_scan_cloud:=true -p qos_scan:=2
     -r scan_cloud:="$TWIN_CLOUD_TOPIC"
 )
-if [ "$TWIN_MODE" = rgbd ]; then
+if [ "$TWIN_MODE" = fusion ]; then
+    # Front camera + LiDAR: go2_fusion_camera.py publishes the (undistorted)
+    # image, its camera_info and a LiDAR depth image projected into that camera,
+    # all with one stamp; RTAB-Map runs RGB-D + scan and colours the 3D map.
+    [ -f "$TWIN_CAMERA_INFO" ] || { echo "[go2-3d] ERROR: fusion needs TWIN_CAMERA_INFO (got '${TWIN_CAMERA_INFO}')" >&2; exit 1; }
+    # LiDAR depth is sparse: keep every depth pixel (default decimation is 4).
+    RTAB_PARAMS+=(--Grid/Sensor 2 --Grid/DepthDecimation 1)
+    ROS_ARGS+=(
+        -p subscribe_rgb:=true -p subscribe_depth:=true -p approx_sync:=true
+        -p qos_image:=0 -p qos_camera_info:=0
+        -r rgb/image:=/twin/rgb/image -r depth/image:=/twin/depth/image
+        -r rgb/camera_info:=/twin/rgb/camera_info
+    )
+elif [ "$TWIN_MODE" = rgbd ]; then
     RTAB_PARAMS+=(--Grid/Sensor 2)
     ROS_ARGS+=(
         -p subscribe_rgb:=true -p subscribe_depth:=true -p approx_sync:=true
@@ -119,6 +135,16 @@ esac
 
 start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
     -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+
+if [ "$TWIN_MODE" = fusion ]; then
+    start fusion_camera python3 -u /nodes/go2_fusion_camera.py --ros-args \
+        -p image_topic:="$TWIN_IMAGE_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC"
+    # Live fusion check: LiDAR points drawn on the camera image.
+    start overlay python3 -u /nodes/go2_lidar_overlay.py --ros-args \
+        -p image_topic:="$TWIN_IMAGE_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC"
+fi
 
 sleep 3
 kill -0 "$RTAB_PID" 2>/dev/null || {

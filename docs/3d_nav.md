@@ -69,6 +69,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 
 | Option | Effect |
 |---|---|
+| `--fusion` | **Camera + LiDAR fusion.** RTAB-Map colours the 3D map from the built-in front camera, using the LiDAR as depth. Also publishes `/camera/lidar_overlay`. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
 | `--rgbd` | Also feed RealSense colour + depth to RTAB-Map (coloured map). Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--rosbridge` | rosbridge on `:9090` instead of foxglove_bridge on `:8765` |
 | `--no-bridge` | RTAB-Map only, no web bridge |
@@ -85,6 +86,62 @@ RTAB-Map gets up to `TWIN_STOP_TIMEOUT` (60 s) to write the database. Wait for
 
 Each run writes its own database:
 `~/files/go2-nav2-wifi/ws/maps/rtabmap/rtabmap-YYYYmmdd-HHMMSS.db`.
+
+---
+
+## Camera + LiDAR fusion (`--fusion`)
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --fusion                 # real dog (needs a calibration)
+SIM_RENDER_ENGINE=ogre ./scripts/runtime/wifi_3d_nav.sh --sim --no-explore --fusion
+```
+
+The front camera has no depth of its own, so the LiDAR supplies it:
+
+```
+/camera/image_raw ──► go2_fusion_camera ──► /twin/rgb/image        (undistorted, front_camera_optical)
+/lidar3d/registered ─►  (projects the  ──► /twin/rgb/camera_info
+TF, calibration ─────►   LiDAR into    ──► /twin/depth/image      (16UC1 mm, same stamp)
+                         the camera)              │
+                                                  ▼
+                               RTAB-Map RGB-D + scan ──► /rtabmap/cloud_map (x y z rgb)
+```
+
+- **Calibration:** `--fusion` needs the lens calibration
+  `config/camera/front_camera.yaml`
+  ([how to make it](camera_lidar_fusion.md#1-intrinsic-calibration-once-per-camera-and-resolution)).
+  `--sim` uses the exact Gazebo one. Override with `TWIN_CAMERA_INFO_FILE`.
+- **Coloured map:** the 3D map is coloured where the camera saw it; LiDAR-only
+  parts (behind and beside the dog) stay white. It fills in as the dog moves,
+  because RTAB-Map adds a node every 5 cm or 0.05 rad, not while standing still.
+- **Live check:** `/camera/lidar_overlay` (the [overlay](camera_lidar_fusion.md#2-overlay-check))
+  runs automatically.
+- **Logs:** `fusion_camera.log` reports RGB-D frames and LiDAR depth pixels
+  per frame every 10 s; `overlay.log` the overlay.
+
+![Fused map in simulation after 2.3 m along the crop row](images/fusion_map_sim.png)
+
+*Top-down view of `/rtabmap/cloud_map` in `--sim --fusion` after driving
+2.3 m: tan path, brown bed edges and green tree rows from the camera;
+white is LiDAR-only.*
+
+### In RViz
+
+`wifi_nav.sh` adds three displays to the session's RViz layouts
+(`lidar3d_planning.rviz`, `lidar3d_navigation.rviz` in go2-nav2-wifi), once,
+via [`scripts/tools/rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py):
+
+| Display | Topic | Shows |
+|---|---|---|
+| Front camera | `/camera/image_raw` | Live camera (any mode) |
+| LiDAR on camera | `/camera/lidar_overlay` | LiDAR points on the image (`--fusion`, or `lidar_overlay.sh`) |
+| 3D map (RTAB-Map) | `/rtabmap/cloud_map` | The 3D map, in camera colour with `--fusion` (Color Transformer RGB8) |
+
+The image displays open as panels; drag them where you want and save the
+layout. The 3D map display is Transient Local, so it shows the last map even
+while the dog stands still. In `--sim`, the Front camera panel can stutter:
+Gazebo publishes Reliable and the display reads Best Effort, which suits the
+real relay. The LiDAR on camera panel is unaffected.
 
 ---
 
@@ -335,7 +392,8 @@ never get a working WebGL context. Use one of these instead.
 - **YOLO semantic layer.** A detector on the Jetson publishing
   `vision_msgs/Detection2DArray`, overlaid on the camera in Foxglove and
   projected into 3D markers. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
-- **Colour from the built-in camera.** It has no depth and no calibration
-  (`camera_info`), so it cannot colour the map. `--rgbd` needs the RealSense.
+- **Dense colour.** `--fusion` colours only where LiDAR points project into
+  the image, so the colour is as sparse as the scan. A RealSense (`--rgbd`)
+  gives dense depth.
 - **Waypoint queue from Foxglove.** Each click replaces the current goal. For a
   queued route, use the RViz waypoint panel ([Tour](tour.md)).

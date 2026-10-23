@@ -21,8 +21,9 @@ both calibrations are right, the points land on the objects they hit.
 the beds into the sky. Bottom: the same scene after correcting it live with
 `ros2 param set`. Red is near, blue is far.*
 
-Nothing here fuses data into Nav2 or RTAB-Map yet. This is the verification
-step that has to pass before that work starts. See [What comes next](#what-comes-next).
+This is the verification step for the fusion that follows. The coloured
+RTAB-Map map (`wifi_3d_nav.sh --fusion`, [3d_nav.md](3d_nav.md#camera--lidar-fusion---fusion))
+is only as good as this alignment. See [What comes next](#what-comes-next).
 
 ---
 
@@ -183,10 +184,9 @@ SIM_GUI=0 SIM_RENDER_ENGINE=ogre ./scripts/runtime/wifi_nav.sh --sim --no-explor
 
 These steps build on a passing overlay:
 
-1. **Fusion for mapping.** RTAB-Map's `pointcloud_to_depthimage` turns the
-   LiDAR scan into a depth image aligned with the camera. RTAB-Map can then
-   run in RGB-D mode with the built-in camera, giving a coloured map and
-   visual loop closures.
+1. **Fusion for mapping (done: `wifi_3d_nav.sh --fusion`).** The LiDAR is
+   projected into the camera as a depth image, and RTAB-Map runs RGB-D +
+   scan and colours the 3D map. See [3d_nav.md](3d_nav.md#camera--lidar-fusion---fusion).
 2. **Fusion for collisions.** The camera finds what the LiDAR misses or can't
    classify (people, plants, thin or low objects). The LiDAR points inside
    each detection give its range. The result is published as a point cloud

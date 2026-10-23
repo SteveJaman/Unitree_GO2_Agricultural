@@ -798,6 +798,11 @@ if [ "${ARM}" = "true" ]; then
     ARM_PID=$!
 fi
 
+# Live camera, LiDAR-on-camera overlay and the RTAB-Map 3D map in RViz (once per file).
+python3 "${SCRIPT_DIR}/../tools/rviz_add_camera.py" \
+    "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_planning.rviz" \
+    "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_navigation.rviz" || true
+
 if [ "${SIM}" = "true" ]; then
     : "${DISPLAY:?RViz needs a desktop session: run this in a terminal on the VM desktop}"
     sim_nav=0; sim_plan=1

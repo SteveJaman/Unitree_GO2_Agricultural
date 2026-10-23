@@ -17,6 +17,8 @@
 # Usage:
 #   ./scripts/runtime/wifi_3d_nav.sh                 # explore + 3D map
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
+#   ./scripts/runtime/wifi_3d_nav.sh --fusion        # + front camera: coloured map,
+#                                                    #   /camera/lidar_overlay check
 #   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # + RealSense colour/depth
 #   ./scripts/runtime/wifi_3d_nav.sh --rosbridge     # rosbridge :9090 instead
 #   ./scripts/runtime/wifi_3d_nav.sh --no-bridge     # RTAB-Map only
@@ -26,6 +28,8 @@
 # Environment:
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered  TWIN_BRIDGE_PORT=8765 (9090 rosbridge)
 #   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC      (--rgbd)
+#   TWIN_CAMERA_INFO_FILE=config/camera/front_camera.yaml       (--fusion; with
+#                            --sim: config/camera/sim_front_camera.yaml)
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
 #   TWIN_EXPORT_ARGS="--voxel 0.02"        extra rtabmap-export options (--export)
 #   TWIN_DB_DIR=$NAV2_WIFI_DIR/ws/maps/rtabmap   TWIN_LOG_DIR=$NAV2_WIFI_DIR/ws/log/3d
@@ -62,6 +66,7 @@ PASSTHRU=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --rgbd)       TWIN_MODE="rgbd" ;;
+        --fusion)     TWIN_MODE="fusion" ;;
         --rosbridge)  TWIN_BRIDGE="rosbridge" ;;
         --no-bridge)  TWIN_BRIDGE="none" ;;
         --build)      ACTION="build" ;;
@@ -206,6 +211,11 @@ start_twin_when_ready() {
     fi
 
     twin_exists && docker rm -f "${TWIN_CONTAINER}" >/dev/null 2>&1
+    local camera_args=()
+    if [ "${TWIN_MODE}" = fusion ]; then
+        camera_args=(-v "${TWIN_CAMERA_INFO_FILE}:/camera_cfg/camera.yaml:ro"
+                     -e TWIN_CAMERA_INFO=/camera_cfg/camera.yaml)
+    fi
     echo "[3d] Starting ${TWIN_CONTAINER} on DDS $(sed -n 's/^ROS_DOMAIN_ID=/domain /p' <<< "${env_lines}"): RTAB-Map (${TWIN_MODE}), bridge ${TWIN_BRIDGE}, click-to-goal..."
     if ! docker run -d --name "${TWIN_CONTAINER}" "${net[@]}" \
             --stop-timeout "${TWIN_STOP_TIMEOUT}" \
@@ -216,7 +226,7 @@ start_twin_when_ready() {
             -e TWIN_CLOUD_TOPIC -e TWIN_RGB_TOPIC -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC \
             -e TWIN_MAP_FRAME -e TWIN_BASE_FRAME -e TWIN_RTAB_ARGS \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
-            -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
+            -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" "${camera_args[@]}" \
             "${mounts[@]}" \
             "${TWIN_IMAGE}" bash /twin/start_inside.sh >/dev/null; then
         echo "[3d] ERROR: docker run failed — 3D stack NOT started."
@@ -235,6 +245,10 @@ start_twin_when_ready() {
                 echo "   Foxglove    : Open connection -> $( [ "${TWIN_BRIDGE}" = foxglove ] && echo "Foxglove WebSocket" || echo "Rosbridge" ) -> ws://${host_ip}:${TWIN_BRIDGE_PORT}"
             fi
             echo "   3D panel    : display frame lidar3d_map; topics /rtabmap/cloud_map, /tf, /plan"
+            if [ "${TWIN_MODE}" = fusion ]; then
+                echo "   Fusion      : /rtabmap/cloud_map coloured from the camera (RViz: Color Transformer RGB8)"
+                echo "                 /camera/lidar_overlay = LiDAR on the camera image (RViz/Foxglove Image)"
+            fi
             echo "   Click-to-go : Publish -> Point on /clicked_point (top-down view for accuracy)"
             echo "   Logs        : ${TWIN_LOG_DIR}/"
             echo "================================================================"
@@ -276,6 +290,20 @@ for f in "${TWIN_DIR}/start_inside.sh" "${NODES_DIR}/go2_click_to_goal.py"; do
 done
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}"
 
+if [ "${TWIN_MODE}" = fusion ]; then
+    [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && die "--fusion needs the camera: drop --no-camera"
+    if [[ " ${PASSTHRU[*]} " == *" --sim "* ]]; then
+        TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/sim_front_camera.yaml}"
+    else
+        TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
+    fi
+    [ -f "${TWIN_CAMERA_INFO_FILE}" ] || die "--fusion needs a camera calibration: ${TWIN_CAMERA_INFO_FILE} not found.
+       Run ./scripts/tools/calibrate_camera.sh with a session up (docs/camera_lidar_fusion.md)."
+    for f in go2_fusion_camera.py go2_lidar_overlay.py; do
+        [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
+    done
+fi
+
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin
 
@@ -286,6 +314,7 @@ echo "================================================================"
 echo " Go2 3D digital twin (wifi_nav.sh + RTAB-Map + ${TWIN_BRIDGE} bridge)"
 echo "================================================================"
 echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
+[ "${TWIN_MODE}" = fusion ] && echo "  Camera      : ${TWIN_CAMERA_INFO_FILE}"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}"
 echo "  Bridge      : ${TWIN_BRIDGE}$( [ "${TWIN_BRIDGE}" != none ] && echo " on port ${TWIN_BRIDGE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"

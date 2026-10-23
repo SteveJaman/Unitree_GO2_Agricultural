@@ -392,6 +392,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`go2_fusion_camera.py`](scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
 | [`go2_lidar_overlay.py`](scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
@@ -412,6 +413,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
 | [`calibrate_camera.sh`](scripts/tools/calibrate_camera.sh) | Headless checkerboard calibration of the front camera → `config/camera/front_camera.yaml` (`/camera/camera_info`) |
 | [`lidar_overlay.sh`](scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
+| [`rviz_add_camera.py`](scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
@@ -647,8 +649,14 @@ container ([`twin/`](twin/)) with:
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh --build          # once (needs internet)
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # any wifi_nav.sh option passes through
+./scripts/runtime/wifi_3d_nav.sh --fusion         # + front camera: map coloured from the camera
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
 ```
+
+`--fusion` uses the LiDAR as depth for the front camera, so RTAB-Map builds a
+camera-coloured 3D map. It needs a [camera calibration](docs/camera_lidar_fusion.md). RViz gets
+**Front camera**, **LiDAR on camera** and **3D map (RTAB-Map)** displays
+automatically.
 
 RTAB-Map runs outside `go2-lidar3d` so that the `wifi_nav.sh` teardown cannot
 kill it before it saves. On Ctrl+C the session stops first, then RTAB-Map
