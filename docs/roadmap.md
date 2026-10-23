@@ -121,7 +121,10 @@ The pipeline that produces the dense 3D tour.
 | 4.8 | Live 3D view in Foxglove (foxglove_bridge / rosbridge) | ✅ written, ⏳ verify on robot |
 | 4.9 | Click a 3D point in Foxglove → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
-| 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ⏳ |
+| 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
+| 4.12 | Go2 camera + LiDAR fusion (LiDAR → depth image, coloured map) | ✅ written in `twin/start_inside.sh`, ⏳ verify; accuracy needs 3.4 |
+| 4.13 | YOLO obstacles in the Nav2 costmap | ✅ opt-in [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), ⏳ verify |
+| 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.

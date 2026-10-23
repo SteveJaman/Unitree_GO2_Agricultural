@@ -90,7 +90,7 @@ both the dog and the arm — is the long-term goal.
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, commands, calibration, troubleshooting |
-| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + Foxglove, click-to-go, export |
+| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + camera fusion, YOLO obstacles, Foxglove, click-to-go, export |
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
@@ -378,7 +378,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
-| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map, a Foxglove bridge and click-to-goal in a separate `go2-3d` container; `--build`, `--export`, `--stop` |
+| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), YOLO11s, a Foxglove bridge and click-to-goal in a separate `go2-3d` container; `--build`, `--export`, `--stop`, `--lidar-only`, `--no-yolo` |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |
@@ -391,6 +391,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`go2_camera_info.py`](scripts/nodes/go2_camera_info.py) | `/camera/camera_info` for a camera without one (pinhole from a field of view, or fx/fy/cx/cy) |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
@@ -409,6 +410,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`verify_costmap.sh`](scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
+| [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) | Opt-in: add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi (`--undo` restores) |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
 
@@ -634,6 +636,14 @@ container ([`twin/`](twin/)) with:
 - **RTAB-Map.** Builds a dense 3D map from `/lidar3d/registered`, using
   Point-LIO's TF as odometry. Nav2 keeps planning in `lidar3d_map`. Each run is
   saved to `ws/maps/rtabmap/rtabmap-<date>.db`.
+- **Camera fusion, auto-detected.** If the Go2 camera publishes, the LiDAR is
+  projected into the image (`pointcloud_to_depthimage`) and RTAB-Map runs
+  RGB-D, so the map is coloured. If not, the map stays LiDAR-only.
+- **YOLO11s ([`twin/yolo_node.py`](twin/yolo_node.py)).** It publishes
+  `/yolo/detections`, `/yolo/image` and `/yolo/markers`, plus `/yolo/obstacles`
+  (3D boxes). With
+  [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh)
+  Nav2 plans around them.
 - **foxglove_bridge on `:8765`** (or `--rosbridge` on `:9090`). The Foxglove
   app on Windows shows `/rtabmap/cloud_map`, the robot, `/plan` and the camera.
 - **[`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py).** A point
@@ -723,6 +733,7 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_camera_relay.py       # camera bridge
 │   │   ├── go2_floor_filter.py       # floor-plane filter
 │   │   ├── go2_click_to_goal.py      # Foxglove click -> Nav2 goal
+│   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   │   └── direct_test_movement.py   # small safe arm movement test
@@ -736,6 +747,7 @@ Unitree_GO2_Agricultural/
 │       ├── verify_costmap.sh
 │       ├── save_rviz_config.sh
 │       ├── export_tour.py
+│       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (opt-in)
 │       ├── diag_arm.sh               # D1 arm diagnostic
 │       └── calibrate_arm.py          # D1 arm per-joint offset calibration
 ├── gazebo/                           # Gazebo simulation (Go2 + D1), see gazebo/README.md
@@ -745,8 +757,9 @@ Unitree_GO2_Agricultural/
 │   ├── worlds/agri_field.sdf
 │   └── models/                       # downloaded Unitree models (not in git)
 ├── twin/                             # go2-3d container for wifi_3d_nav.sh
-│   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + foxglove_bridge + rosbridge)
-│   └── start_inside.sh               # starts RTAB-Map, bridge, click-to-goal; saves DB on stop
+│   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + bridges + CPU PyTorch + YOLO11s)
+│   ├── start_inside.sh               # starts bridge, click-to-goal, camera TF/info, RTAB-Map, YOLO; saves DB on stop
+│   └── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used

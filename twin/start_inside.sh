@@ -3,36 +3,67 @@
 # start_inside.sh: entry point of the go2-3d container (run by wifi_3d_nav.sh).
 #
 # Starts, on the session's DDS domain:
-#   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
 #   * web bridge          foxglove_bridge (default) or rosbridge, for Foxglove
 #   * go2_click_to_goal   /clicked_point -> nearest safe floor -> /goal_pose
+#   * camera support      (if the camera publishes) base_link -> camera TF,
+#                         go2_camera_info.py (intrinsics)
+#   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
+#   * yolo_node.py        (if the camera publishes) /yolo/detections, /yolo/obstacles
+#
+# RTAB-Map modes (TWIN_MODE):
+#   auto    camera if TWIN_RGB_TOPIC publishes within TWIN_CAMERA_WAIT s, else lidar
+#   lidar   LiDAR only (ICP)
+#   camera  Go2 camera + LiDAR: the cloud is projected into the image as a depth
+#           image (rtabmap_util pointcloud_to_depthimage), so RTAB-Map gets
+#           RGB-D and the map is coloured
+#   rgbd    RealSense colour + depth + LiDAR
 #
 # Odometry comes from TF (lidar3d_map -> base_link, Point-LIO + go2_odom_tf),
 # so RTAB-Map's map frame "rtabmap_map" becomes the parent of lidar3d_map and
 # Nav2 keeps working in lidar3d_map. On SIGTERM (docker stop) every child is
 # stopped and RTAB-Map writes its database before exiting. If RTAB-Map dies
-# the container exits; a bridge or click-node crash is logged only.
+# the container exits; a crash of any other node is logged only.
 #
 # Environment (set by wifi_3d_nav.sh; ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI
 # are copied from the running wifi_nav.sh session):
-#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=lidar|rgbd
+#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=auto|lidar|camera|rgbd
 #   TWIN_BRIDGE=foxglove|rosbridge|none   TWIN_BRIDGE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
-#   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode)
+#   TWIN_RGB_TOPIC=/camera/image_raw (rgbd: /camera/color/image_raw)
+#   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode, RealSense defaults)
+#   TWIN_CAMERA_WAIT=60         s to wait for the first camera frame (auto)
+#   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"   x y z yaw pitch roll of
+#                               the optical frame in base_link (Go2 URDF
+#                               front_camera_joint); "none" = do not publish
+#   TWIN_CAMERA_HFOV_DEG=120    used when the camera has no camera_info
+#   TWIN_YOLO=1  TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2
+#   TWIN_YOLO_CLASSES="chair,person,..."|all
 #   TWIN_MAP_FRAME=lidar3d_map  TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="..."        extra RTAB-Map parameters, e.g. "--Grid/CellSize 0.1"
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
 TWIN_DB="${TWIN_DB:-/data/rtabmap.db}"
-TWIN_MODE="${TWIN_MODE:-lidar}"
+TWIN_MODE="${TWIN_MODE:-auto}"
 TWIN_BRIDGE="${TWIN_BRIDGE:-foxglove}"
 TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
-TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
+if [ "$TWIN_MODE" = rgbd ]; then
+    TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
+else
+    TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/image_raw}"
+fi
 TWIN_DEPTH_TOPIC="${TWIN_DEPTH_TOPIC:-/camera/depth/image_rect_raw}"
 TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
+TWIN_CAMERA_TF="${TWIN_CAMERA_TF:-0.327 0 0.043 -1.5708 0 -1.5708}"
+TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
+TWIN_YOLO="${TWIN_YOLO:-1}"
+TWIN_YOLO_MODEL="${TWIN_YOLO_MODEL:-/opt/yolo/yolo11s.pt}"
+TWIN_YOLO_RATE="${TWIN_YOLO_RATE:-2}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
+GO2_CAMINFO_TOPIC=/camera/camera_info      # published by go2_camera_info.py
+LIDAR_DEPTH_TOPIC=/camera/lidar_depth      # published by pointcloud_to_depthimage
 LOGS=/logs
 
 mkdir -p "${HOME:-/tmp/go2-3d-home}" "$LOGS"
@@ -40,8 +71,94 @@ set +u
 # shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
 
-# LiDAR-only RTAB-Map: ICP registration and proximity loop closures, 3D grid
-# from the scans (after the rtabmap_examples lidar3d settings).
+# Executables are run directly, not through `ros2 run`: its wrapper does not
+# forward a signal sent to it alone, and RTAB-Map must see SIGTERM to save.
+PIDS=(); NAMES=()
+start() {   # $1 = name (log file /logs/<name>.log), rest = command
+    local name="$1"; shift
+    "$@" > "$LOGS/${name}.log" 2>&1 &
+    PIDS+=("$!"); NAMES+=("$name")
+    echo "[go2-3d] ${name} started (pid $!, log ${LOGS}/${name}.log)"
+}
+exe() { echo "$(ros2 pkg prefix "$1")/lib/$1/$2"; }
+# Float ROS parameters reject "2"; make it "2.0".
+float() { case "$1" in *.*|*[eE]*) echo "$1" ;; *) echo "$1.0" ;; esac; }
+
+STOPPING=0
+stop_all() {
+    [ "$STOPPING" = 1 ] && return 0
+    STOPPING=1
+    echo "[go2-3d] stopping (RTAB-Map saves ${TWIN_DB})..."
+    for p in "${PIDS[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
+    wait || true
+    echo "[go2-3d] stopped"
+}
+trap 'stop_all; exit 0' TERM INT
+
+echo "[go2-3d] DDS domain ${ROS_DOMAIN_ID:-0}, ${RMW_IMPLEMENTATION:-default RMW}, ${CYCLONEDDS_URI:-no CYCLONEDDS_URI}"
+
+# --- Bridge + click-to-goal first, so Foxglove can connect while we wait ----
+case "$TWIN_BRIDGE" in
+    foxglove)
+        start bridge "$(exe foxglove_bridge foxglove_bridge)" \
+            --ros-args -p port:="${TWIN_BRIDGE_PORT:-8765}" -p address:=0.0.0.0 ;;
+    rosbridge)
+        start bridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml \
+            port:="${TWIN_BRIDGE_PORT:-9090}" ;;
+    none) ;;
+    *) echo "[go2-3d] ERROR: unknown TWIN_BRIDGE=${TWIN_BRIDGE}" >&2; stop_all; exit 1 ;;
+esac
+start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
+    -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+
+# --- Camera: wait for the first frame, learn its TF frame -------------------
+CAMERA_FRAME=""
+if [ "$TWIN_MODE" = auto ] || [ "$TWIN_MODE" = camera ]; then
+    echo "[go2-3d] waiting up to ${TWIN_CAMERA_WAIT} s for a frame on ${TWIN_RGB_TOPIC}..."
+    CAMERA_FRAME="$(timeout "$TWIN_CAMERA_WAIT" ros2 topic echo --once --no-arr \
+            --qos-reliability best_effort "$TWIN_RGB_TOPIC" sensor_msgs/msg/Image 2>/dev/null \
+        | awk '/frame_id:/ {gsub(/["\047]/, "", $2); print $2; exit}' || true)"
+    if [ -n "$CAMERA_FRAME" ]; then
+        echo "[go2-3d] camera frames arrive (frame ${CAMERA_FRAME})"
+        [ "$TWIN_MODE" = auto ] && TWIN_MODE=camera
+    elif [ "$TWIN_MODE" = camera ]; then
+        echo "[go2-3d] WARN: no frame on ${TWIN_RGB_TOPIC} yet; RTAB-Map waits for it (no map until then)"
+        CAMERA_FRAME="${TWIN_CAMERA_FRAME:-camera_link}"
+    else
+        echo "[go2-3d] no camera frames on ${TWIN_RGB_TOPIC}: LiDAR-only map, YOLO off"
+        TWIN_MODE=lidar
+    fi
+    CAMERA_FRAME="${TWIN_CAMERA_FRAME:-$CAMERA_FRAME}"
+fi
+
+if [ "$TWIN_MODE" = camera ]; then
+    if [ "$TWIN_CAMERA_TF" = none ]; then
+        echo "[go2-3d] camera TF: not published (TWIN_CAMERA_TF=none)"
+    elif timeout 5 "$(exe tf2_ros tf2_echo)" "$TWIN_BASE_FRAME" "$CAMERA_FRAME" 2>/dev/null | grep -q Translation; then
+        echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} already published by the session"
+    else
+        read -r cx cy cz cyaw cpitch croll <<< "$TWIN_CAMERA_TF"
+        echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} = ${TWIN_CAMERA_TF} (x y z yaw pitch roll)"
+        start camera_tf "$(exe tf2_ros static_transform_publisher)" \
+            --x "$cx" --y "$cy" --z "$cz" --yaw "$cyaw" --pitch "$cpitch" --roll "$croll" \
+            --frame-id "$TWIN_BASE_FRAME" --child-frame-id "$CAMERA_FRAME"
+    fi
+    start camera_info python3 -u /nodes/go2_camera_info.py --ros-args \
+        -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC" \
+        -p hfov_deg:="$(float "$TWIN_CAMERA_HFOV_DEG")"
+    start lidar_depth "$(exe rtabmap_util pointcloud_to_depthimage)" --ros-args \
+        -r __node:=lidar_depth \
+        -p fixed_frame_id:="$TWIN_MAP_FRAME" -p decimation:=4 \
+        -p fill_holes_size:=3 -p fill_iterations:=1 \
+        -p approx:=true -p wait_for_transform:=0.2 -p qos:=2 \
+        -r cloud:="$TWIN_CLOUD_TOPIC" -r camera_info:="$GO2_CAMINFO_TOPIC" \
+        -r image:="$LIDAR_DEPTH_TOPIC" -r image_raw:="${LIDAR_DEPTH_TOPIC}_raw"
+fi
+
+# --- RTAB-Map ---------------------------------------------------------------
+# LiDAR registration (ICP) and proximity loop closures, 3D grid (after the
+# rtabmap_examples lidar3d settings). Camera modes add visual loop closures
+# and colour.
 RTAB_PARAMS=(
     --Rtabmap/DetectionRate 1
     --RGBD/LinearUpdate 0.05 --RGBD/AngularUpdate 0.05
@@ -64,61 +181,47 @@ ROS_ARGS=(
     -p subscribe_scan_cloud:=true -p qos_scan:=2
     -r scan_cloud:="$TWIN_CLOUD_TOPIC"
 )
-if [ "$TWIN_MODE" = rgbd ]; then
+case "$TWIN_MODE" in
+    camera) RGB="$TWIN_RGB_TOPIC"; DEPTH="$LIDAR_DEPTH_TOPIC"; INFO="$GO2_CAMINFO_TOPIC" ;;
+    rgbd)   RGB="$TWIN_RGB_TOPIC"; DEPTH="$TWIN_DEPTH_TOPIC"; INFO="$TWIN_CAMINFO_TOPIC" ;;
+    lidar)  ;;
+    *) echo "[go2-3d] ERROR: unknown TWIN_MODE=${TWIN_MODE}" >&2; stop_all; exit 1 ;;
+esac
+if [ "$TWIN_MODE" = lidar ]; then
+    RTAB_PARAMS+=(--Grid/Sensor 0)
+    ROS_ARGS+=(-p subscribe_rgb:=false -p subscribe_depth:=false)
+else
     RTAB_PARAMS+=(--Grid/Sensor 2)
     ROS_ARGS+=(
         -p subscribe_rgb:=true -p subscribe_depth:=true -p approx_sync:=true
         -p qos_image:=2 -p qos_camera_info:=2
-        -r rgb/image:="$TWIN_RGB_TOPIC" -r depth/image:="$TWIN_DEPTH_TOPIC"
-        -r rgb/camera_info:="$TWIN_CAMINFO_TOPIC"
+        -r rgb/image:="$RGB" -r depth/image:="$DEPTH" -r rgb/camera_info:="$INFO"
     )
-else
-    RTAB_PARAMS+=(--Grid/Sensor 0)
-    ROS_ARGS+=(-p subscribe_rgb:=false -p subscribe_depth:=false)
 fi
 # shellcheck disable=SC2206
 RTAB_PARAMS+=(${TWIN_RTAB_ARGS:-})
 
-# Executables are run directly, not through `ros2 run`: its wrapper does not
-# forward a signal sent to it alone, and RTAB-Map must see SIGTERM to save.
-PIDS=(); NAMES=()
-start() {   # $1 = name (log file /logs/<name>.log), rest = command
-    local name="$1"; shift
-    "$@" > "$LOGS/${name}.log" 2>&1 &
-    PIDS+=("$!"); NAMES+=("$name")
-    echo "[go2-3d] ${name} started (pid $!, log ${LOGS}/${name}.log)"
-}
+echo "[go2-3d] RTAB-Map ${TWIN_MODE}: cloud ${TWIN_CLOUD_TOPIC}$( [ "$TWIN_MODE" != lidar ] && echo ", image ${RGB}, depth ${DEPTH}" ), odometry TF ${TWIN_MAP_FRAME} -> ${TWIN_BASE_FRAME}"
+start rtabmap "$(exe rtabmap_slam rtabmap)" "${RTAB_PARAMS[@]}" --ros-args "${ROS_ARGS[@]}"
+RTAB_PID="${PIDS[-1]}"
 
-STOPPING=0
-stop_all() {
-    [ "$STOPPING" = 1 ] && return 0
-    STOPPING=1
-    echo "[go2-3d] stopping (RTAB-Map saves ${TWIN_DB})..."
-    for p in "${PIDS[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
-    wait || true
-    echo "[go2-3d] stopped"
-}
-trap 'stop_all; exit 0' TERM INT
-
-echo "[go2-3d] DDS domain ${ROS_DOMAIN_ID:-0}, ${RMW_IMPLEMENTATION:-default RMW}, ${CYCLONEDDS_URI:-no CYCLONEDDS_URI}"
-echo "[go2-3d] RTAB-Map ${TWIN_MODE}: cloud ${TWIN_CLOUD_TOPIC}, odometry TF ${TWIN_MAP_FRAME} -> ${TWIN_BASE_FRAME}"
-start rtabmap "$(ros2 pkg prefix rtabmap_slam)/lib/rtabmap_slam/rtabmap" \
-    "${RTAB_PARAMS[@]}" --ros-args "${ROS_ARGS[@]}"
-RTAB_PID="${PIDS[0]}"
-
-case "$TWIN_BRIDGE" in
-    foxglove)
-        start bridge "$(ros2 pkg prefix foxglove_bridge)/lib/foxglove_bridge/foxglove_bridge" \
-            --ros-args -p port:="${TWIN_BRIDGE_PORT:-8765}" -p address:=0.0.0.0 ;;
-    rosbridge)
-        start bridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml \
-            port:="${TWIN_BRIDGE_PORT:-9090}" ;;
-    none) ;;
-    *) echo "[go2-3d] ERROR: unknown TWIN_BRIDGE=${TWIN_BRIDGE}" >&2; stop_all; exit 1 ;;
-esac
-
-start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
-    -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+# --- YOLO -------------------------------------------------------------------
+if [ "$TWIN_YOLO" = 1 ] && [ "$TWIN_MODE" = camera ]; then
+    if python3 -c 'import ultralytics' 2>/dev/null; then
+        YOLO_ARGS=(
+            -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC"
+            -p cloud_topic:="$TWIN_CLOUD_TOPIC" -p model:="$TWIN_YOLO_MODEL"
+            -p rate_hz:="$(float "$TWIN_YOLO_RATE")"
+            -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+        )
+        [ -n "${TWIN_YOLO_CLASSES:-}" ] && YOLO_ARGS+=(-p "obstacle_classes:=${TWIN_YOLO_CLASSES}")
+        start yolo python3 -u /twin/yolo_node.py --ros-args "${YOLO_ARGS[@]}"
+    else
+        echo "[go2-3d] WARN: ultralytics not in the image (rebuild: wifi_3d_nav.sh --build); YOLO off"
+    fi
+elif [ "$TWIN_YOLO" = 1 ]; then
+    echo "[go2-3d] YOLO off (needs the Go2 camera: TWIN_MODE=camera)"
+fi
 
 sleep 3
 kill -0 "$RTAB_PID" 2>/dev/null || {
@@ -126,6 +229,7 @@ kill -0 "$RTAB_PID" 2>/dev/null || {
     tail -20 "$LOGS/rtabmap.log" >&2
     stop_all; exit 1
 }
+echo "[go2-3d] MODE ${TWIN_MODE}"
 echo "[go2-3d] READY"
 
 while :; do

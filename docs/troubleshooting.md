@@ -557,10 +557,12 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 ## 3D Digital Twin
 
 `wifi_3d_nav.sh` problems (image missing, no Foxglove topics, empty
-`/rtabmap/cloud_map`, clicks ignored, CPU load, unsaved map): see
+`/rtabmap/cloud_map`, clicks ignored, camera not detected, wrong map colours,
+YOLO obstacles ignored by Nav2, CPU load, unsaved map): see
 [3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
-`click_to_goal.log`) and `docker logs go2-3d`.
+`click_to_goal.log`, `yolo.log`, `camera_info.log`, `lidar_depth.log`) and
+`docker logs go2-3d`.
 
 ---
 

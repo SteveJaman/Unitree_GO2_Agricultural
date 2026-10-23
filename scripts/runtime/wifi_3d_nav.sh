@@ -4,7 +4,9 @@
 #
 # 3D "digital twin" session: the normal wifi_nav.sh session (relay,
 # Point-LIO, Nav2, RViz, explorer, camera), plus a separate go2-3d container:
-#   * RTAB-Map            dense 3D map of the run, saved to a .db file
+#   * RTAB-Map            dense 3D map of the run, saved to a .db file;
+#                         coloured from the Go2 camera when it publishes
+#   * YOLO11s             camera detections -> /yolo/detections, /yolo/obstacles
 #   * Foxglove bridge     ws://<VM IP>:8765, live 3D view in the Foxglove app
 #   * go2_click_to_goal   a point clicked in Foxglove becomes a Nav2 goal
 #
@@ -17,7 +19,10 @@
 # Usage:
 #   ./scripts/runtime/wifi_3d_nav.sh                 # explore + 3D map
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
-#   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # + RealSense colour/depth
+#   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion, no YOLO
+#   ./scripts/runtime/wifi_3d_nav.sh --camera        # require the Go2 camera
+#   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # camera colour, no YOLO
+#   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # RealSense colour/depth instead
 #   ./scripts/runtime/wifi_3d_nav.sh --rosbridge     # rosbridge :9090 instead
 #   ./scripts/runtime/wifi_3d_nav.sh --no-bridge     # RTAB-Map only
 #   ./scripts/runtime/wifi_3d_nav.sh --export [DB]   # newest (or DB) -> PLY
@@ -25,7 +30,13 @@
 #
 # Environment:
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered  TWIN_BRIDGE_PORT=8765 (9090 rosbridge)
-#   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC      (--rgbd)
+#   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=60 (s, camera auto-detect)
+#   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"  base_link -> camera optical
+#                                      frame (x y z yaw pitch roll; "none" = skip)
+#   TWIN_CAMERA_HFOV_DEG=120 (68.75 with --sim)        approximate intrinsics
+#   TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2  TWIN_YOLO_CLASSES=chair,...|all
+#   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC                       (--rgbd)
+#   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
 #   TWIN_EXPORT_ARGS="--voxel 0.02"        extra rtabmap-export options (--export)
 #   TWIN_DB_DIR=$NAV2_WIFI_DIR/ws/maps/rtabmap   TWIN_LOG_DIR=$NAV2_WIFI_DIR/ws/log/3d
@@ -48,17 +59,27 @@ TWIN_DB_DIR="${TWIN_DB_DIR:-${NAV2_WIFI_DIR}/ws/maps/rtabmap}"
 TWIN_LOG_DIR="${TWIN_LOG_DIR:-${NAV2_WIFI_DIR}/ws/log/3d}"
 TWIN_START_TIMEOUT="${TWIN_START_TIMEOUT:-300}"
 TWIN_STOP_TIMEOUT="${TWIN_STOP_TIMEOUT:-60}"
+TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
+TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
+TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
 
 # --- Parse args ------------------------------------------------------------
 ACTION="run"
-TWIN_MODE="lidar"
+TWIN_MODE="auto"
 TWIN_BRIDGE="foxglove"
+TWIN_YOLO="${TWIN_YOLO:-1}"
+SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --rgbd)       TWIN_MODE="rgbd" ;;
+        --lidar-only) TWIN_MODE="lidar" ;;
+        --camera)     TWIN_MODE="camera" ;;
+        --no-yolo)    TWIN_YOLO="0" ;;
+        --sim)        SIM="true"; PASSTHRU+=("$1") ;;
         --rosbridge)  TWIN_BRIDGE="rosbridge" ;;
         --no-bridge)  TWIN_BRIDGE="none" ;;
         --build)      ACTION="build" ;;
@@ -75,6 +96,15 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ "${TWIN_MODE}" = rgbd ]; then
+    TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
+else
+    TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/image_raw}"
+fi
+# Gazebo camera: horizontal_fov 1.2 rad (gazebo/sim/build_model.py).
+[ "${SIM}" = "true" ] && TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-68.75}"
+TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
 
 case "${TWIN_BRIDGE}" in
     foxglove)  TWIN_BRIDGE_PORT="${TWIN_BRIDGE_PORT:-8765}" ;;
@@ -109,7 +139,7 @@ newest_db() {
 
 do_build() {
     [ -f "${TWIN_DIR}/docker/Dockerfile" ] || die "${TWIN_DIR}/docker/Dockerfile not found."
-    echo "[3d] Building ${TWIN_IMAGE} (RTAB-Map, foxglove_bridge, rosbridge; ~1-2 GB download)..."
+    echo "[3d] Building ${TWIN_IMAGE} (RTAB-Map, bridges, CPU PyTorch + YOLO11s; ~3-4 GB download)..."
     docker build -t "${TWIN_IMAGE}" "${TWIN_DIR}/docker"
     echo "[3d] Built ${TWIN_IMAGE}."
 }
@@ -143,7 +173,7 @@ session_ros_pid() {
 # Start go2-3d on the same DDS settings (domain, RMW, CycloneDDS config) as the
 # session's own ROS nodes. Runs in the background while wifi_nav.sh runs.
 start_twin_when_ready() {
-    local deadline pid env_lines line key val uri path netmode host_ip
+    local deadline pid env_lines line key val uri path netmode host_ip mode yolo
     local env_args=() mounts=() net=()
 
     deadline=$(( $(date +%s) + TWIN_START_TIMEOUT ))
@@ -195,8 +225,12 @@ start_twin_when_ready() {
             "${env_args[@]}" \
             -e TWIN_DB="/data/${DB_NAME}" -e TWIN_MODE="${TWIN_MODE}" \
             -e TWIN_BRIDGE="${TWIN_BRIDGE}" -e TWIN_BRIDGE_PORT="${TWIN_BRIDGE_PORT:-}" \
-            -e TWIN_CLOUD_TOPIC -e TWIN_RGB_TOPIC -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC \
-            -e TWIN_MAP_FRAME -e TWIN_BASE_FRAME -e TWIN_RTAB_ARGS \
+            -e TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC}" -e TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC}" \
+            -e TWIN_MAP_FRAME="${TWIN_MAP_FRAME}" -e TWIN_BASE_FRAME="${TWIN_BASE_FRAME}" \
+            -e TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT}" -e TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG}" \
+            -e TWIN_YOLO="${TWIN_YOLO}" \
+            -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC -e TWIN_CAMERA_TF -e TWIN_CAMERA_FRAME \
+            -e TWIN_YOLO_MODEL -e TWIN_YOLO_RATE -e TWIN_YOLO_CLASSES -e TWIN_RTAB_ARGS \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
             "${mounts[@]}" \
@@ -205,18 +239,24 @@ start_twin_when_ready() {
         return 1
     fi
 
-    for _ in $(seq 1 30); do
+    # Up to TWIN_CAMERA_WAIT s of this go to camera auto-detection in the container.
+    for _ in $(seq 1 $(( TWIN_CAMERA_WAIT + 60 ))); do
         if docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '\[go2-3d\] READY'; then
+            mode="$(docker logs "${TWIN_CONTAINER}" 2>&1 | sed -n 's/^\[go2-3d\] MODE //p' | tail -n1)"
+            yolo="off"
+            docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '^\[go2-3d\] yolo started' \
+                && yolo="on (/yolo/detections, /yolo/obstacles, /yolo/markers, /yolo/image)"
             host_ip="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null \
                 | sed -n 's/^GO2_HOST_IP=//p' | head -n1)"
             host_ip="${host_ip:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
             echo "================================================================"
             echo " 3D digital twin READY"
-            echo "   RTAB-Map DB : ${TWIN_DB_DIR}/${DB_NAME}"
+            echo "   RTAB-Map    : ${mode:-?} -> ${TWIN_DB_DIR}/${DB_NAME}"
+            echo "   YOLO        : ${yolo}"
             if [ "${TWIN_BRIDGE}" != none ]; then
                 echo "   Foxglove    : Open connection -> $( [ "${TWIN_BRIDGE}" = foxglove ] && echo "Foxglove WebSocket" || echo "Rosbridge" ) -> ws://${host_ip}:${TWIN_BRIDGE_PORT}"
             fi
-            echo "   3D panel    : display frame lidar3d_map; topics /rtabmap/cloud_map, /tf, /plan"
+            echo "   3D panel    : display frame lidar3d_map; topics /rtabmap/cloud_map, /tf, /plan, /yolo/markers"
             echo "   Click-to-go : Publish -> Point on /clicked_point (top-down view for accuracy)"
             echo "   Logs        : ${TWIN_LOG_DIR}/"
             echo "================================================================"
@@ -253,7 +293,8 @@ case "${ACTION}" in
 esac
 
 image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
-for f in "${TWIN_DIR}/start_inside.sh" "${NODES_DIR}/go2_click_to_goal.py"; do
+for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" \
+         "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py"; do
     [ -f "${f}" ] || die "${f} not found."
 done
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}"
@@ -267,7 +308,8 @@ DB_NAME="rtabmap-$(date +%Y%m%d-%H%M%S).db"
 echo "================================================================"
 echo " Go2 3D digital twin (wifi_nav.sh + RTAB-Map + ${TWIN_BRIDGE} bridge)"
 echo "================================================================"
-echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
+echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC}$( [ "${TWIN_MODE}" != lidar ] && echo ", camera ${TWIN_RGB_TOPIC}" )"
+echo "  YOLO        : $( [ "${TWIN_YOLO}" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ]; } && echo "on if the camera publishes" || echo off )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}"
 echo "  Bridge      : ${TWIN_BRIDGE}$( [ "${TWIN_BRIDGE}" != none ] && echo " on port ${TWIN_BRIDGE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"

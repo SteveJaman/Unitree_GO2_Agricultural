@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-21
+Last updated: 2026-10-23
 
 ---
 
@@ -129,6 +129,27 @@ Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
 the `go2-3d:local` image build, RTAB-Map on live data, the Foxglove
 connection, click-to-go, `--export`.
 
+**Camera fusion + YOLO11s (2026-10-23).**
+- **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
+  LiDAR-only), `go2-3d` adds:
+  - the `base_link → camera_link` optical TF (Go2 URDF mount);
+  - [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py), approximate
+    intrinsics;
+  - LiDAR projected into the image as depth, so RTAB-Map runs RGB-D.
+- **YOLO11s:** [`twin/yolo_node.py`](../twin/yolo_node.py) runs on the CPU and
+  publishes `/yolo/detections`, `/yolo/image`, `/yolo/markers` and
+  `/yolo/obstacles`. Obstacles are placed by LiDAR depth, or by the floor plane
+  when no LiDAR points fall inside the box.
+- **Nav2:** [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh)
+  is an opt-in patch that adds `/yolo/obstacles` to the costmap config.
+- **Verified off-robot:**
+  - optical TF axes;
+  - LiDAR and floor depth for a synthetic object (exact match);
+  - box placement;
+  - the costmap patch on a sample config (global only, idempotent, undo).
+- **Not yet run:** the image build (no Docker on the dev machine), YOLO on
+  real frames, the costmap patch on the real upstream file.
+
 ### One-command orchestration
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
@@ -171,6 +192,10 @@ connection, click-to-go, `--export`.
 | 19 | Dense map grows | Foxglove 3D panel, `/rtabmap/cloud_map` | map fills in as the dog walks |
 | 20 | Click-to-go | Foxglove Publish → Point on the floor, then on a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
 | 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
+| 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
+| 23 | Camera TF / intrinsics | Foxglove: `/lidar3d/registered` over `/yolo/image` region | colours on the right surfaces (else calibrate, roadmap 3.4) |
+| 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
+| 25 | YOLO → Nav2 | `add-yolo-costmap-source.sh`, chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
 
 ---
 
@@ -181,7 +206,7 @@ connection, click-to-go, `--export`.
 | [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
-| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | Depth camera not yet purchased; LiDAR-only map works without it |
+| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | Depth camera not yet purchased; LiDAR-only and Go2-camera fusion work without it |
 
 ---
 
