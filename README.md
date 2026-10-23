@@ -33,12 +33,13 @@ with the D1 on its back (see [Simulation](#simulation)):
 
 **Want a live 3D model of the building?** `wifi_3d_nav.sh` runs the same
 session plus RTAB-Map and a Foxglove bridge. You view the dense 3D map from
-Windows and click in it to send the dog somewhere (see
-[3D Digital Twin](#3d-digital-twin)):
+Windows and click in it to send the dog somewhere. `--ai` adds YOLO, a local
+VLM and low-battery return to the dock; `--resume` continues the last map
+after a battery swap (see [3D Digital Twin](#3d-digital-twin)):
 
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh --build     # once
-./scripts/runtime/wifi_3d_nav.sh             # then Foxglove -> ws://<VM IP>:8765
+./scripts/runtime/wifi_3d_nav.sh --ai        # then Foxglove -> ws://<VM IP>:8765
 ```
 
 ---
@@ -90,7 +91,7 @@ both the dog and the arm — is the long-term goal.
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, commands, calibration, troubleshooting |
-| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + camera fusion, YOLO obstacles, Foxglove, click-to-go, export |
+| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + camera fusion, `--ai` (YOLO, VLM, battery dock), `--resume`, named locations, Foxglove, click-to-go, export |
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
@@ -378,7 +379,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
-| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), YOLO11s, a Foxglove bridge and click-to-goal in a separate `go2-3d` container; `--build`, `--export`, `--stop`, `--lidar-only`, `--no-yolo` |
+| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), a Foxglove bridge and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--resume`, `--save-location`, `--build`, `--export`, `--stop` |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |
@@ -392,6 +393,9 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_camera_info.py`](scripts/nodes/go2_camera_info.py) | `/camera/camera_info` for a camera without one (pinhole from a field of view, or fx/fy/cx/cy) |
+| [`battery_manager.py`](scripts/nodes/battery_manager.py) | `--ai`: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
+| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | `--ai`: camera frame → local Ollama `llava:7b` → `/vlm_decision` |
+| [`save_location.py`](scripts/nodes/save_location.py) | `--save-location`: label Foxglove clicks → `config/semantic_locations.json` |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
@@ -653,8 +657,34 @@ container ([`twin/`](twin/)) with:
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh --build          # once (needs internet)
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # any wifi_nav.sh option passes through
+./scripts/runtime/wifi_3d_nav.sh --ai             # + YOLO, VLM, battery manager
+./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
+./scripts/runtime/wifi_3d_nav.sh --save-location  # 2nd terminal: name points clicked in Foxglove
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
 ```
+
+**`--ai`** starts the autonomy helpers in the background once Nav2 is up.
+Leave any one out with `--no-yolo`, `--no-vlm` or `--no-battery`.
+
+| Node | What it does |
+|---|---|
+| [`battery_manager.py`](scripts/nodes/battery_manager.py) (in `go2-lidar3d`) | Below **15 %**: pauses the explorer (`/explore/resume` False) and sends `/goal_pose` to the dock, the map origin (`TWIN_DOCK`). Explorer START is refused until **20 %** |
+| [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | Every ≥ 5 s asks a local Ollama `llava:7b` about the camera view → `/vlm_decision` (`HYDROPONIC` / `BLOCKED` / `CLEAR` / `UNKNOWN`). Informational; needs Ollama (`ollama pull llava:7b`) |
+| [`twin/yolo_node.py`](twin/yolo_node.py) | YOLO11s detections and 3D obstacles (`/yolo/*`) |
+
+YOLO and the VLM need the camera. Without it they are skipped and the battery
+manager still runs.
+
+**`--resume`** is for restarting after a battery swap.
+- It reopens the newest `rtabmap-*.db` (after copying it to `<db>.bak-<time>`)
+  instead of creating a new database.
+- RTAB-Map adds the run as a new session and joins it to the old map when it
+  recognises a place. That works best in camera mode.
+- Start the dog from the same spot (the dock): Nav2's `lidar3d_map`, the dock
+  goal and saved locations are all relative to the start pose.
+
+**`--save-location`** asks for a label for each point clicked in Foxglove,
+and writes it to `config/semantic_locations.json`.
 
 RTAB-Map runs outside `go2-lidar3d` so that the `wifi_nav.sh` teardown cannot
 kill it before it saves. On Ctrl+C the session stops first, then RTAB-Map
@@ -734,6 +764,9 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_floor_filter.py       # floor-plane filter
 │   │   ├── go2_click_to_goal.py      # Foxglove click -> Nav2 goal
 │   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
+│   │   ├── battery_manager.py        # --ai: low battery -> dock
+│   │   ├── vlm_reasoning_node.py     # --ai: Ollama llava -> /vlm_decision
+│   │   ├── save_location.py          # --save-location: named points
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   │   └── direct_test_movement.py   # small safe arm movement test

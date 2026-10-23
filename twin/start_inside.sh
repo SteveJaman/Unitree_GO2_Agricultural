@@ -8,7 +8,11 @@
 #   * camera support      (if the camera publishes) base_link -> camera TF,
 #                         go2_camera_info.py (intrinsics)
 #   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
-#   * yolo_node.py        (if the camera publishes) /yolo/detections, /yolo/obstacles
+#   * yolo_node.py        (TWIN_YOLO=1 and camera) /yolo/detections, /yolo/obstacles
+#   * vlm_reasoning_node  (TWIN_VLM=1 and camera) Ollama llava -> /vlm_decision
+#
+# A TWIN_DB that already exists is continued: RTAB-Map adds a new session to
+# it and links it to the old map once it recognises a place (--resume).
 #
 # RTAB-Map modes (TWIN_MODE):
 #   auto    camera if TWIN_RGB_TOPIC publishes within TWIN_CAMERA_WAIT s, else lidar
@@ -36,7 +40,9 @@
 #                               the optical frame in base_link (Go2 URDF
 #                               front_camera_joint); "none" = do not publish
 #   TWIN_CAMERA_HFOV_DEG=120    used when the camera has no camera_info
-#   TWIN_YOLO=1  TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2
+#   TWIN_YOLO=0|1  TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2
+#   TWIN_VLM=0|1   TWIN_VLM_URL=http://localhost:11434/api/generate
+#   TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_YOLO_CLASSES="chair,person,..."|all
 #   TWIN_MAP_FRAME=lidar3d_map  TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="..."        extra RTAB-Map parameters, e.g. "--Grid/CellSize 0.1"
@@ -57,9 +63,13 @@ TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
 TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
 TWIN_CAMERA_TF="${TWIN_CAMERA_TF:-0.327 0 0.043 -1.5708 0 -1.5708}"
 TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
-TWIN_YOLO="${TWIN_YOLO:-1}"
+TWIN_YOLO="${TWIN_YOLO:-0}"
 TWIN_YOLO_MODEL="${TWIN_YOLO_MODEL:-/opt/yolo/yolo11s.pt}"
 TWIN_YOLO_RATE="${TWIN_YOLO_RATE:-2}"
+TWIN_VLM="${TWIN_VLM:-0}"
+TWIN_VLM_URL="${TWIN_VLM_URL:-http://localhost:11434/api/generate}"
+TWIN_VLM_MODEL="${TWIN_VLM_MODEL:-llava:7b}"
+TWIN_VLM_PERIOD="${TWIN_VLM_PERIOD:-5}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
 GO2_CAMINFO_TOPIC=/camera/camera_info      # published by go2_camera_info.py
@@ -221,6 +231,15 @@ if [ "$TWIN_YOLO" = 1 ] && [ "$TWIN_MODE" = camera ]; then
     fi
 elif [ "$TWIN_YOLO" = 1 ]; then
     echo "[go2-3d] YOLO off (needs the Go2 camera: TWIN_MODE=camera)"
+fi
+
+# --- VLM (Ollama) -----------------------------------------------------------
+if [ "$TWIN_VLM" = 1 ] && [ "$TWIN_MODE" = camera ]; then
+    start vlm python3 -u /nodes/vlm_reasoning_node.py --ros-args \
+        -p image_topic:="$TWIN_RGB_TOPIC" -p url:="$TWIN_VLM_URL" \
+        -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")"
+elif [ "$TWIN_VLM" = 1 ]; then
+    echo "[go2-3d] VLM off (needs the Go2 camera: TWIN_MODE=camera)"
 fi
 
 sleep 3

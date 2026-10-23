@@ -150,6 +150,29 @@ connection, click-to-go, `--export`.
 - **Not yet run:** the image build (no Docker on the dev machine), YOLO on
   real frames, the costmap patch on the real upstream file.
 
+**AI nodes, `--resume`, named locations (2026-10-23).** `wifi_3d_nav.sh --ai`
+starts three nodes:
+- [`battery_manager.py`](../scripts/nodes/battery_manager.py), in
+  `go2-lidar3d`: below 15 % it pauses the explorer and sends the dock goal;
+  START is blocked until 20 %.
+- [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py): Ollama
+  `llava:7b` → `/vlm_decision`.
+- YOLO.
+
+The other two features:
+- `--resume` reopens the newest RTAB-Map database, after taking a `.bak` copy.
+- `--save-location` labels Foxglove clicks into `config/semantic_locations.json`.
+
+Verified off-robot:
+- the `--ai` / `--no-*` flag logic;
+- the battery state machine: 15 % → pause + dock goal 2 s later, re-sent
+  every 30 s, DOCKED within 0.5 m, START refused until 20 %;
+- VLM answer parsing;
+- the atomic JSON save.
+
+Not yet run: any of these on ROS or the robot. The battery topic over the
+relay is unconfirmed.
+
 ### One-command orchestration
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
@@ -196,6 +219,11 @@ connection, click-to-go, `--export`.
 | 23 | Camera TF / intrinsics | Foxglove: `/lidar3d/registered` over `/yolo/image` region | colours on the right surfaces (else calibrate, roadmap 3.4) |
 | 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
 | 25 | YOLO → Nav2 | `add-yolo-costmap-source.sh`, chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
+| 26 | Battery data | `go2sh; ros2 topic echo /lf/lowstate --field bms_state.soc` | matches the app's battery % |
+| 27 | Low-battery dock | `TWIN_BATTERY_LOW=95 wifi_3d_nav.sh --ai` (test threshold), explorer running | explorer stops, dog drives to the start point, START refused |
+| 28 | VLM | Ollama + `llava:7b`, `--ai` | `/vlm_decision` updates; `vlm.log` shows answer times |
+| 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
+| 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
 
 ---
 

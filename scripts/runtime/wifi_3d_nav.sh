@@ -6,9 +6,13 @@
 # Point-LIO, Nav2, RViz, explorer, camera), plus a separate go2-3d container:
 #   * RTAB-Map            dense 3D map of the run, saved to a .db file;
 #                         coloured from the Go2 camera when it publishes
-#   * YOLO11s             camera detections -> /yolo/detections, /yolo/obstacles
 #   * Foxglove bridge     ws://<VM IP>:8765, live 3D view in the Foxglove app
 #   * go2_click_to_goal   a point clicked in Foxglove becomes a Nav2 goal
+# and with --ai:
+#   * YOLO11s             camera detections -> /yolo/detections, /yolo/obstacles
+#   * VLM (Ollama llava)  camera view -> /vlm_decision (HYDROPONIC/BLOCKED/CLEAR)
+#   * battery_manager     (in go2-lidar3d) < 15 %: pause the explorer, go to the
+#                         dock (map origin); explorer blocked until 20 %
 #
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--no-explore, --robot-ip, --sim, ...). RTAB-Map lives in its own
@@ -19,9 +23,12 @@
 # Usage:
 #   ./scripts/runtime/wifi_3d_nav.sh                 # explore + 3D map
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
-#   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion, no YOLO
+#   ./scripts/runtime/wifi_3d_nav.sh --ai            # + YOLO, VLM, battery manager
+#   ./scripts/runtime/wifi_3d_nav.sh --ai --no-yolo  # --ai without YOLO (also --no-vlm, --no-battery)
+#   ./scripts/runtime/wifi_3d_nav.sh --resume        # continue the newest map (after a battery swap)
+#   ./scripts/runtime/wifi_3d_nav.sh --save-location # (2nd terminal) label Foxglove clicks
+#   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion (no YOLO/VLM)
 #   ./scripts/runtime/wifi_3d_nav.sh --camera        # require the Go2 camera
-#   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # camera colour, no YOLO
 #   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # RealSense colour/depth instead
 #   ./scripts/runtime/wifi_3d_nav.sh --rosbridge     # rosbridge :9090 instead
 #   ./scripts/runtime/wifi_3d_nav.sh --no-bridge     # RTAB-Map only
@@ -35,6 +42,8 @@
 #                                      frame (x y z yaw pitch roll; "none" = skip)
 #   TWIN_CAMERA_HFOV_DEG=120 (68.75 with --sim)        approximate intrinsics
 #   TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2  TWIN_YOLO_CLASSES=chair,...|all
+#   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
+#   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC                       (--rgbd)
 #   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
@@ -68,7 +77,9 @@ TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
 ACTION="run"
 TWIN_MODE="auto"
 TWIN_BRIDGE="foxglove"
-TWIN_YOLO="${TWIN_YOLO:-1}"
+AI="false"
+NO_AI=()
+RESUME="false"
 SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
@@ -78,7 +89,11 @@ while [ $# -gt 0 ]; do
         --rgbd)       TWIN_MODE="rgbd" ;;
         --lidar-only) TWIN_MODE="lidar" ;;
         --camera)     TWIN_MODE="camera" ;;
-        --no-yolo)    TWIN_YOLO="0" ;;
+        --ai)         AI="true" ;;
+        --no-yolo|--no-vlm|--no-battery)
+                      NO_AI+=("${1#--no-}") ;;
+        --resume)     RESUME="true" ;;
+        --save-location) ACTION="save-location" ;;
         --sim)        SIM="true"; PASSTHRU+=("$1") ;;
         --rosbridge)  TWIN_BRIDGE="rosbridge" ;;
         --no-bridge)  TWIN_BRIDGE="none" ;;
@@ -96,6 +111,15 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# --ai turns the three AI nodes on; --no-yolo / --no-vlm / --no-battery win.
+ai_default() { [ "${AI}" = "true" ] && [[ " ${NO_AI[*]} " != *" $1 "* ]] && echo 1 || echo 0; }
+TWIN_YOLO="${TWIN_YOLO:-$(ai_default yolo)}"
+TWIN_VLM="${TWIN_VLM:-$(ai_default vlm)}"
+TWIN_BATTERY="${TWIN_BATTERY:-$(ai_default battery)}"
+TWIN_BATTERY_LOW="${TWIN_BATTERY_LOW:-15}"
+TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
+TWIN_DOCK="${TWIN_DOCK:-0 0 0}"
 
 if [ "${TWIN_MODE}" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
@@ -162,6 +186,27 @@ do_export() {
     echo "[3d] Mesh it with:  python3 scripts/tools/export_tour.py <file.ply> --from-ply -o ${name}_mesh.ply"
 }
 
+# Float ROS parameters reject "15"; make it "15.0".
+float() { case "$1" in *.*|*[eE]*) echo "$1" ;; *) echo "$1.0" ;; esac; }
+
+kill_battery_manager() {
+    docker exec -u root "${CONTAINER_NAME}" pkill -f battery_manager.py >/dev/null 2>&1 || true
+}
+
+# battery_manager.py needs the unitree_go messages, so it runs in go2-lidar3d
+# (like the camera relay). $@ = the session's DDS env as docker -e options.
+start_battery_manager() {
+    local dock_x dock_y dock_yaw
+    read -r dock_x dock_y dock_yaw <<< "${TWIN_DOCK}"
+    kill_battery_manager
+    docker cp "${NODES_DIR}/battery_manager.py" "${CONTAINER_NAME}:/tmp/battery_manager.py" >/dev/null 2>&1 || return 1
+    docker exec -u root "$@" "${CONTAINER_NAME}" bash -c \
+        "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; exec python3 -u /tmp/battery_manager.py --ros-args -p low_soc:=$(float "${TWIN_BATTERY_LOW}") -p resume_soc:=$(float "${TWIN_BATTERY_RESUME}") -p dock_x:=$(float "${dock_x:-0}") -p dock_y:=$(float "${dock_y:-0}") -p dock_yaw:=$(float "${dock_yaw:-0}") -p map_frame:=${TWIN_MAP_FRAME} -p robot_base_frame:=${TWIN_BASE_FRAME}" \
+        > "${TWIN_LOG_DIR}/battery.log" 2>&1 &
+    sleep 4
+    docker exec "${CONTAINER_NAME}" pgrep -f battery_manager.py >/dev/null 2>&1
+}
+
 # PID of a ROS node of the session started after this script (so a node left
 # from an earlier session in a surviving container is never picked).
 session_ros_pid() {
@@ -173,7 +218,7 @@ session_ros_pid() {
 # Start go2-3d on the same DDS settings (domain, RMW, CycloneDDS config) as the
 # session's own ROS nodes. Runs in the background while wifi_nav.sh runs.
 start_twin_when_ready() {
-    local deadline pid env_lines line key val uri path netmode host_ip mode yolo
+    local deadline pid env_lines line key val uri path netmode host_ip mode yolo vlm battery
     local env_args=() mounts=() net=()
 
     deadline=$(( $(date +%s) + TWIN_START_TIMEOUT ))
@@ -198,6 +243,18 @@ start_twin_when_ready() {
         env_args+=(-e "${key}=${val}")
         [ "${key}" = CYCLONEDDS_URI ] && uri="${val}"
     done <<< "${env_lines}"
+
+    # Safety first: the battery manager does not depend on go2-3d coming up.
+    battery="off"
+    if [ "${TWIN_BATTERY}" = 1 ]; then
+        if start_battery_manager "${env_args[@]}"; then
+            battery="on (< ${TWIN_BATTERY_LOW} %: dock at ${TWIN_DOCK}; log battery.log)"
+            echo "[3d] Battery manager running in ${CONTAINER_NAME}"
+        else
+            battery="FAILED (see ${TWIN_LOG_DIR}/battery.log)"
+            echo "[3d] WARN: battery manager did not start; see ${TWIN_LOG_DIR}/battery.log"
+        fi
+    fi
 
     # A file-based CycloneDDS config is copied out and mounted at the same path.
     if [ -n "${uri:-}" ] && [[ "${uri}" != *"<"* ]] && [[ "${uri}" != *","* ]]; then
@@ -228,10 +285,12 @@ start_twin_when_ready() {
             -e TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC}" -e TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC}" \
             -e TWIN_MAP_FRAME="${TWIN_MAP_FRAME}" -e TWIN_BASE_FRAME="${TWIN_BASE_FRAME}" \
             -e TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT}" -e TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG}" \
-            -e TWIN_YOLO="${TWIN_YOLO}" \
+            -e TWIN_YOLO="${TWIN_YOLO}" -e TWIN_VLM="${TWIN_VLM}" \
             -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC -e TWIN_CAMERA_TF -e TWIN_CAMERA_FRAME \
             -e TWIN_YOLO_MODEL -e TWIN_YOLO_RATE -e TWIN_YOLO_CLASSES -e TWIN_RTAB_ARGS \
+            -e TWIN_VLM_URL -e TWIN_VLM_MODEL -e TWIN_VLM_PERIOD \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
+            -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
             "${mounts[@]}" \
             "${TWIN_IMAGE}" bash /twin/start_inside.sh >/dev/null; then
@@ -246,6 +305,9 @@ start_twin_when_ready() {
             yolo="off"
             docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '^\[go2-3d\] yolo started' \
                 && yolo="on (/yolo/detections, /yolo/obstacles, /yolo/markers, /yolo/image)"
+            vlm="off"
+            docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '^\[go2-3d\] vlm started' \
+                && vlm="on (${TWIN_VLM_MODEL:-llava:7b} -> /vlm_decision; log vlm.log)"
             host_ip="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null \
                 | sed -n 's/^GO2_HOST_IP=//p' | head -n1)"
             host_ip="${host_ip:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
@@ -253,6 +315,8 @@ start_twin_when_ready() {
             echo " 3D digital twin READY"
             echo "   RTAB-Map    : ${mode:-?} -> ${TWIN_DB_DIR}/${DB_NAME}"
             echo "   YOLO        : ${yolo}"
+            echo "   VLM         : ${vlm}"
+            echo "   Battery     : ${battery}"
             if [ "${TWIN_BRIDGE}" != none ]; then
                 echo "   Foxglove    : Open connection -> $( [ "${TWIN_BRIDGE}" = foxglove ] && echo "Foxglove WebSocket" || echo "Rosbridge" ) -> ws://${host_ip}:${TWIN_BRIDGE_PORT}"
             fi
@@ -280,6 +344,11 @@ case "${ACTION}" in
     build)  do_build; exit 0 ;;
     export) do_export; exit 0 ;;
     stop)   stop_twin; echo "[3d] Done."; exit 0 ;;
+    save-location)
+        twin_running || die "${TWIN_CONTAINER} is not running: start a session first (wifi_3d_nav.sh), then run this in a second terminal."
+        mkdir -p "${REPO_DIR}/config"
+        exec docker exec -it "${TWIN_CONTAINER}" bash -c \
+            "source /opt/ros/humble/setup.bash && exec python3 -u /nodes/save_location.py --ros-args -p map_frame:=${TWIN_MAP_FRAME}" ;;
     passthru)
         if [[ " ${PASSTHRU[*]} " == *" --check "* ]]; then
             if image_present; then
@@ -294,23 +363,40 @@ esac
 
 image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" \
-         "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py"; do
+         "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
+         "${NODES_DIR}/battery_manager.py" "${NODES_DIR}/vlm_reasoning_node.py" \
+         "${NODES_DIR}/save_location.py"; do
     [ -f "${f}" ] || die "${f} not found."
 done
-mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}"
+mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
 
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin
 
 T0="$(date +%s)"
-DB_NAME="rtabmap-$(date +%Y%m%d-%H%M%S).db"
+if [ "${RESUME}" = "true" ]; then
+    # Continue the newest map: RTAB-Map opens the existing database, adds this
+    # run as a new session and links it to the old map when it recognises a
+    # place. The original is copied first (.bak-*, not matched by *.db).
+    PREV_DB="$(newest_db)"
+    [ -n "${PREV_DB}" ] || die "--resume: no database in ${TWIN_DB_DIR} to resume."
+    DB_NAME="$(basename "${PREV_DB}")"
+    cp -p "${PREV_DB}" "${PREV_DB}.bak-$(date +%Y%m%d-%H%M%S)"
+    DB_NOTE="resumed (backup ${DB_NAME}.bak-*)"
+else
+    DB_NAME="rtabmap-$(date +%Y%m%d-%H%M%S).db"
+    DB_NOTE="new"
+fi
 
 echo "================================================================"
 echo " Go2 3D digital twin (wifi_nav.sh + RTAB-Map + ${TWIN_BRIDGE} bridge)"
 echo "================================================================"
 echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC}$( [ "${TWIN_MODE}" != lidar ] && echo ", camera ${TWIN_RGB_TOPIC}" )"
-echo "  YOLO        : $( [ "${TWIN_YOLO}" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ]; } && echo "on if the camera publishes" || echo off )"
-echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}"
+on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ]; } && echo "on if the camera publishes" || echo off; }
+echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
+echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate})" )"
+echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo off )"
+echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Bridge      : ${TWIN_BRIDGE}$( [ "${TWIN_BRIDGE}" != none ] && echo " on port ${TWIN_BRIDGE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
@@ -325,6 +411,7 @@ cleanup() {
         kill "${WATCH_PID}" 2>/dev/null || true
         wait "${WATCH_PID}" 2>/dev/null || true
     fi
+    [ "${TWIN_BATTERY}" = 1 ] && kill_battery_manager
     stop_twin
     if [ -f "${TWIN_DB_DIR}/${DB_NAME}" ]; then
         echo "[3d] Map saved: ${TWIN_DB_DIR}/${DB_NAME} ($(du -h "${TWIN_DB_DIR}/${DB_NAME}" | cut -f1))"

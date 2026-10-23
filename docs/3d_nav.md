@@ -4,10 +4,13 @@
 
 [`scripts/runtime/wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs the
 normal 2D session and adds a live, dense 3D map of the building on top of it.
-When the Go2 camera publishes, the map is coloured from it, and YOLO11s labels
-objects and can mark them as obstacles for Nav2. You can view all of it in
-Foxglove from the Windows host and send the dog somewhere by clicking in the
-3D view.
+When the Go2 camera publishes, the map is coloured from it. With `--ai`:
+- **YOLO11s** labels objects and can mark them as obstacles for Nav2.
+- **A local VLM** describes the view.
+- **The battery manager** brings the dog back to the dock on low battery.
+
+You can view all of it in Foxglove from the Windows host and send the dog
+somewhere by clicking in the 3D view.
 
 `wifi_nav.sh` is **not modified**. Use `wifi_nav.sh` when you only need 2D
 exploration, and `wifi_3d_nav.sh` when you want the 3D view.
@@ -49,7 +52,7 @@ RViz, explorer                                        foxglove_bridge :8765 ◄�
   `go2-3d` waits up to `TWIN_CAMERA_WAIT` (60 s) for a frame on
   `/camera/image_raw`.
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
-    loop closures) and YOLO starts.
+    loop closures), and with `--ai` YOLO and the VLM start.
   - **No frame:** for example the Jetson camera backend is down
     ([STATUS](STATUS.md#blocked-by-hardware)). The map stays LiDAR-only, so a
     missing camera never stops mapping.
@@ -74,8 +77,8 @@ wrong place, calibrate the camera (`camera_calibration`). Then set the real
 field of view, or fx/fy/cx/cy on `go2_camera_info.py`, and the real mount in
 `TWIN_CAMERA_TF`. This is roadmap item 3.4.
 
-**YOLO11s** ([`twin/yolo_node.py`](../twin/yolo_node.py)) runs on the VM's CPU
-at `TWIN_YOLO_RATE` (2 Hz):
+**YOLO11s** ([`twin/yolo_node.py`](../twin/yolo_node.py), started by `--ai`)
+runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
 
 | Topic | Content |
 |---|---|
@@ -144,6 +147,8 @@ the same connection.
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh                  # explore + 3D map (wifi_nav.sh defaults)
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # you drive by clicking goals
+./scripts/runtime/wifi_3d_nav.sh --ai             # + YOLO, VLM, battery manager
+./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
 ./scripts/runtime/wifi_3d_nav.sh --sim            # against the Gazebo simulation
 ```
 
@@ -152,10 +157,13 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 
 | Option | Effect |
 |---|---|
-| *(default)* | `auto`: Go2 camera fusion + YOLO if `/camera/image_raw` publishes, else LiDAR-only |
+| *(default)* | `auto`: Go2 camera fusion if `/camera/image_raw` publishes, else LiDAR-only |
+| `--ai` | Also start YOLO11s and the VLM (both need the camera) and the battery manager. See [AI nodes](#ai-nodes---ai) |
+| `--no-yolo` / `--no-vlm` / `--no-battery` | With `--ai`: leave that one out |
+| `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
+| `--save-location` | In a second terminal: label points clicked in Foxglove, saved to `config/semantic_locations.json` |
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
-| `--lidar-only` | LiDAR-only map, no camera, no YOLO |
-| `--no-yolo` | Camera colour without YOLO (saves CPU) |
+| `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--rosbridge` | rosbridge on `:9090` instead of foxglove_bridge on `:8765` |
 | `--no-bridge` | RTAB-Map only, no web bridge |
@@ -165,7 +173,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 
 About 20–90 s after RViz opens, the terminal prints a `3D digital twin READY`
 block. It shows the RTAB-Map mode (`camera` or `lidar`), the database path,
-whether YOLO is on, and the Foxglove address.
+the state of YOLO, the VLM and the battery manager, and the Foxglove address.
 
 **Stop:** Ctrl+C as usual. `wifi_nav.sh` shuts the session down first. Then
 RTAB-Map gets up to `TWIN_STOP_TIMEOUT` (60 s) to write the database. Wait for
@@ -173,6 +181,117 @@ RTAB-Map gets up to `TWIN_STOP_TIMEOUT` (60 s) to write the database. Wait for
 
 Each run writes its own database:
 `~/files/go2-nav2-wifi/ws/maps/rtabmap/rtabmap-YYYYmmdd-HHMMSS.db`.
+With `--resume`, it continues the newest one instead.
+
+---
+
+## AI nodes (`--ai`)
+
+`--ai` starts three nodes. Each one can be left out (`--no-yolo`,
+`--no-vlm`, `--no-battery`). Their logs are in `ws/log/3d/` (`yolo.log`,
+`vlm.log`, `battery.log`).
+
+### Battery manager
+
+[`battery_manager.py`](../scripts/nodes/battery_manager.py) runs inside
+`go2-lidar3d`, because it needs the Unitree messages. It reads `bms_state.soc`
+from `/lf/lowstate`, the copy the Wi-Fi relay forwards, or from `/lowstate`.
+
+| Battery | Action |
+|---|---|
+| below `TWIN_BATTERY_LOW` (15 %) | `/explore/resume` False (the explorer stops and cancels its goal). 2 s later, `/goal_pose` to the dock. Re-sent every 30 s until the dog is within 0.5 m |
+| below `TWIN_BATTERY_RESUME` (20 %) | Every explorer START is answered with STOP |
+| at or above 20 % | Released. The explorer is **not** restarted automatically; click START |
+
+The dock is `TWIN_DOCK="x y yaw"` in `lidar3d_map`, default `0 0 0`.
+**`lidar3d_map`'s origin is wherever the dog stood when the session started**,
+so start every session at the dock, or set `TWIN_DOCK`. The status is
+published on `/battery_manager/status`. If the relay doesn't forward the
+battery, `battery.log` warns `no battery data` after 30 s. In `--sim` there
+is no battery, so it stays idle.
+
+### VLM reasoning (Ollama)
+
+[`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) sends the
+newest camera frame to an Ollama server (`llava:7b` by default) with the
+prompt *"…Do you see a hydroponic station? Or is the path ahead blocked by a
+desk?…"*.
+- It publishes `HYDROPONIC`, `BLOCKED`, `CLEAR` or `UNKNOWN` on
+  `/vlm_decision`, and the full answer on `/vlm_decision/raw`.
+- It asks every 5 s at most, and only after the previous answer has arrived.
+- While Ollama is unreachable it logs a warning and publishes nothing.
+
+**`/vlm_decision` is informational for now.** No node steers the dog on it.
+
+Ollama setup (once):
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh    # on the VM
+ollama pull llava:7b                             # ~4.7 GB
+```
+
+llava:7b on the VM's CPU takes tens of seconds per answer. A Windows host with
+a GPU is much faster:
+1. Install Ollama on Windows.
+2. Set `OLLAMA_HOST=0.0.0.0` there.
+3. Allow port 11434 through the Windows firewall.
+4. On the VM, run
+   `TWIN_VLM_URL=http://<Windows IP>:11434/api/generate ./scripts/runtime/wifi_3d_nav.sh --ai`.
+
+Other settings: `TWIN_VLM_MODEL`, `TWIN_VLM_PERIOD`.
+
+### YOLO11s
+
+See [Camera fusion and YOLO](#camera-fusion-and-yolo).
+
+---
+
+## Saving named locations (`--save-location`)
+
+While a session runs, open a second terminal:
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --save-location
+```
+
+1. Click a point in Foxglove (**Publish → Point**).
+2. The terminal prints its `lidar3d_map` coordinates and asks for a label,
+   such as `Dock` or `Hydroponic_Station`. Enter skips the point.
+
+Labels are saved to [`config/semantic_locations.json`](../config/), with
+`x, y, z`, the frame and the time. When the TF exists, the same point is also
+stored in `rtabmap_map`. Reusing a label replaces the old entry.
+
+Notes:
+- **The dog drives there too.** `go2_click_to_goal` also listens on
+  `/clicked_point`, so every labelled click is also a goal. To label without
+  driving, set the Publish topic in Foxglove to `/label_point`, and run the
+  node with `-p topic:=/label_point` (see
+  [`save_location.py`](../scripts/nodes/save_location.py)).
+- **`lidar3d_map` coordinates hold only if the dog starts each session from
+  the same spot.**
+
+---
+
+## Resuming a map (`--resume`)
+
+After a battery swap, restart with `--resume`:
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --ai --resume
+```
+
+1. The newest `.db` in `TWIN_DB_DIR` is copied to `<db>.bak-<time>`.
+2. That database is reopened. RTAB-Map adds the new run to it as a new
+   session (nothing is deleted).
+3. As soon as it recognises a place from the earlier run, it links the two
+   and `/rtabmap/cloud_map` shows the combined map.
+
+Recognition works best in `camera` mode, because it uses visual features. With
+LiDAR only, the sessions may stay unlinked in the same file. Either way,
+**start the dog where the last run started** (the dock): Nav2's `lidar3d_map`
+always restarts from the dog's start pose, and the dock goal and saved
+locations depend on it.
 
 ---
 
@@ -282,6 +401,10 @@ camera images. The database also opens in
 | `TWIN_YOLO_MODEL` | `/opt/yolo/yolo11s.pt` | YOLO weights (baked into the image) |
 | `TWIN_YOLO_RATE` | `2` | Inferences per second (CPU) |
 | `TWIN_YOLO_CLASSES` | furniture, people, pets | Comma list of classes that become obstacles, or `all` |
+| `TWIN_VLM_URL` | `http://localhost:11434/api/generate` | Ollama endpoint |
+| `TWIN_VLM_MODEL` / `TWIN_VLM_PERIOD` | `llava:7b` / `5` | VLM model, minimum seconds between requests |
+| `TWIN_BATTERY_LOW` / `TWIN_BATTERY_RESUME` | `15` / `20` | % to return to the dock / to allow exploring again |
+| `TWIN_DOCK` | `0 0 0` | Dock `x y yaw` in `lidar3d_map` |
 | `TWIN_DEPTH_TOPIC` / `TWIN_CAMINFO_TOPIC` | RealSense defaults | `--rgbd` inputs |
 | `TWIN_DB_DIR` | `$NAV2_WIFI_DIR/ws/maps/rtabmap` | Where databases go |
 | `TWIN_LOG_DIR` | `$NAV2_WIFI_DIR/ws/log/3d` | `rtabmap.log`, `bridge.log`, `click_to_goal.log`, `yolo.log`, `camera_info.log`, `lidar_depth.log`, `camera_tf.log` |
@@ -307,7 +430,11 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → camera_link` must resolve |
 | YOLO boxes in `/yolo/image` but no `/yolo/markers` | Box bottom above the horizon and no LiDAR points inside it, or farther than 6 m. `tail …/ws/log/3d/yolo.log` |
 | Nav2 ignores YOLO obstacles | Run `./scripts/tools/add-yolo-costmap-source.sh` once. With a VoxelLayer, check its z range covers the boxes |
-| VM CPU pegged | `--no-yolo` or `TWIN_YOLO_RATE=1`; `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
+| `Ollama not reachable` in `vlm.log` | Start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
+| `no battery data` in `battery.log` | The relay does not forward `/lf/lowstate`; check in `go2sh`: `ros2 topic hz /lf/lowstate` |
+| Low battery but the dog doesn't go home | `battery.log` shows `dock goal sent`? Then check Nav2 (`/plan`); the dock is `TWIN_DOCK` in `lidar3d_map` |
+| `--resume`: old and new map not joined | Needs a recognised place: `camera` mode, start at the old start point |
+| VM CPU pegged | `--no-yolo` / `--no-vlm`, or `TWIN_YOLO_RATE=1`; `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
 | Map not saved after a crash | A leftover `go2-3d` is stopped (and saved) at the start of the next run, or run `--stop` |
 
 `go2-3d` keeps its own log after it stops: `docker logs go2-3d`.
