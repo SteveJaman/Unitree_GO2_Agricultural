@@ -17,6 +17,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Web dashboard (3D map, robot, plan, camera, battery, VLM, click-to-go, explorer START/STOP) | **Implemented (pending physical test)**: tested against a mock rosbridge |
 | Dashboard UI overhaul: full-screen map, glass panels, waypoint pin + neon route, smoothed robot, Auto Explore / Return to Dock, battery icon, VLM toasts, camera PiP | **Implemented (pending physical test)**: tested against a mock rosbridge (2026-10-23) |
 | Solid map (live voxels, lighting, shadows) and presentation mesh (`--export --mesh`, `--view`) | **Implemented**: meshing tested on a synthetic room (Open3D); real scans pending |
+| Semantic rooms: segmentation, naming with VLM suggestion, merge, navigate to room | **Implemented (pending physical test)**: segmentation tested on a synthetic floor plan; UI tested against a mock rosbridge |
 | Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
 | VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
 | Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
@@ -291,6 +292,9 @@ relay is unconfirmed.
 | 38 | Solid map frame rate | dashboard Solid, big map, ⚙ shows fps | ≥ 50 fps on the presentation laptop (else Detail: Medium) |
 | 39 | Presentation mesh | after a run: `--export --mesh`, then `--view` | 3D Scan shows closed walls and floor; < 1 min meshing |
 | 40 | Return to Dock | explorer running, press Return to Dock | explorer stops, pin at the dock, route drawn, dog drives home |
+| 41 | Room segmentation | map two rooms joined by a door | two coloured rooms split at the doorway; `config/semantic_rooms.json` written |
+| 42 | Room naming | Rooms → Edit, click a room, robot inside it, `--ai` | dialog shows a VLM suggestion; Save keeps the name after the next re-segmentation |
+| 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
 
 ---
 

@@ -6,6 +6,7 @@ import { useLatest } from './RosProvider.jsx';
  */
 export default function ControlPanel({
   connected, onExplore, onDock, clickToGo, setClickToGo, follow, setFollow, hasWaypoint, onClearWaypoint,
+  rooms = [], onGoRoom,
 }) {
   const [status] = useLatest('/explore/status', 'std_msgs/msg/String', { throttle: 500 });
   const exploring = /enabled=True/.test(status?.data || '');
@@ -27,6 +28,18 @@ export default function ControlPanel({
       <button className="action" disabled={!connected} onClick={onDock}>
         <span className="action-icon">⌂</span> Return to Dock
       </button>
+      {rooms.length > 0 && (
+        <label className="room-go">
+          <span className="action-icon">➜</span>
+          <select value="" disabled={!connected}
+                  onChange={(e) => { const r = rooms.find((x) => x.id === e.target.value); if (r) onGoRoom(r); }}>
+            <option value="" disabled>Navigate to room…</option>
+            {rooms.map((r) => (
+              <option key={r.id} value={r.id}>{r.label || `Room ${r.id.split('_').pop()}`}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="chips">
         <button className={`chip ${clickToGo ? 'active' : ''}`} onClick={() => setClickToGo(!clickToGo)}
                 title="Click the floor to send the robot there">

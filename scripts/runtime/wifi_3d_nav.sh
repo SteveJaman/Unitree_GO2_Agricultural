@@ -56,6 +56,7 @@
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
 #   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
+#   TWIN_ROOMS=1 (room segmentation)  TWIN_ROOM_DOOR_WIDTH=0.9  TWIN_ROOM_MIN_AREA=1.5
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC                       (--rgbd)
 #   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
@@ -365,6 +366,7 @@ start_twin_when_ready() {
             -e TWIN_VLM_URL -e TWIN_VLM_MODEL -e TWIN_VLM_PERIOD \
             -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
+            -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
@@ -441,6 +443,7 @@ esac
 
 image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
+         "${TWIN_DIR}/room_segmentation_node.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
          "${NODES_DIR}/battery_manager.py" "${NODES_DIR}/vlm_reasoning_node.py" \
          "${NODES_DIR}/save_location.py" "${NODES_DIR}/auto_localize.py"; do

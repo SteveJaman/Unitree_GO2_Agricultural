@@ -62,6 +62,8 @@ Other entry points:
   `llava:7b` (Ollama) reads the camera and pauses + docks on a blocked path.
 - **Battery dock and auto-localization:** below 15 % the dog returns to the
   dock. It localizes itself at start, so there's no "2D Pose Estimate" click.
+- **Semantic rooms:** the map is split into rooms (robot-vacuum style) that
+  you name (with a VLM suggestion), merge, and send the robot to.
 - **Arm control:** the D1-T over DDS/JSON (fold, joints, lift, sweep,
   calibration), kept off the Go2 network.
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
@@ -72,7 +74,7 @@ Other entry points:
 |---|---|
 | [Setup](docs/setup.md) | One-time workstation setup, everyday commands, flags and overrides |
 | [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
-| [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, YOLO, VLM, battery dock, `--resume`, export and mesh |
+| [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, semantic rooms, YOLO, VLM, battery dock, `--resume`, export and mesh |
 | [Explorer](docs/explorer.md) | Frontier explorer phases, parameters, manual launch |
 | [Scripts](docs/scripts.md) | Every runtime script, ROS node and tool |
 | [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |
@@ -84,7 +86,7 @@ Other entry points:
 | [Status](docs/STATUS.md) | Current state and the robot test checklist |
 | [Roadmap](docs/roadmap.md) | Milestones and what is next |
 | [Simulation](gazebo/README.md) | Gazebo setup, what is simulated, limits |
-| [Config](config/README.md) | RViz layout, saved named locations |
+| [Config](config/README.md) | RViz layout, saved named locations and rooms |
 
 ## System Requirements
 

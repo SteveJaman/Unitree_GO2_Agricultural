@@ -172,6 +172,10 @@ button { font: inherit; color: inherit; }
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .2); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 .hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 14px 20px; color: var(--muted); }
 
+/* UI above the 3D labels (Html zIndexRange 0-500), dialogs above everything. */
+.mapmenu, .status, .vlm-badge, .vlm-toast, .controls, .pip, .rooms, .rooms-fab, .toast, .connecting, .hint { z-index: 1000; }
+.modal-backdrop { z-index: 2000 !important; }
+
 /* Floating 3D labels (HTML overlays anchored in the scene). */
 .tag {
   padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap; pointer-events: none;
@@ -184,6 +188,76 @@ button { font: inherit; color: inherit; }
 .tag-dock { background: rgba(167, 139, 250, .85); color: #1e0b4b; font-size: 11px; padding: 2px 9px; }
 .scene-msg { color: var(--muted); background: var(--glass-strong); padding: 8px 14px; border-radius: 10px; white-space: nowrap; }
 
+/* ---------------------------------------------------------- rooms (top right) */
+.rooms-fab {
+  position: absolute; top: 76px; right: var(--gap); padding: 9px 14px; border-radius: 999px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text);
+}
+.rooms-fab .count { background: var(--accent); color: #04131a; border-radius: 999px; padding: 0 7px; font-size: 12px; }
+.rooms {
+  position: absolute; top: 76px; right: var(--gap); width: 300px; padding: 10px; display: flex; flex-direction: column;
+  gap: 8px; max-height: calc(100vh - 76px - 230px); animation: pop .15s ease-out;
+}
+.rooms-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
+.rooms-title { font-weight: 650; font-size: 15px; margin-right: auto; }
+.icon { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 8px; }
+.icon:hover { color: var(--text); background: rgba(255, 255, 255, .07); }
+.rooms-empty { color: var(--muted); font-size: 13px; padding: 6px 4px 8px; }
+.rooms-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.room-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 10px; }
+.room-row:hover { background: rgba(255, 255, 255, .05); }
+.room-row.selected { background: rgba(34, 211, 238, .16); box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .45); }
+.swatch { width: 12px; height: 12px; border-radius: 4px; flex: none; box-shadow: 0 0 8px rgba(255, 255, 255, .15); }
+.swatch.big { width: 30px; height: 30px; border-radius: 9px; }
+.room-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-area { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.rooms-foot { border-top: 1px solid var(--stroke); padding: 8px 4px 2px; display: flex; flex-direction: column; gap: 8px; }
+.hint-text { color: var(--muted); font-size: 12px; }
+.row-buttons { display: flex; gap: 6px; justify-content: flex-end; }
+.chip.small { flex: none; padding: 4px 10px; font-size: 12px; }
+.chip.small.go { color: var(--accent); border-color: rgba(34, 211, 238, .45); }
+.chip.small.go:hover { background: rgba(34, 211, 238, .12); }
+.chip.small.ai { color: #e9d5ff; border-color: rgba(192, 132, 252, .55); }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Navigate to room (bottom-left controls) */
+.room-go {
+  display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 14px;
+  background: rgba(255, 255, 255, .07); border: 1px solid var(--stroke-strong);
+}
+.room-go select {
+  flex: 1; background: transparent; color: var(--text); border: 0; padding: 12px 0; font: inherit; font-weight: 600; cursor: pointer;
+  outline: none;
+}
+.room-go select option { background: #111821; color: var(--text); }
+
+/* Name this area */
+.modal-backdrop {
+  position: absolute; inset: 0; display: grid; place-items: center; background: rgba(2, 6, 12, .45);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: fade .15s ease-out; z-index: 10;
+}
+.modal { width: min(440px, calc(100vw - 32px)); padding: 20px; display: flex; flex-direction: column; gap: 14px; background: var(--glass-strong); animation: pop .18s ease-out; }
+.modal-head { display: flex; align-items: center; gap: 12px; }
+.modal-title { font-size: 18px; font-weight: 700; }
+.modal-sub { color: var(--muted); font-size: 13px; }
+.modal-input {
+  width: 100%; padding: 13px 14px; border-radius: 12px; font: inherit; font-size: 16px; color: var(--text);
+  background: rgba(255, 255, 255, .06); border: 1px solid var(--stroke-strong); outline: none;
+}
+.modal-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(34, 211, 238, .2); }
+.modal-ideas { display: flex; flex-wrap: wrap; gap: 6px; }
+.modal-note { color: var(--muted); font-size: 11.5px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions .action { padding: 10px 18px; }
+.action.primary { background: linear-gradient(135deg, #0ea5e9, #2563eb); border-color: transparent; color: #fff; }
+
+.tag-room {
+  background: rgba(10, 14, 20, .72); color: var(--text); border-color: var(--room, rgba(255, 255, 255, .3));
+  border-width: 1.5px; font-size: 12.5px;
+}
+.tag-room.selected { background: var(--room); color: #04131a; }
+
+@keyframes fade { from { opacity: 0; } }
 @keyframes blink { 50% { opacity: .35; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }

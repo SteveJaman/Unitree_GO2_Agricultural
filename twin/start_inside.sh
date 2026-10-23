@@ -16,6 +16,8 @@
 #   * vlm_reasoning_node  (TWIN_VLM=1 and camera) Ollama llava -> /vlm_decision;
 #                         confirmed BLOCKED pauses the explorer and docks (TWIN_VLM_ACT)
 #   * auto_localize       (TWIN_AUTOLOCALIZE=1) one-shot /initialpose at the dock
+#   * room_segmentation   (TWIN_ROOMS=1) costmap -> rooms (/semantic_rooms), names
+#                         and merges from the dashboard -> config/semantic_rooms.json
 #
 # A TWIN_DB that already exists is continued: RTAB-Map adds a new session to
 # it and links it to the old map once it recognises a place (--resume).
@@ -51,6 +53,7 @@
 #   TWIN_VLM=0|1   TWIN_VLM_URL=http://localhost:11434/api/generate
 #   TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5  TWIN_VLM_ACT=1  TWIN_VLM_CONFIRM=2
 #   TWIN_AUTOLOCALIZE=0|1    TWIN_DOCK="0 0 0"  (x y yaw in TWIN_MAP_FRAME)
+#   TWIN_ROOMS=1  TWIN_ROOM_DOOR_WIDTH=0.9 (m)  TWIN_ROOM_MIN_AREA=1.5 (m^2)
 #   TWIN_YOLO_CLASSES="chair,person,..."|all
 #   TWIN_MAP_FRAME=lidar3d_map  TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="..."        extra RTAB-Map parameters, e.g. "--Grid/CellSize 0.1"
@@ -86,6 +89,9 @@ TWIN_VLM_PERIOD="${TWIN_VLM_PERIOD:-5}"
 TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
 TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
 TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
+TWIN_ROOMS="${TWIN_ROOMS:-1}"
+TWIN_ROOM_DOOR_WIDTH="${TWIN_ROOM_DOOR_WIDTH:-0.9}"
+TWIN_ROOM_MIN_AREA="${TWIN_ROOM_MIN_AREA:-1.5}"
 read -r DOCK_X DOCK_Y DOCK_YAW <<< "${TWIN_DOCK:-0 0 0}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
@@ -162,6 +168,13 @@ if [ "$TWIN_FOXGLOVE" = 1 ]; then
 fi
 start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
     -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+
+# Rooms: costmap -> room polygons (/semantic_rooms), names/merges from the
+# dashboard, saved to config/semantic_rooms.json.
+if [ "$TWIN_ROOMS" = 1 ]; then
+    start rooms python3 -u /twin/room_segmentation_node.py --ros-args \
+        -p door_width:="$(float "$TWIN_ROOM_DOOR_WIDTH")" -p min_room_area:="$(float "$TWIN_ROOM_MIN_AREA")"
+fi
 
 # One-shot: /initialpose at the session's start pose (the dock), then exits.
 # Not in PIDS, so its normal exit is not reported as a crash.

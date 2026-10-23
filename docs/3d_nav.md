@@ -344,6 +344,75 @@ Notes:
 
 ---
 
+## Rooms: semantic map
+
+Like a robot vacuum, the twin splits the mapped floor into rooms, which you
+can name, merge and drive to. It runs in every session (`TWIN_ROOMS=1`).
+
+**Segmentation**
+([`twin/room_segmentation_node.py`](../twin/room_segmentation_node.py),
+every 10 s when `/global_costmap/costmap` changed):
+
+1. Free space is every known cell with cost < 50.
+2. **Room cores** are the free cells farther than `TWIN_ROOM_DOOR_WIDTH` / 2
+   (+ 1.5 cells) from any wall. This is an erosion: doorways up to 0.9 m wide
+   close, while rooms keep a core.
+3. Each core then **grows through free space** one cell at a time until it
+   meets its neighbours. The borders land in the doorways, and nothing leaks
+   through walls.
+4. Rooms smaller than `TWIN_ROOM_MIN_AREA` (1.5 m²) join their neighbour.
+5. Each room gets a simplified outline polygon, an area, and a **goal**: its
+   most open point, the cell farthest from any wall. Unlike the centroid,
+   that is always inside the room and on free floor.
+
+**IDs** (`room_1`, `room_2`, …) are stable while the map grows: each new
+segment takes the ID of the previous room it overlaps most. So names and
+merges stay put.
+
+On the synthetic three-room test plan, segmentation found 19.4, 16.1 and
+9.0 m² rooms: exactly the rooms minus a desk. It kept the IDs when the map
+grew and its origin moved, and took 0.6 s on a 60 × 40 m, 12-room map.
+
+**In the dashboard** (Rooms panel, top right; ⚙ → *Rooms* shows or hides
+them):
+
+- **Rooms on the map** are translucent coloured floor zones with their names.
+- **Name a room:** click it while *Tap to go* is off, or after **Edit**. The
+  *Name this area* dialog asks the VLM for a suggestion, which appears as the
+  placeholder and the ✨ chip (Tab takes it). Quick picks are offered too.
+- **Merge rooms:** **Edit → Merge rooms**, click two adjacent rooms, then
+  **Merge**. The node refuses rooms that don't touch.
+- **Navigate to room** (bottom-left dropdown, or **Go** in the panel):
+  1. it pauses the explorer;
+  2. it sends the room's goal through `/clicked_point`, with the same
+     safe-floor snapping as a tap;
+  3. it drops the pin.
+
+**Saved** in [`config/semantic_rooms.json`](../config/) by the node: IDs,
+labels, polygons, goals, areas and merges. It is reloaded at the next start,
+and `--view` shows it offline. Like the other saved coordinates, it lines up
+with a later session only if the dog starts at the same dock.
+
+**VLM suggestion:** opening the dialog publishes the room ID on
+`/vlm_room_request`. The VLM node answers next, ahead of its routine check,
+with *"Based on this image, what should I name this room? (e.g., Kitchen,
+Lab, Office)"*. It shortens the answer to at most three words and publishes
+`{"room_id", "suggestion"}` on `/vlm_room_suggestion`.
+
+- **What it sees:** the camera shows what is in front of the robot, so the
+  suggestion is meaningful only while the robot is in, or looking into, that
+  room. The dialog says so.
+- **Needs `--ai`** and Ollama.
+
+| Topic | Type | Use |
+|---|---|---|
+| `/semantic_rooms` | `visualization_msgs/MarkerArray` | Room outlines + names (RViz / Foxglove) |
+| `/semantic_rooms/json` | `std_msgs/String` (latched) | The room map for the dashboard |
+| `/semantic_rooms/command` | `std_msgs/String` JSON | `rename`, `merge`, `unmerge`, `resegment` (from the dashboard) |
+| `/vlm_room_request` / `/vlm_room_suggestion` | `std_msgs/String` | Ask / answer for a room name |
+
+---
+
 ## Resuming a map (`--resume`)
 
 After a battery swap, restart with `--resume`:
@@ -539,6 +608,7 @@ camera images. The database also opens in
 | `TWIN_VLM_MODEL` / `TWIN_VLM_PERIOD` | `llava:7b` / `5` | VLM model, minimum seconds between requests |
 | `TWIN_VLM_ACT` / `TWIN_VLM_CONFIRM` | `1` / `2` | Act on `BLOCKED` (0 = report only) / answers in a row needed |
 | `TWIN_AUTOLOCALIZE` | `1` with `--ai`/`--resume` | `/initialpose` at the dock on start (`--no-localize` = 0) |
+| `TWIN_ROOMS` / `TWIN_ROOM_DOOR_WIDTH` / `TWIN_ROOM_MIN_AREA` | `1` / `0.9` / `1.5` | Room segmentation on/off, widest opening (m) treated as a doorway, smallest room (m²) |
 | `TWIN_BATTERY_LOW` / `TWIN_BATTERY_RESUME` | `15` / `20` | % to return to the dock / to allow exploring again |
 | `TWIN_DOCK` | `0 0 0` | Dock `x y yaw` in `lidar3d_map` |
 | `TWIN_DEPTH_TOPIC` / `TWIN_CAMINFO_TOPIC` | RealSense defaults | `--rgbd` inputs |
@@ -562,6 +632,8 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
 | Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
 | Dashboard: camera "no frames" | Camera mode only (see READY `RTAB-Map : camera`); `tail …/ws/log/3d/image_compressor.log` |
+| No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
+| Merge refused | The two rooms don't touch; merge through the room between them first |
 | Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
@@ -625,6 +697,8 @@ WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
 - **Doors and glass.** These need a custom-trained YOLO model; COCO has neither class.
 - **YOLO on the Jetson.** Inference runs on the VM's CPU at 2 Hz; the Jetson GPU
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
+- **Room polygons follow the costmap.** Furniture splits or dents rooms. The
+  door width is a single global setting; tune it per building.
 - **Waypoint queue in the dashboard.** Each click replaces the current goal.
   For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
 - **Costmap in the dashboard.** Not drawn; use RViz or Foxglove

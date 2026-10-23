@@ -18,8 +18,17 @@ row (default 2: one misread frame must not abort a mission), the node
 then waits `cooldown` s before it can act again. CLEAR / HYDROPONIC /
 UNKNOWN reset the count. The explorer is not restarted automatically.
 
+Room naming: a room id on /vlm_room_request (sent by the dashboard when
+"Name this area" opens) is answered next, ahead of the routine check, with
+the newest frame and ROOM_PROMPT; the answer is cut to a short name and
+published as {"room_id", "suggestion", "raw"} on /vlm_room_suggestion. The
+camera shows what is in front of the robot, so a suggestion is only
+meaningful while the robot is in (or looking into) that room.
+
 Subscribes: /camera/image_raw  (sensor_msgs/Image, bgr8 / rgb8 / mono8)
+            /vlm_room_request  (std_msgs/String: room id)
 Publishes:  /vlm_decision      (std_msgs/String: HYDROPONIC | BLOCKED | CLEAR | UNKNOWN)
+            /vlm_room_suggestion (std_msgs/String JSON)
             /vlm_decision/raw  (std_msgs/String: the model's full answer)
             /explore/resume    (std_msgs/Bool, False on a confirmed BLOCKED)
             /goal_pose         (geometry_msgs/PoseStamped, the dock)
@@ -27,6 +36,7 @@ Publishes:  /vlm_decision      (std_msgs/String: HYDROPONIC | BLOCKED | CLEAR | 
 import base64
 import json
 import math
+import re
 import threading
 import time
 import urllib.error
@@ -44,6 +54,17 @@ from std_msgs.msg import Bool, String
 DEFAULT_PROMPT = ("You are a robot dog. Do you see a hydroponic station? Or is the path "
                   "ahead blocked by a desk? Answer 'HYDROPONIC', 'BLOCKED', or 'CLEAR'.")
 DECISIONS = ('HYDROPONIC', 'BLOCKED', 'CLEAR')
+ROOM_PROMPT = ("Based on this image, what should I name this room? (e.g., Kitchen, Lab, Office). "
+               "Answer with the room name only, at most three words.")
+
+
+def room_name(text):
+    """'This looks like a lab office.' -> 'Lab Office' (first line, <= 3 words)."""
+    line = (text.strip().splitlines() or [''])[0]
+    line = re.sub(r'^(this|it)\s+(is|looks like|appears to be|seems to be)\s+', '', line, flags=re.I)
+    line = re.sub(r'^(a|an|the)\s+', '', line, flags=re.I)
+    words = re.findall(r"[A-Za-z][A-Za-z'\-]*", line)[:3]
+    return ' '.join(w.capitalize() for w in words)
 
 
 def image_bgr(msg):
@@ -87,7 +108,11 @@ class VlmReasoning(Node):
         self.declare_parameter('dock_y', 0.0)
         self.declare_parameter('dock_yaw', 0.0)
         self.declare_parameter('map_frame', 'lidar3d_map')
+        self.declare_parameter('room_prompt', ROOM_PROMPT)
         gp = lambda k: self.get_parameter(k).value  # noqa: E731
+        self.room_prompt = gp('room_prompt')
+        self.pending_room = None    # room id waiting for a name suggestion
+        self.last_image = None      # newest frame, kept for room requests
 
         self.act = bool(gp('act_on_blocked'))
         self.confirmations = max(1, int(gp('blocked_confirmations')))
@@ -108,6 +133,8 @@ class VlmReasoning(Node):
         self.raw_pub = self.create_publisher(String, '/vlm_decision/raw', 10)
         self.resume_pub = self.create_publisher(Bool, '/explore/resume', 10)
         self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
+        self.room_pub = self.create_publisher(String, '/vlm_room_suggestion', 10)
+        self.create_subscription(String, '/vlm_room_request', self.on_room_request, 10)
         self.create_subscription(Image, gp('image_topic'), self.on_image, qos_profile_sensor_data)
         self.create_timer(float(gp('period')), self.tick)
         self.get_logger().info(f'VLM {self.model} at {self.url} every >= {gp("period")} s '
@@ -119,16 +146,30 @@ class VlmReasoning(Node):
 
     def on_image(self, msg):
         self.image = msg
+        self.last_image = msg
+
+    def on_room_request(self, msg):
+        """Dashboard opened 'Name this area' for a room: answer before routine checks."""
+        self.pending_room = msg.data.strip() or None
+        self.tick()
 
     def tick(self):
         with self.lock:
-            if self.busy or self.image is None:
+            if self.busy:
+                return
+            room = self.pending_room
+            if room and self.last_image is not None:
+                self.pending_room = None
+                msg = self.last_image
+            elif self.image is not None:
+                room = None
+                msg, self.image = self.image, None
+            else:
                 return
             self.busy = True
-            msg, self.image = self.image, None
-        threading.Thread(target=self.ask, args=(msg,), daemon=True).start()
+        threading.Thread(target=self.ask, args=(msg, room), daemon=True).start()
 
-    def ask(self, msg):
+    def ask(self, msg, room=None):
         try:
             img = image_bgr(msg)
             if img is None:
@@ -142,14 +183,20 @@ class VlmReasoning(Node):
             if not ok:
                 return
             body = json.dumps({
-                'model': self.model, 'prompt': self.prompt, 'stream': False,
-                'images': [base64.b64encode(jpg.tobytes()).decode('ascii')],
+                'model': self.model, 'prompt': self.room_prompt if room else self.prompt,
+                'stream': False, 'images': [base64.b64encode(jpg.tobytes()).decode('ascii')],
             }).encode()
             req = urllib.request.Request(self.url, data=body,
                                          headers={'Content-Type': 'application/json'})
             t0 = time.monotonic()
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 answer = json.loads(r.read().decode()).get('response', '').strip()
+            if room:
+                name = room_name(answer)
+                self.room_pub.publish(String(data=json.dumps(
+                    {'room_id': room, 'suggestion': name, 'raw': answer[:200]})))
+                self.get_logger().info(f'room {room}: suggest {name!r} ({time.monotonic() - t0:.1f} s)')
+                return
             decision = decide(answer)
             self.pub.publish(String(data=decision))
             self.raw_pub.publish(String(data=answer))

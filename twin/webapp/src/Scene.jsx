@@ -13,6 +13,8 @@ const ROS_TO_THREE = [-Math.PI / 2, 0, 0];
 const SURFACE = '#c3d1df';
 const ROUTE = '#22d3ee';
 const PIN = '#ff3b5c';
+// 3D labels stay under the UI panels and dialogs (drei's default is ~16M).
+const LABEL_Z = [500, 0];
 
 /**
  * Full-screen 3D view of the twin.
@@ -31,6 +33,7 @@ const PIN = '#ff3b5c';
 export default function Scene({
   fixedFrame, baseFrame, layers, view, meshUrl, textured, shadows, voxelSize,
   assets, clickToGo, follow, waypoint, onPick, onGoal, onStats,
+  rooms, roomsInteractive, selectedRooms = [], onRoomClick,
 }) {
   const tf = useMemo(() => new TfTree(), []);
   const [cloud, setCloud] = useState(null);
@@ -100,6 +103,8 @@ export default function Scene({
   }, [cloud, voxels, meshInfo, view]);
 
   const floorZ = view === 'solid' && voxels ? voxels.floorZ : view === 'mesh' && meshInfo ? meshInfo.floorZ : null;
+  // Rooms lie on top of the floor surface: above the floor voxels' tops in Solid view.
+  const roomZ = view === 'solid' && voxels ? voxels.floorZ + voxels.size + 0.02 : (floorZ ?? 0) + 0.03;
 
   return (
     <Canvas shadows={shadows} camera={{ position: [-7, 10, 9], fov: 45, near: 0.05, far: 1000 }}
@@ -134,6 +139,14 @@ export default function Scene({
           </InFrame>
         )}
         {layers.scan && scan && <Points tf={tf} fixed={fixedFrame} cloud={scan} size={0.03} tint="#4ade80" />}
+        {layers.rooms && rooms?.rooms?.length > 0 && (
+          <InFrame tf={tf} fixed={fixedFrame} frame={rooms.frame} fallbackIdentity>
+            {rooms.rooms.map((r) => (
+              <RoomShape key={r.id} room={r} z={roomZ} interactive={roomsInteractive}
+                         selected={selectedRooms.includes(r.id)} onClick={onRoomClick} />
+            ))}
+          </InFrame>
+        )}
         {plan && waypoint && <Route tf={tf} fixed={fixedFrame} path={plan} />}
         {waypoint && <WaypointPin key={waypoint.id} x={waypoint.x} y={waypoint.y} />}
         <Dock />
@@ -218,8 +231,8 @@ function ScanMesh({ url, textured, onInfo }) {
     return () => { alive = false; };
   }, [url, onInfo]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
-  if (error) return <Html center className="scene-msg">The 3D scan could not be loaded</Html>;
-  if (!geometry) return <Html center className="scene-msg">Loading 3D scan…</Html>;
+  if (error) return <Html zIndexRange={LABEL_Z} center className="scene-msg">The 3D scan could not be loaded</Html>;
+  if (!geometry) return <Html zIndexRange={LABEL_Z} center className="scene-msg">Loading 3D scan…</Html>;
   const colored = textured && !!geometry.attributes.color;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
@@ -321,6 +334,41 @@ function WaypointPin({ x, y }) {
   );
 }
 
+/**
+ * A room on the floor: translucent fill, outline, name. Clicks are taken
+ * only when interactive (room editing); otherwise they pass through to the
+ * tap-to-go floor below.
+ */
+function RoomShape({ room, z, interactive, selected, onClick }) {
+  const [hover, setHover] = useState(false);
+  const geometry = useMemo(() => new THREE.ShapeGeometry(
+    new THREE.Shape(room.polygon.map(([x, y]) => new THREE.Vector2(x, y)))), [room.polygon]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const outline = useMemo(() => [...room.polygon, room.polygon[0]].map(([x, y]) => [x, y, 0.005]), [room.polygon]);
+  const color = new THREE.Color(...room.color);
+  const opacity = selected ? 0.5 : hover && interactive ? 0.36 : 0.2;
+  return (
+    <group position={[0, 0, z]}>
+      <mesh geometry={geometry}
+            onClick={(e) => {
+              if (!interactive || e.delta > 4) return;   // let tap-to-go have it
+              e.stopPropagation();
+              onClick?.(room);
+            }}
+            onPointerOver={() => interactive && setHover(true)}
+            onPointerOut={() => setHover(false)}>
+        <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      <Line points={outline} color={color} lineWidth={selected ? 4 : 2} transparent opacity={0.9} />
+      <group position={[room.center[0], room.center[1], 0.25]}>
+        <Html zIndexRange={LABEL_Z} center className={`tag tag-room ${selected ? 'selected' : ''}`} style={{ '--room': `#${color.getHexString()}` }}>
+          {room.label || `Room ${room.id.split('_').pop()}`}
+        </Html>
+      </group>
+    </group>
+  );
+}
+
 /** The dock: the session's start pose, lidar3d_map origin. */
 function Dock() {
   return (
@@ -330,7 +378,7 @@ function Dock() {
         <meshBasicMaterial color="#a78bfa" transparent opacity={0.8} side={THREE.DoubleSide} />
       </mesh>
       <group position={[0, 0, 0.5]}>
-        <Html center className="tag tag-dock">Dock</Html>
+        <Html zIndexRange={LABEL_Z} center className="tag tag-dock">Dock</Html>
       </group>
     </group>
   );
@@ -416,7 +464,7 @@ function YoloBox({ tf, fixed, marker }) {
     return (
       <InFrame tf={tf} fixed={fixed} frame={marker.header?.frame_id}>
         <group matrix={matrix} matrixAutoUpdate={false}>
-          <Html center className="tag tag-yolo">{prettyYolo(marker.text)}</Html>
+          <Html zIndexRange={LABEL_Z} center className="tag tag-yolo">{prettyYolo(marker.text)}</Html>
         </group>
       </InFrame>
     );
@@ -455,7 +503,7 @@ function Pin({ x, y, z, label, kind }) {
         <meshBasicMaterial color={color} transparent opacity={0.6} side={THREE.DoubleSide} />
       </mesh>
       <group position={[0, 0, 1.6]}>
-        <Html center className={`tag tag-${kind}`}>{label}</Html>
+        <Html zIndexRange={LABEL_Z} center className={`tag tag-${kind}`}>{label}</Html>
       </group>
     </group>
   );

@@ -83,6 +83,7 @@ Unitree_GO2_Agricultural/
 │   ├── start_inside.sh               # starts rosbridge, dashboard server, click-to-goal, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
 │   ├── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
 │   ├── image_compressor.py           # JPEG camera copies for the dashboard
+│   ├── room_segmentation_node.py     # costmap -> rooms, names/merges -> config/semantic_rooms.json
 │   └── webapp/                       # web dashboard: React + three.js (Vite), full-screen map + glass UI, :3000
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle

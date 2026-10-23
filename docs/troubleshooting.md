@@ -737,6 +737,7 @@ and the matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 | Arm unresponsive | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` |
 | Robot / host IP wrong | `./scripts/runtime/wifi_nav.sh --check` (banner shows both IPs) |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
+| No rooms in the dashboard | `tail ~/files/go2-nav2-wifi/ws/log/3d/rooms.log` |
 | 3D map / dashboard empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log` and `rosbridge.log` |
 | Low battery, dog doesn't go home | `tail ~/files/go2-nav2-wifi/ws/log/3d/battery.log` |
 | No `/vlm_decision` | `tail ~/files/go2-nav2-wifi/ws/log/3d/vlm.log`; `curl localhost:11434/api/tags` |
