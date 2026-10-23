@@ -3,19 +3,25 @@
 go2_stuck_recovery.py: get the Go2 unstuck when Nav2 gives up on a leg.
 
 Watches the controller's follow_path action. When a leg is aborted (e.g.
-"Failed to make progress" with the nose against a desk), it:
+Regulated Pure Pursuit's "detected collision ahead!" with the nose at a wall,
+or "Failed to make progress"), it:
 
-  1. checks the local costmap for a free patch behind the dog, then to its
-     left and right (the Go2 can walk backwards and sidestep);
+  1. checks the local costmap for a free patch behind the dog, then (with
+     allow_sidestep, i.e. --omni, whose smoother allows vy) to its left and
+     right;
   2. steps there: escape_distance metres at escape_speed, sent on
      /cmd_vel_nav so the velocity smoother still limits acceleration;
-  3. re-sends the last /goal_pose so the planner tries again from the new
-     spot, up to max_retries times per goal (retry_goal; off while the
-     frontier explorer drives, which picks its own next goal).
+  3. re-sends the last /goal_pose (the explorer's current frontier, or a 2D
+     Goal Pose) so the planner tries again from the new spot, up to
+     max_retries times per goal.
+
+Without this, a leg aborted at a wall leaves the dog staring at it: the goal
+handler only logs "leg failed" and the explorer waits ~25 s before trying
+another frontier, from the same spot.
 
 If no direction is free, it does not move and logs why.
 
-Run in go2-lidar3d by wifi_nav.sh --omni.
+Run in go2-lidar3d by wifi_nav.sh in every session (--no-recovery turns it off).
 """
 
 import math
@@ -54,6 +60,7 @@ class StuckRecovery(Node):
         p("escape_speed", 0.12)
         p("free_threshold", 50)  # costmap value below which a cell is free
         p("retry_goal", True)
+        p("allow_sidestep", False)  # only when the smoother allows vy (--omni)
         p("max_retries", 2)
 
         self.tf = Buffer()
@@ -92,9 +99,12 @@ class StuckRecovery(Node):
             PoseStamped, self.get_parameter("goal_topic").value, 10
         )
         self.create_timer(0.1, self.tick)
-        self.get_logger().info(
-            "stuck recovery ready (back / left / right, then retry goal)"
+        moves = (
+            "back / left / right"
+            if self.get_parameter("allow_sidestep").value
+            else "back"
         )
+        self.get_logger().info(f"stuck recovery ready ({moves}, then retry goal)")
 
     def on_goal(self, msg):
         if self.resend_at is None and self.escape is None and not self._own_goal:
@@ -121,7 +131,12 @@ class StuckRecovery(Node):
         self.get_logger().warn("leg aborted by the controller: trying to get unstuck")
         direction = self.free_direction()
         if direction is None:
-            self.get_logger().warn("no free space behind or beside the dog: not moving")
+            where = (
+                "behind or beside"
+                if self.get_parameter("allow_sidestep").value
+                else "behind"
+            )
+            self.get_logger().warn(f"no free space {where} the dog: not moving")
             return
         name, vx, vy = direction
         speed = self.get_parameter("escape_speed").value
@@ -153,7 +168,10 @@ class StuckRecovery(Node):
             m.info.origin.position.y,
         )
         thr = self.get_parameter("free_threshold").value
+        sidestep = self.get_parameter("allow_sidestep").value
         for name, vx, vy, x0, x1, y0, y1 in ESCAPES:
+            if vy and not sidestep:
+                continue
             xs, ys = np.meshgrid(np.arange(x0, x1, res / 2), np.arange(y0, y1, res / 2))
             wx = tr.x + c * xs - s * ys
             wy = tr.y + s * xs + c * ys

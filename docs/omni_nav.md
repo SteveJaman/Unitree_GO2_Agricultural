@@ -19,7 +19,7 @@ that on:
 | Controller | Regulated Pure Pursuit + rotation shim | **MPPI**, `Omni` motion model (vx, vy, wz together) |
 | Walk backwards | no | yes, up to 0.20 m/s |
 | Sidestep | no (vy clamped to 0) | yes, up to 0.20 m/s |
-| Stuck (leg aborted) | leg fails | **recovery:** step back or aside 0.3 m into free space, retry the goal |
+| Stuck (leg aborted) | **recovery** (every session): step back 0.3 m, retry the goal | same, and it can also step aside |
 
 The robot side needs no change: `robot_sport_bridge.py` already passes `vy`
 to Unitree's `Move()`, and so does the simulator.
@@ -38,13 +38,29 @@ to Unitree's `Move()`, and so does the simulator.
   `wifi_nav.sh --omni` installs `ros-humble-nav2-mppi-controller` into the
   container the first time (this needs internet). If the install fails, the
   session continues forward-only and prints a warning.
-- **[`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py):**
-  watches `follow_path`. When a leg is aborted, it checks the local costmap
-  for a free, known patch behind the dog, then to its left, then right. It
-  steps 0.3 m there at 0.12 m/s through the velocity smoother, then re-sends
-  the last goal (up to 2 times). If nothing is free, it doesn't move. While
-  the frontier explorer runs, it only steps clear and leaves goal choice to
-  the explorer. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
+- **[`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)**
+  runs in **every** session; turn it off with `--no-recovery`. It watches
+  `follow_path`. When a leg is aborted, it checks the local costmap for a
+  free, known patch behind the dog, and with `--omni` also to its left, then
+  right. It steps 0.3 m there at 0.12 m/s through the velocity smoother, then
+  re-sends the last goal, whether the explorer's frontier or your 2D Goal
+  Pose (up to 2 times). If nothing is free, it doesn't move. Without
+  `--omni` it only backs up, because the default smoother clamps sideways
+  speed. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
+
+### Why the dog used to stare at walls
+
+Logs from a default-mode session (22:22–22:26) showed a loop:
+1. The explorer sends a frontier goal, but the dog is facing an obstacle.
+2. Regulated Pure Pursuit's collision check aborts the leg within
+   milliseconds: `detected collision ahead!`
+3. The goal handler only logs `leg failed`.
+4. The explorer waits about 25 s (`No progress — abandoning goal`), picks
+   another frontier, and step 2 repeats from the same spot.
+
+Nothing ever moved the dog away; it repeated 6 times in about 2.5 minutes.
+The recovery now backs it up 0.3 m on the first abort and retries
+immediately.
 
 To retune, edit `go2_nav2/config/go2_omni.yaml` in go2-nav2-wifi during a
 session and restart the session. To keep the change, copy it back to
@@ -97,4 +113,6 @@ in hand:
 | Dog wiggles or zig-zags | Lower `vy_std` / `wz_std`, or raise `PathAlignCritic.cost_weight` |
 | Reverses too eagerly | Raise `PreferForwardCritic.cost_weight` (e.g. 5) |
 | Controller CPU high | Lower `batch_size` (e.g. 600) or `time_steps` (30) |
+| Dog faces a wall and does nothing | Check that recovery is on (`Recovery : true` in the start-up banner) and look at `/tmp/stuck_recovery.log`. With `--omni` it can also sidestep and reverse along the path |
+| `CRITICAL FAILURE: SERVER controller_server IS DOWN` | The controller missed its 4 s lifecycle heartbeat because the VM was overloaded (seen in the simulator: Gazebo + RViz at load 15 on 6 cores). Nav2 stays down until a restart. Close other heavy programs |
 | Recovery never moves | `docker exec go2-lidar3d tail /tmp/stuck_recovery.log`: `no free space` means everything around is occupied or unknown. It never steps into unknown space |

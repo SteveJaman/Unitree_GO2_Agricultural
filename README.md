@@ -345,7 +345,8 @@ See [D1-T Arm Control](#d1-t-arm-control) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
-| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning, stuck recovery. See [docs/omni_nav.md](docs/omni_nav.md) |
+| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [docs/omni_nav.md](docs/omni_nav.md) |
+| `--no-recovery` | Turn off the stuck recovery (on by default: an aborted leg backs the dog up 0.3 m and retries) |
 | `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |
 | `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](docs/tour.md) |
 | `--no-camera` | Skip the camera relay |
@@ -395,7 +396,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Robot JPEG frames (`/go2/front_camera/compressed`) → `/camera/image_raw` (bgr8) + `/camera/camera_info` |
 | [`scripts/robot/go2_camera_wifi.sh`](scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
-| [`go2_stuck_recovery.py`](scripts/nodes/go2_stuck_recovery.py) | `--omni`: on an aborted leg, step back/aside into free space and retry the goal |
+| [`go2_stuck_recovery.py`](scripts/nodes/go2_stuck_recovery.py) | Every session: on an aborted leg (e.g. facing a wall), step back (and aside with `--omni`) into free space and retry the goal |
 | [`go2_camera_obstacles.py`](scripts/nodes/go2_camera_obstacles.py) | `--camera-obstacles`: Depth Anything V2-Small depth, scaled by the LiDAR → `/camera/obstacle_points` for the Nav2 costmap |
 | [`go2_fusion_camera.py`](scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
 | [`go2_lidar_overlay.py`](scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |

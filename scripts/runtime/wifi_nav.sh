@@ -7,8 +7,9 @@
 #
 # --omni: full Go2 mobility. MPPI (Omni) walks backwards and sidesteps as well
 # as forward, the planner uses omnidirectional lattice moves, and
-# go2_stuck_recovery.py steps back/aside and retries when a leg is aborted
-# (config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py).
+# config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+# Every session runs go2_stuck_recovery.py: when a leg is aborted (dog facing a
+# wall) it steps back (and aside with --omni) and retries; --no-recovery: off.
 #
 # One-command workflow:
 #   1. Power on the dog and stand it
@@ -68,6 +69,7 @@ EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
 OMNI="false"
+RECOVERY="true"
 START_RELAY="true"
 ARM="false"
 SIM="false"
@@ -95,6 +97,7 @@ while [ $# -gt 0 ]; do
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
         --omni)         OMNI="true" ;;
+        --no-recovery)  RECOVERY="false" ;;
         --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
         --robot-ip)     need_arg "$1" "${2:-}"; ROBOT_IP_FLAG="$2"; shift ;;
@@ -499,7 +502,8 @@ echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
-echo "  Omni        : ${OMNI}$( [ "${OMNI}" = "true" ] && echo "  (MPPI: reverse + sidestep, stuck recovery)" )"
+echo "  Omni        : ${OMNI}$( [ "${OMNI}" = "true" ] && echo "  (MPPI: reverse + sidestep)" )"
+echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${OMNI}" = "true" ] && echo "/aside" ), retry)" )"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
 echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
@@ -761,18 +765,17 @@ else
 fi
 echo
 
-if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ] || [ "${OMNI}" = "true" ]; then
+if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ] || [ "${RECOVERY}" = "true" ]; then
     (
         sleep 20
 
-        if [ "${OMNI}" = "true" ]; then
+        if [ "${RECOVERY}" = "true" ]; then
             kill_recovery_inside_container
             docker cp "${RECOVERY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_stuck_recovery.py" 2>/dev/null || true
-            # The explorer picks its own next goal; only re-send goals when it is off.
-            retry_goal=true; [ "${EXPLORE}" = "true" ] && retry_goal=false
-            echo "[omni] Starting stuck recovery (retry goal: ${retry_goal})..."
+            # Sidesteps need the omni smoother (vy); the default one clamps vy to 0.
+            echo "[recovery] Starting stuck recovery (sidestep: ${OMNI})..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args -p retry_goal:=${retry_goal} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args -p allow_sidestep:=${OMNI} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${FLOOR_FILTER}" = "true" ]; then
