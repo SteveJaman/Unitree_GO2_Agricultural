@@ -18,18 +18,21 @@ scripts/
 ├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
 │                go2_net.sh (sourced: IP detection / robot discovery)
 ├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
+│                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
 │                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
 └── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
+                 add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh,
                  preflight.sh, save_rviz_config.sh, test_explore.sh,
                  test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
+twin/            go2-3d container: docker/Dockerfile, start_inside.sh, yolo_node.py
 ```
 
-Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/)
+Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/) · [`twin/`](../twin/)
 
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
 - [README](../README.md) rewritten for the current stack
-- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`3d_nav.md`](3d_nav.md), [`troubleshooting.md`](troubleshooting.md)
+- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`3d_nav.md`](3d_nav.md), [`LAB-NAV-FIXES.md`](LAB-NAV-FIXES.md), [`troubleshooting.md`](troubleshooting.md)
 
 ### Navigation — verified working
 
@@ -325,8 +328,9 @@ ros2 topic echo /explore/status            # watch goals_sent
 ```
 
 3D twin (instead of step 3, once `--build` has run):
-`./scripts/runtime/wifi_3d_nav.sh --no-explore`, then Foxglove → `ws://<VM IP>:8765`
-(see [3d_nav.md](3d_nav.md)).
+`./scripts/runtime/wifi_3d_nav.sh --ai`, then Foxglove → `ws://<VM IP>:8765`.
+After a battery swap, restart from the same spot with `--ai --resume`. Work
+through checks 17–30 above (see [3d_nav.md](3d_nav.md)).
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
 once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).

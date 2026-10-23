@@ -1,5 +1,10 @@
 # Go2 3D navigation — lab fixes for go2-nav2-wifi
 
+[← Back to README](../README.md) · [Status](STATUS.md) · [Troubleshooting](troubleshooting.md) · [3D twin](3d_nav.md)
+
+Script: [`scripts/tools/apply-lab-nav-fixes.sh`](../scripts/tools/apply-lab-nav-fixes.sh).
+`wifi_nav.sh` and `wifi_3d_nav.sh` assume these fixes are applied.
+
 Fixes for two problems with `./mapping.sh --3d --nav` on our Unitree Go2 Edu:
 
 1. **The dog in RViz didn't match the real dog.** Lying flat, it showed about 20° of tilt, and its heading was about 120° off.
@@ -12,7 +17,7 @@ After these fixes, it navigates smoothly to 2D Goal Pose targets.
 ```bash
 git clone https://github.com/dancher00/go2-nav2-wifi
 cd go2-nav2-wifi
-bash /path/to/apply-lab-nav-fixes.sh
+bash ~/files/Unitree_GO2_Agricultural/scripts/tools/apply-lab-nav-fixes.sh
 ```
 
 Then follow the repo's normal setup (README and `docs/3D-QUICKSTART.md`) if you haven't already. That covers Docker, the robot Wi-Fi relay, and `./setup-lidar3d.sh`.

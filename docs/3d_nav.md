@@ -29,8 +29,11 @@ camera relay ─► /camera/image_raw ──────────────
                                                         (LiDAR projected into the image → RTAB-Map RGB-D)
                                                       static TF base_link → camera_link
                                                       yolo_node (YOLO11s) ─► /yolo/detections, /yolo/image,
-Nav2 costmap ◄── /yolo/obstacles (opt-in) ◄──────────     /yolo/markers, /yolo/obstacles
+Nav2 costmap ◄── /yolo/obstacles (opt-in) ◄──────────     /yolo/markers, /yolo/obstacles     (--ai)
+                                                      vlm_reasoning_node ─► Ollama ─► /vlm_decision (--ai)
 Nav2 ◄── /goal_pose ◄───────────────────────────────── go2_click_to_goal ◄── /clicked_point
+battery_manager (--ai) ◄── /lf/lowstate                save_location (--save-location) ◄── /clicked_point
+  └─► /explore/resume False, /goal_pose → dock
 RViz, explorer                                        foxglove_bridge :8765 ◄──► Foxglove (Windows)
 ```
 
@@ -450,3 +453,8 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
 - **Waypoint queue from Foxglove.** Each click replaces the current goal. For a
   queued route, use the RViz waypoint panel ([Tour](tour.md)).
+- **Acting on the VLM and named locations.** `/vlm_decision` and
+  `config/semantic_locations.json` are not yet used to steer the dog. For
+  example, nothing yet does "go to Hydroponic_Station" (roadmap 4.19).
+- **Automatic docking/charging.** The battery manager only drives back to the
+  dock pose. Swapping or charging the battery is manual.

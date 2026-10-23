@@ -558,11 +558,12 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 
 `wifi_3d_nav.sh` problems (image missing, no Foxglove topics, empty
 `/rtabmap/cloud_map`, clicks ignored, camera not detected, wrong map colours,
-YOLO obstacles ignored by Nav2, CPU load, unsaved map): see
+YOLO obstacles ignored by Nav2, Ollama unreachable, no battery data, `--resume`
+maps not joined, CPU load, unsaved map): see
 [3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
-`click_to_goal.log`, `yolo.log`, `camera_info.log`, `lidar_depth.log`) and
-`docker logs go2-3d`.
+`click_to_goal.log`, `yolo.log`, `vlm.log`, `battery.log`, `camera_info.log`,
+`lidar_depth.log`) and `docker logs go2-3d`.
 
 ---
 
@@ -579,6 +580,8 @@ YOLO obstacles ignored by Nav2, CPU load, unsaved map): see
 | Robot / host IP wrong | `./scripts/runtime/wifi_nav.sh --check` (banner shows both IPs) |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
 | 3D map / Foxglove empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log` |
+| Low battery, dog doesn't go home | `tail ~/files/go2-nav2-wifi/ws/log/3d/battery.log` |
+| No `/vlm_decision` | `tail ~/files/go2-nav2-wifi/ws/log/3d/vlm.log`; `curl localhost:11434/api/tags` |
 | Verify everything | [`./scripts/tools/preflight.sh`](../scripts/tools/preflight.sh) |
 
 ---

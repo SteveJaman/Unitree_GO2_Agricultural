@@ -80,7 +80,12 @@ Two integrated capabilities:
    pattern over plants, for later plant-analysis data collection.
 
 The two systems are independent today. Integration — an AI model commanding
-both the dog and the arm — is the long-term goal.
+both the dog and the arm — is the long-term goal. First steps toward it are
+in the [3D Digital Twin](#3d-digital-twin) session:
+- a live 3D map;
+- YOLO obstacles;
+- a local VLM describing the camera view;
+- low-battery return to the dock.
 
 ---
 
@@ -95,8 +100,9 @@ both the dog and the arm — is the long-term goal.
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
+| [docs/LAB-NAV-FIXES.md](docs/LAB-NAV-FIXES.md) | Lab fixes for upstream go2-nav2-wifi: lidar mount, RPP controller, velocity smoother |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
-| [config/README.md](config/README.md) | Config folder notes (RViz layout) |
+| [config/README.md](config/README.md) | Config folder notes (RViz layout, saved semantic locations) |
 | [cmu-legacy/README.md](cmu-legacy/README.md) | Archived CMU-stack code |
 
 ---
@@ -208,9 +214,10 @@ them it falls back to a ping sweep.
 git clone https://github.com/dancher00/go2-nav2-wifi ~/files/go2-nav2-wifi
 git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree_GO2_Agricultural
 
-# 2. Apply lab fixes (RPP + velocity smoother + correct lidar mount)
+# 2. Apply lab fixes (RPP + velocity smoother + correct lidar mount),
+#    see docs/LAB-NAV-FIXES.md. Run it from the go2-nav2-wifi clone:
 cd ~/files/go2-nav2-wifi
-bash apply-lab-nav-fixes.sh
+bash ~/files/Unitree_GO2_Agricultural/scripts/tools/apply-lab-nav-fixes.sh
 
 # 3. Set up passwordless SSH to the robot (discovers its IP; add
 #    --robot-ip <IP> if discovery fails)
@@ -415,6 +422,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`save_rviz_config.sh`](scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](config/tour.rviz) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 | [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh) | Opt-in: add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi (`--undo` restores) |
+| [`apply-lab-nav-fixes.sh`](scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](docs/LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
 
@@ -643,7 +651,7 @@ container ([`twin/`](twin/)) with:
 - **Camera fusion, auto-detected.** If the Go2 camera publishes, the LiDAR is
   projected into the image (`pointcloud_to_depthimage`) and RTAB-Map runs
   RGB-D, so the map is coloured. If not, the map stays LiDAR-only.
-- **YOLO11s ([`twin/yolo_node.py`](twin/yolo_node.py)).** It publishes
+- **YOLO11s ([`twin/yolo_node.py`](twin/yolo_node.py), with `--ai`).** It publishes
   `/yolo/detections`, `/yolo/image` and `/yolo/markers`, plus `/yolo/obstacles`
   (3D boxes). With
   [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh)
@@ -741,10 +749,12 @@ Unitree_GO2_Agricultural/
 ├── .pre-commit-config.yaml           # ruff, shellcheck, clang-format, markdownlint
 ├── config/
 │   ├── README.md
-│   └── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
+│   ├── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
+│   └── semantic_locations.json       # named points from --save-location (created on first save)
 ├── docs/
 │   ├── STATUS.md                     # session notes
-│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map + Foxglove)
+│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, --ai, --resume, Foxglove)
+│   ├── LAB-NAV-FIXES.md              # lab fixes for upstream go2-nav2-wifi
 │   ├── camera.md                     # live camera setup
 │   ├── d1arm.md                      # D1 arm runbook
 │   ├── roadmap.md                    # Phase 1 roadmap
@@ -753,7 +763,7 @@ Unitree_GO2_Agricultural/
 ├── scripts/
 │   ├── runtime/                      # shell entry points
 │   │   ├── wifi_nav.sh               # main orchestrator
-│   │   ├── wifi_3d_nav.sh            # wifi_nav.sh + RTAB-Map + Foxglove (3D twin)
+│   │   ├── wifi_3d_nav.sh            # wifi_nav.sh + RTAB-Map + Foxglove (3D twin), --ai, --resume
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # older manual RTAB-Map launcher
 │   │   ├── start_arm.sh              # D1-T arm entry point (preflight, fold, control)
@@ -781,6 +791,7 @@ Unitree_GO2_Agricultural/
 │       ├── save_rviz_config.sh
 │       ├── export_tour.py
 │       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (opt-in)
+│       ├── apply-lab-nav-fixes.sh    # one-time upstream go2-nav2-wifi fixes
 │       ├── diag_arm.sh               # D1 arm diagnostic
 │       └── calibrate_arm.py          # D1 arm per-joint offset calibration
 ├── gazebo/                           # Gazebo simulation (Go2 + D1), see gazebo/README.md
@@ -791,7 +802,7 @@ Unitree_GO2_Agricultural/
 │   └── models/                       # downloaded Unitree models (not in git)
 ├── twin/                             # go2-3d container for wifi_3d_nav.sh
 │   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + bridges + CPU PyTorch + YOLO11s)
-│   ├── start_inside.sh               # starts bridge, click-to-goal, camera TF/info, RTAB-Map, YOLO; saves DB on stop
+│   ├── start_inside.sh               # starts bridge, click-to-goal, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
 │   └── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
@@ -992,8 +1003,16 @@ and manual waypoint navigation via RViz. This repo adds:
 - **Gazebo simulation**: Go2 + D1 from the official Unitree models; the
   unchanged stack and arm scripts run against it (`wifi_nav.sh --sim`)
 - **Diagnostic and tuning scripts** — preflight, test_explore, campus_session, tune_costmap
-- **3D digital twin** — `wifi_3d_nav.sh`: live RTAB-Map 3D map in Foxglove,
-  click-to-go goals, database saved every run, PLY export and mesh
+- **3D digital twin** — `wifi_3d_nav.sh`:
+  - live RTAB-Map 3D map in Foxglove, coloured from the Go2 camera;
+  - click-to-go goals snapped to safe floor;
+  - database saved every run, `--resume` after a battery swap;
+  - PLY export and mesh.
+- **AI helpers** — `wifi_3d_nav.sh --ai`:
+  - YOLO11s obstacles, optionally fed to the Nav2 costmap;
+  - local VLM scene reasoning (Ollama llava);
+  - low-battery return to the dock;
+  - named locations from Foxglove clicks.
 
 ---
 

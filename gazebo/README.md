@@ -111,7 +111,8 @@ These are deliberate. They're listed so test results aren't over-read:
   - **Release** holds the pose, because Gazebo joints can't go limp.
   - Motion commands sent before `enable` are acknowledged and ignored.
 - **Gripper.** Protocol 0–65° maps to finger travel of 0–30 mm. That's an assumption.
-- **Not simulated:** `wifi_mapping.sh` / `mapping.sh` themselves (they drive a real Jetson over SSH), RTAB-Map, and the hyperspectral camera.
+- **Not simulated:** `wifi_mapping.sh` / `mapping.sh` themselves (they drive a real Jetson over SSH), the battery, and the hyperspectral camera.
+- **3D twin:** `./scripts/runtime/wifi_3d_nav.sh --sim [--ai]` runs RTAB-Map, camera fusion and YOLO against the simulated lidar and camera (horizontal FOV 68.75°). The battery manager stays idle (no `/lf/lowstate`). See [docs/3d_nav.md](../docs/3d_nav.md).
 
 ## Troubleshooting
 
