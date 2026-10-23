@@ -1,0 +1,24 @@
+{
+  "name": "go2-twin-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Web dashboard for the Go2 3D digital twin (wifi_3d_nav.sh): 3D map, robot, plan, camera, status over rosbridge",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host --port 3000"
+  },
+  "dependencies": {
+    "@react-three/drei": "9.114.0",
+    "@react-three/fiber": "8.17.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "roslib": "1.4.1",
+    "three": "0.169.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.3",
+    "vite": "5.4.10"
+  }
+}

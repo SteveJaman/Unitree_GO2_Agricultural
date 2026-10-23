@@ -1,4 +1,4 @@
-# 3D Digital Twin Navigation (RTAB-Map + YOLO + Foxglove)
+# 3D Digital Twin Navigation (RTAB-Map + YOLO + Web Dashboard)
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Tour](tour.md) · [Troubleshooting](troubleshooting.md)
 
@@ -9,8 +9,9 @@ When the Go2 camera publishes, the map is coloured from it. With `--ai`:
 - **A local VLM** describes the view.
 - **The battery manager** brings the dog back to the dock on low battery.
 
-You can view all of it in Foxglove from the Windows host and send the dog
-somewhere by clicking in the 3D view.
+You can view all of it in the **web dashboard**, a React + three.js app served
+by the session at `http://<VM IP>:3000`. You can also send the dog somewhere
+by clicking in the 3D view.
 
 `wifi_nav.sh` is **not modified**. Use `wifi_nav.sh` when you only need 2D
 exploration, and `wifi_3d_nav.sh` when you want the 3D view.
@@ -34,7 +35,9 @@ Nav2 costmap ◄── /yolo/obstacles (opt-in) ◄─────────�
 Nav2 ◄── /goal_pose ◄───────────────────────────────── go2_click_to_goal ◄── /clicked_point
 battery_manager (--ai) ◄── /lf/lowstate                save_location (--save-location) ◄── /clicked_point
   └─► /explore/resume False, /goal_pose → dock
-RViz, explorer                                        foxglove_bridge :8765 ◄──► Foxglove (Windows)
+battery_manager (always) ─► /battery_state          image_compressor ─► /twin/camera|yolo/compressed (JPEG)
+RViz, explorer                                        rosbridge :9090 ◄──► web dashboard :3000 (any browser)
+                                                      foxglove_bridge :8765 (--foxglove, alternative)
 ```
 
 - **Point-LIO stays in charge of localization.** Nav2 still plans in
@@ -48,9 +51,16 @@ RViz, explorer                                        foxglove_bridge :8765 ◄�
 - **Same DDS settings as the session.** `go2-3d` copies `ROS_DOMAIN_ID`,
   `RMW_IMPLEMENTATION` and the CycloneDDS config from a running session
   node, so it sees exactly the topics RViz sees. This also works with `--sim`.
-- **Foxglove bridge, not rosbridge, by default.** `foxglove_bridge` sends point
-  clouds in binary form. rosbridge encodes them as JSON, which is far slower
-  for a dense map. `--rosbridge` is available if you need it (port 9090).
+- **The web dashboard is the main interface.**
+  - **Served from `go2-3d`:** the dashboard ([`twin/webapp`](../twin/webapp/))
+    is built into the image, so the VM needs no Node.js. `go2-3d` serves it on
+    port 3000 and runs rosbridge on 9090.
+  - **Point clouds** are requested in CBOR (binary) and throttled (map every
+    2 s).
+  - **Camera images** are sent as 640 px JPEGs at 5 Hz, made by
+    [`image_compressor.py`](../twin/image_compressor.py) only while a browser
+    watches. A raw 720p frame through rosbridge would be ~2.7 MB.
+  - **Foxglove** stays available as an alternative (`--foxglove`).
 - **The camera is optional, detected at start.** In the default `auto` mode,
   `go2-3d` waits up to `TWIN_CAMERA_WAIT` (60 s) for a frame on
   `/camera/image_raw`.
@@ -86,7 +96,7 @@ runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
 | Topic | Content |
 |---|---|
 | `/yolo/detections` | `vision_msgs/Detection2DArray`, every detection (80 COCO classes) |
-| `/yolo/image` | Camera frame with boxes drawn: add it as an Image panel in Foxglove |
+| `/yolo/image` | Camera frame with boxes drawn (dashboard camera panel, **YOLO** tab) |
 | `/yolo/markers` | Orange boxes + labels (`chair 2.1 m (lidar)`) in the 3D view |
 | `/yolo/obstacles` | `PointCloud2` in `lidar3d_map`: a 1 m-tall box of points for each obstacle-class detection |
 
@@ -131,17 +141,16 @@ Limits:
 ## One-time setup
 
 On the VM (needs internet, ~3–4 GB download: RTAB-Map, CPU PyTorch, YOLO11s
-weights):
+weights, and the web dashboard build):
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --build      # builds go2-3d:local
+./scripts/runtime/wifi_3d_nav.sh --build      # builds go2-3d:local (incl. twin/webapp)
 ./scripts/runtime/wifi_3d_nav.sh --check      # wifi_nav.sh checks + image check
 ```
 
-On Windows: install the Foxglove desktop app from
-[foxglove.dev/download](https://foxglove.dev/download). The open-source fork
-[Lichtblick](https://github.com/lichtblick-suite/lichtblick) also works with
-the same connection.
+Nothing to install on Windows: the dashboard runs in any browser (Chrome,
+Edge, Firefox). Re-run `--build` after changing `twin/webapp`. For quicker
+iterations, see [Developing the dashboard](#developing-the-dashboard).
 
 ---
 
@@ -164,19 +173,21 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--ai` | Also start YOLO11s and the VLM (both need the camera) and the battery manager. See [AI nodes](#ai-nodes---ai) |
 | `--no-yolo` / `--no-vlm` / `--no-battery` | With `--ai`: leave that one out |
 | `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
-| `--save-location` | In a second terminal: label points clicked in Foxglove, saved to `config/semantic_locations.json` |
+| `--save-location` | In a second terminal: label points clicked in the dashboard, saved to `config/semantic_locations.json` |
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
-| `--rosbridge` | rosbridge on `:9090` instead of foxglove_bridge on `:8765` |
-| `--no-bridge` | RTAB-Map only, no web bridge |
+| `--foxglove` | Also start foxglove_bridge on `:8765`, see [Alternative visualization](#alternative-visualization-foxglove) |
+| `--no-web` | rosbridge only, no dashboard server on `:3000` |
+| `--no-bridge` | RTAB-Map only: no rosbridge, no dashboard |
 | `--build` | Build the `go2-3d:local` image |
 | `--export [DB]` | Export the newest (or the given) database to a PLY point cloud |
 | `--stop` | Stop a running `go2-3d` and save its database |
 
 About 20–90 s after RViz opens, the terminal prints a `3D digital twin READY`
 block. It shows the RTAB-Map mode (`camera` or `lidar`), the database path,
-the state of YOLO, the VLM and the battery manager, and the Foxglove address.
+the state of YOLO, the VLM and the battery manager, and the **dashboard
+address**.
 
 **Stop:** Ctrl+C as usual. `wifi_nav.sh` shuts the session down first. Then
 RTAB-Map gets up to `TWIN_STOP_TIMEOUT` (60 s) to write the database. Wait for
@@ -257,7 +268,7 @@ While a session runs, open a second terminal:
 ./scripts/runtime/wifi_3d_nav.sh --save-location
 ```
 
-1. Click a point in Foxglove (**Publish → Point**).
+1. Click a point in the dashboard (**Click-to-go** on, then click the floor).
 2. The terminal prints its `lidar3d_map` coordinates and asks for a label,
    such as `Dock` or `Hydroponic_Station`. Enter skips the point.
 
@@ -268,8 +279,8 @@ stored in `rtabmap_map`. Reusing a label replaces the old entry.
 Notes:
 - **The dog drives there too.** `go2_click_to_goal` also listens on
   `/clicked_point`, so every labelled click is also a goal. To label without
-  driving, set the Publish topic in Foxglove to `/label_point`, and run the
-  node with `-p topic:=/label_point` (see
+  driving, publish on `/label_point` instead (with Foxglove's Publish tool,
+  `--foxglove`), and run the node with `-p topic:=/label_point` (see
   [`save_location.py`](../scripts/nodes/save_location.py)).
 - **`lidar3d_map` coordinates hold only if the dog starts each session from
   the same spot.**
@@ -298,32 +309,40 @@ locations depend on it.
 
 ---
 
-## Foxglove setup
+## Web dashboard
 
-1. **Open connection → Foxglove WebSocket →** `ws://<VM IP>:8765`.
-   The VM IP is the `Foxglove :` line printed by the script, i.e. the VM's
-   Wi-Fi address (DHCP, so it changes).
-   With `--rosbridge`, choose **Rosbridge** and port `9090`.
-2. **Add panel → 3D.** In its settings:
-   - **Display frame:** `lidar3d_map`
-   - Enable topics:
-     - `/rtabmap/cloud_map`: the dense 3D map. Colour by `z` for a height map
-     - `/lidar3d/registered`: the live scan
-     - `/tf`: the dog's pose
-     - `/plan`: Nav2's route
-     - `/global_costmap/costmap`: optional
-     - `/clicked_goal_markers`: grey cylinder where you clicked, green arrow at the snapped goal
-     - `/yolo/markers`: labelled YOLO obstacles
-3. **Add panel → Image** → `/yolo/image` for the camera with YOLO boxes. Use
-   `/camera/image_raw` instead for the plain feed.
-4. **Layout → Save** (or export it to a JSON file to share with the team).
+Open your browser and navigate to **`http://localhost:3000`** on the VM, or
+**`http://<VM IP>:3000`** from the Windows host. The READY block prints the
+exact address. The VM IP is DHCP, so it changes.
+
+The dashboard connects to rosbridge on the same host, port 9090. Override it
+with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
+`lidar3d_map`), `?base=` (robot frame, default `base_link`).
+
+| Part | Shows | Topics |
+|---|---|---|
+| **Status bar** | rosbridge connection · battery % and voltage (orange/red below 30/15 %, dock state with `--ai`) · commanded speed · VLM decision and its age · map size · explorer state with **START / STOP** | `/battery_state`, `/battery_manager/status`, `/cmd_vel`, `/vlm_decision`, `/explore/status`, `/explore/resume` |
+| **3D view** | Dense map (camera colours, else height colours), robot, Nav2 plan (yellow), active goal (green), YOLO boxes with labels, optional live scan | `/rtabmap/cloud_map`, `/tf`, `/tf_static`, `/plan`, `/goal_pose`, `/yolo/markers`, `/lidar3d/registered` |
+| **Toolbar** | **Click-to-go**, **Follow robot**, layer toggles (3D map, live scan, plan, YOLO) | `/clicked_point` |
+| **Camera panel** | **Camera** / **YOLO** tabs, frame rate | `/twin/camera/compressed`, `/twin/yolo/compressed` |
+
+Mouse: left-drag orbit, right-drag pan, wheel zoom.
+
+The source is in [`twin/webapp`](../twin/webapp/):
+- [`RosProvider.jsx`](../twin/webapp/src/RosProvider.jsx): connection,
+  automatic reconnect, `useTopic` / `usePublisher`.
+- [`Scene.jsx`](../twin/webapp/src/Scene.jsx): the three.js scene.
+- [`StatusBar.jsx`](../twin/webapp/src/StatusBar.jsx).
+- [`CameraFeed.jsx`](../twin/webapp/src/CameraFeed.jsx).
+- [`src/ros/`](../twin/webapp/src/ros/): TF tree and PointCloud2 decoder,
+  with no `tf2_web_republisher` needed.
 
 ### Click-to-go
 
-1. In the 3D panel, switch to the **2D (top-down) view**.
-2. Click **Publish** in the panel toolbar and choose **Point**. The default
-   topic is `/clicked_point`.
-3. Click the floor where the dog should go.
+1. Turn on **Click-to-go** in the dashboard toolbar. The cursor becomes a
+   crosshair.
+2. Click the floor where the dog should go. Orbit drags are ignored. An orange
+   ring marks the click until Nav2's goal (green arrow) appears.
 
 `go2_click_to_goal` transforms the point into the costmap frame
 (`lidar3d_map`) and **snaps it to the nearest navigable floor**. It then faces
@@ -345,19 +364,10 @@ A click on a desk or wall therefore lands on the free floor next to it.
 at the goal actually sent. If no safe floor is within reach, or no costmap has
 arrived yet, no goal is sent and the log says why.
 
-Why top-down: Foxglove projects a click onto the display frame's `z = 0`
-plane, which need not be exactly the floor. In an oblique 3D view, a click
-aimed at the floor can land short of it. From directly above the error
-disappears.
-
-Alternatives:
-- **Publish → Pose** with the topic set to `/goal_pose` sends a goal with the
-  heading you drag, bypassing the click node.
-- **Publish → Pose estimate** publishes `/initialpose`, the same as RViz's
-  2D Pose Estimate.
-
-Each click replaces the current goal. The **Publish → Pose** route above
-skips the snapping.
+The click is taken on the fixed frame's `z = 0` plane, which need not be
+exactly the floor. In a steep oblique view a click aimed at the floor can
+land a little short of it, so look down from above for precise goals. Each
+click replaces the current goal.
 
 Node parameters (see
 [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)):
@@ -395,7 +405,7 @@ camera images. The database also opens in
 |---|---|---|
 | `TWIN_CLOUD_TOPIC` | `/lidar3d/registered` | Cloud fed to RTAB-Map |
 | `TWIN_RTAB_ARGS` | — | Extra RTAB-Map parameters, e.g. `"--Grid/CellSize 0.1 --Grid/RangeMax 8"` (lighter on the VM) |
-| `TWIN_BRIDGE_PORT` | `8765` / `9090` | Bridge port |
+| `TWIN_WEB_PORT` / `TWIN_ROSBRIDGE_PORT` / `TWIN_FOXGLOVE_PORT` | `3000` / `9090` / `8765` | Dashboard, rosbridge, foxglove_bridge ports |
 | `TWIN_RGB_TOPIC` | `/camera/image_raw` (`--rgbd`: `/camera/color/image_raw`) | Camera image |
 | `TWIN_CAMERA_WAIT` | `60` | Seconds to wait for the first camera frame (`auto`) |
 | `TWIN_CAMERA_TF` | `0.327 0 0.043 -1.5708 0 -1.5708` | `base_link → camera` optical frame: x y z yaw pitch roll; `none` = don't publish |
@@ -425,7 +435,11 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 |---|---|
 | `image go2-3d:local missing` | `./scripts/runtime/wifi_3d_nav.sh --build` |
 | `no ROS nodes in go2-lidar3d … 3D stack NOT started` | The 2D session never came up. Fix that first with `wifi_nav.sh` alone |
-| Foxglove connects but shows no topics | VM firewall or wrong IP. Use the IP printed in the READY block; `ss -tlnp \| grep 8765` on the VM |
+| Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
+| Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
+| Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
+| Dashboard: camera "no frames" | Camera mode only (see READY `RTAB-Map : camera`); `tail …/ws/log/3d/image_compressor.log` |
+| Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
 | `no camera frames … LiDAR-only map, YOLO off` | The camera relay isn't publishing. `tail /tmp/camera_relay.log` in `go2-lidar3d`; see [camera.md](camera.md) |
@@ -444,6 +458,40 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 
 ---
 
+## Developing the dashboard
+
+```bash
+cd twin/webapp
+npm install
+npm run dev        # http://localhost:3000 with hot reload; needs a running session's rosbridge
+npm run build      # dist/: go2-3d serves it instead of the image's copy when it is newer
+```
+
+Running `npm` needs Node.js 18+ on the machine where you edit (not needed to
+*use* the dashboard). Open the dev server with `?ws=ws://<VM IP>:9090` when it
+is not on the VM.
+
+---
+
+## Alternative visualization (Foxglove)
+
+The [Foxglove](https://foxglove.dev/download) app (or the open-source
+[Lichtblick](https://github.com/lichtblick-suite/lichtblick)) still works.
+Start the session with `--foxglove` and connect **Open connection → Foxglove
+WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
+`ws://<VM IP>:9090`, which is always running.
+- **3D panel:**
+  - display frame `lidar3d_map`;
+  - topics `/rtabmap/cloud_map`, `/tf`, `/plan`, `/yolo/markers`,
+    `/clicked_goal_markers`, `/global_costmap/costmap`.
+- **Image panel:** `/yolo/image` or `/camera/image_raw`.
+- **Click-to-go:** in the 2D (top-down) view, **Publish → Point** on
+  `/clicked_point`. It uses the same snapping as the dashboard.
+- **Pose goals:** **Publish → Pose** on `/goal_pose` sends a goal without
+  snapping; **Publish → Pose estimate** publishes `/initialpose`.
+
+---
+
 ## Not done yet
 
 - **Camera calibration.** The intrinsics and mount are approximations until
@@ -451,8 +499,10 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 - **Doors and glass.** These need a custom-trained YOLO model; COCO has neither class.
 - **YOLO on the Jetson.** Inference runs on the VM's CPU at 2 Hz; the Jetson GPU
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
-- **Waypoint queue from Foxglove.** Each click replaces the current goal. For a
-  queued route, use the RViz waypoint panel ([Tour](tour.md)).
+- **Waypoint queue in the dashboard.** Each click replaces the current goal.
+  For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
+- **Costmap and named locations in the dashboard.** These aren't drawn yet.
+  Use RViz or Foxglove (`--foxglove`) for the costmap.
 - **Acting on the VLM and named locations.** `/vlm_decision` and
   `config/semantic_locations.json` are not yet used to steer the dog. For
   example, nothing yet does "go to Hydroponic_Station" (roadmap 4.19).

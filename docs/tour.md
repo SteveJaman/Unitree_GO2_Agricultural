@@ -245,7 +245,7 @@ route executes cleanly, the next steps are:
 
 1. **[Milestone 2](roadmap.md#milestone-2--explorer-verification)** — verify the explorer produces goals on a live map
 2. **[Milestone 3](roadmap.md#milestone-3--camera-pipeline)** — camera backend fix on the Jetson
-3. **[Milestone 4](roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour). The live 3D version, with click-to-go goals in Foxglove, is [`wifi_3d_nav.sh`](3d_nav.md)
+3. **[Milestone 4](roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour). The live 3D version, with click-to-go goals in the web dashboard, is [`wifi_3d_nav.sh`](3d_nav.md)
 4. **[Milestone 5](roadmap.md#milestone-5--capture-automation)** — spin-on-goal capture (`-p spin_on_goal:=true`)
 5. **[Milestone 6](roadmap.md#milestone-6--end-to-end-autonomous-capture)** — one-command end-to-end tour capture
 

@@ -118,18 +118,19 @@ The pipeline that produces the dense 3D tour.
 | 4.5 | Open PLY in Open3D | ✅ [`scripts/tools/export_tour.py`](../scripts/tools/export_tour.py) written |
 | 4.6 | Poisson mesh from point cloud | ✅ `export_tour.py` includes this |
 | 4.7 | RTAB-Map in its own container (`go2-3d`), DB saved on every exit | ✅ [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh), [`twin/`](../twin/) written |
-| 4.8 | Live 3D view in Foxglove (foxglove_bridge / rosbridge) | ✅ written, ⏳ verify on robot |
-| 4.9 | Click a 3D point in Foxglove → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
+| 4.8 | Live 3D view: custom web dashboard (React + three.js, `twin/webapp`); Foxglove as alternative | ✅ written, tested against a mock rosbridge, ⏳ verify on robot |
+| 4.9 | Click a 3D point (dashboard or Foxglove) → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
-| 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
+| 4.11 | YOLO semantic layer (detections → 3D markers in the dashboard) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
 | 4.12 | Go2 camera + LiDAR fusion (LiDAR → depth image, coloured map) | ✅ written in `twin/start_inside.sh`, ⏳ verify; accuracy needs 3.4 |
 | 4.13 | YOLO obstacles in the Nav2 costmap | ✅ opt-in [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), ⏳ verify |
 | 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ |
 | 4.15 | Low-battery return to the dock (`--ai`) | ✅ [`battery_manager.py`](../scripts/nodes/battery_manager.py) written, ⏳ verify |
 | 4.16 | Local VLM scene reasoning (Ollama llava) → `/vlm_decision` | ✅ [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) written, ⏳ verify; nothing acts on it yet |
 | 4.17 | Resume a map after a battery swap (`--resume`) | ✅ written, ⏳ verify |
-| 4.18 | Named semantic locations from Foxglove clicks | ✅ [`save_location.py`](../scripts/nodes/save_location.py) written, ⏳ verify |
+| 4.18 | Named semantic locations from clicked points | ✅ [`save_location.py`](../scripts/nodes/save_location.py) written, ⏳ verify |
 | 4.19 | Act on `/vlm_decision` and named locations (e.g. "go to Hydroponic_Station") | ⏳ |
+| 4.20 | Dashboard: costmap layer, named locations, waypoint queue | ⏳ |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.

@@ -32,14 +32,20 @@ with the D1 on its back (see [Simulation](#simulation)):
 ```
 
 **Want a live 3D model of the building?** `wifi_3d_nav.sh` runs the same
-session plus RTAB-Map and a Foxglove bridge. You view the dense 3D map from
-Windows and click in it to send the dog somewhere. `--ai` adds YOLO, a local
-VLM and low-battery return to the dock; `--resume` continues the last map
-after a battery swap (see [3D Digital Twin](#3d-digital-twin)):
+session plus RTAB-Map and a **web dashboard** (React + three.js). In any
+browser you see:
+- the dense 3D map;
+- the robot moving, and its planned route;
+- the camera;
+- battery, speed and AI status.
+
+Click the floor to send the dog somewhere. `--ai` adds YOLO, a local VLM and
+low-battery return to the dock; `--resume` continues the last map after a
+battery swap (see [3D Digital Twin](#3d-digital-twin)):
 
 ```bash
 ./scripts/runtime/wifi_3d_nav.sh --build     # once
-./scripts/runtime/wifi_3d_nav.sh --ai        # then Foxglove -> ws://<VM IP>:8765
+./scripts/runtime/wifi_3d_nav.sh --ai        # then open http://localhost:3000 (or http://<VM IP>:3000)
 ```
 
 ---
@@ -96,7 +102,7 @@ in the [3D Digital Twin](#3d-digital-twin) session:
 | [docs/STATUS.md](docs/STATUS.md) | Session notes and current status |
 | [docs/camera.md](docs/camera.md) | Live camera setup and troubleshooting |
 | [docs/d1arm.md](docs/d1arm.md) | D1 arm runbook: protocol, network, commands, calibration, troubleshooting |
-| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + camera fusion, `--ai` (YOLO, VLM, battery dock), `--resume`, named locations, Foxglove, click-to-go, export |
+| [docs/3d_nav.md](docs/3d_nav.md) | 3D digital twin: RTAB-Map + camera fusion, web dashboard, `--ai` (YOLO, VLM, battery dock), `--resume`, named locations, click-to-go, export, Foxglove (alternative) |
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
@@ -386,7 +392,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
-| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), a Foxglove bridge and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--resume`, `--save-location`, `--build`, `--export`, `--stop` |
+| [`wifi_3d_nav.sh`](scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
 | [`wifi_mapping.sh`](scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |
@@ -400,10 +406,10 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_camera_info.py`](scripts/nodes/go2_camera_info.py) | `/camera/camera_info` for a camera without one (pinhole from a field of view, or fx/fy/cx/cy) |
-| [`battery_manager.py`](scripts/nodes/battery_manager.py) | `--ai`: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
+| [`battery_manager.py`](scripts/nodes/battery_manager.py) | Always: `/battery_state` for the dashboard. With `--ai`: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
 | [`vlm_reasoning_node.py`](scripts/nodes/vlm_reasoning_node.py) | `--ai`: camera frame → local Ollama `llava:7b` → `/vlm_decision` |
-| [`save_location.py`](scripts/nodes/save_location.py) | `--save-location`: label Foxglove clicks → `config/semantic_locations.json` |
-| [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
+| [`save_location.py`](scripts/nodes/save_location.py) | `--save-location`: label clicked points → `config/semantic_locations.json` |
+| [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Dashboard (or Foxglove) `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
 | [`d1_arm_calibration.py`](scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
 | [`direct_test_movement.py`](scripts/nodes/direct_test_movement.py) | Small, safe movement test for the arm (uses `d1_arm_control.py`) |
@@ -656,10 +662,17 @@ container ([`twin/`](twin/)) with:
   (3D boxes). With
   [`add-yolo-costmap-source.sh`](scripts/tools/add-yolo-costmap-source.sh)
   Nav2 plans around them.
-- **foxglove_bridge on `:8765`** (or `--rosbridge` on `:9090`). The Foxglove
-  app on Windows shows `/rtabmap/cloud_map`, the robot, `/plan` and the camera.
+- **Web dashboard on `:3000`** ([`twin/webapp`](twin/webapp/), React +
+  three.js + roslib), over **rosbridge on `:9090`**. It shows:
+  - the dense map, the robot moving, the Nav2 plan, the goal and YOLO boxes;
+  - the camera;
+  - battery, speed, VLM decision and explorer START/STOP;
+  - click-to-go.
+
+  It is built into the image, so the VM needs no Node.js.
+  ([Foxglove](#alternative-visualization-foxglove) remains an alternative.)
 - **[`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py).** A point
-  published from Foxglove's 3D panel becomes a Nav2 `/goal_pose`. Clicks on a
+  clicked in the dashboard becomes a Nav2 `/goal_pose`. Clicks on a
   desk or wall are snapped to the nearest free floor the body fits on.
 
 ```bash
@@ -667,7 +680,7 @@ container ([`twin/`](twin/)) with:
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # any wifi_nav.sh option passes through
 ./scripts/runtime/wifi_3d_nav.sh --ai             # + YOLO, VLM, battery manager
 ./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
-./scripts/runtime/wifi_3d_nav.sh --save-location  # 2nd terminal: name points clicked in Foxglove
+./scripts/runtime/wifi_3d_nav.sh --save-location  # 2nd terminal: name points clicked in the dashboard
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
 ```
 
@@ -691,13 +704,45 @@ manager still runs.
 - Start the dog from the same spot (the dock): Nav2's `lidar3d_map`, the dock
   goal and saved locations are all relative to the start pose.
 
-**`--save-location`** asks for a label for each point clicked in Foxglove,
+**`--save-location`** asks for a label for each point clicked in the dashboard,
 and writes it to `config/semantic_locations.json`.
 
 RTAB-Map runs outside `go2-lidar3d` so that the `wifi_nav.sh` teardown cannot
 kill it before it saves. On Ctrl+C the session stops first, then RTAB-Map
-writes its database. Foxglove setup, click-to-go, tuning and troubleshooting:
-[docs/3d_nav.md](docs/3d_nav.md).
+writes its database. Dashboard details, click-to-go, tuning and
+troubleshooting: [docs/3d_nav.md](docs/3d_nav.md).
+
+### Web dashboard
+
+The custom web dashboard is the primary interface for the 3D session.
+1. Start a session: `./scripts/runtime/wifi_3d_nav.sh` (plus `--ai` etc.).
+2. Wait for the `3D digital twin READY` block.
+3. **Open your browser and navigate to `http://localhost:3000`** on the VM, or
+   `http://<VM IP>:3000` from the Windows host. The READY block prints the
+   address.
+
+| Area | What you get |
+|---|---|
+| Top bar | rosbridge status, battery % / voltage (`/battery_state`), commanded speed (`/cmd_vel`), VLM decision (`/vlm_decision`), map size, explorer state with **START / STOP** |
+| 3D view | `/rtabmap/cloud_map`, the robot from TF (`lidar3d_map → base_link`), `/plan`, the active goal, YOLO boxes; **Click-to-go**, **Follow robot**, layer toggles |
+| Camera | Live camera and YOLO view (JPEG copies of `/camera/image_raw` and `/yolo/image`) |
+
+Behind it, `go2-3d` runs:
+- **rosbridge** (`rosbridge_websocket`) on 9090, unless something already
+  listens there;
+- **a static server** for the dashboard on 3000;
+- **`image_compressor.py`**, which makes the JPEG copies only while a browser
+  watches.
+
+Source and development (`npm run dev`): [`twin/webapp`](twin/webapp/),
+[docs/3d_nav.md → Web dashboard](docs/3d_nav.md#web-dashboard).
+
+#### Alternative visualization (Foxglove)
+
+`--foxglove` also starts `foxglove_bridge` on `:8765` for the Foxglove (or
+Lichtblick) desktop app. Its Rosbridge connection works on `:9090` without
+the flag. See
+[docs/3d_nav.md → Alternative visualization](docs/3d_nav.md#alternative-visualization-foxglove).
 
 ---
 
@@ -753,7 +798,7 @@ Unitree_GO2_Agricultural/
 │   └── semantic_locations.json       # named points from --save-location (created on first save)
 ├── docs/
 │   ├── STATUS.md                     # session notes
-│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, --ai, --resume, Foxglove)
+│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, web dashboard, --ai, --resume)
 │   ├── LAB-NAV-FIXES.md              # lab fixes for upstream go2-nav2-wifi
 │   ├── camera.md                     # live camera setup
 │   ├── d1arm.md                      # D1 arm runbook
@@ -763,7 +808,7 @@ Unitree_GO2_Agricultural/
 ├── scripts/
 │   ├── runtime/                      # shell entry points
 │   │   ├── wifi_nav.sh               # main orchestrator
-│   │   ├── wifi_3d_nav.sh            # wifi_nav.sh + RTAB-Map + Foxglove (3D twin), --ai, --resume
+│   │   ├── wifi_3d_nav.sh            # wifi_nav.sh + RTAB-Map + web dashboard (3D twin), --ai, --resume
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # older manual RTAB-Map launcher
 │   │   ├── start_arm.sh              # D1-T arm entry point (preflight, fold, control)
@@ -772,7 +817,7 @@ Unitree_GO2_Agricultural/
 │   │   ├── frontier_explorer.py      # custom explorer
 │   │   ├── go2_camera_relay.py       # camera bridge
 │   │   ├── go2_floor_filter.py       # floor-plane filter
-│   │   ├── go2_click_to_goal.py      # Foxglove click -> Nav2 goal
+│   │   ├── go2_click_to_goal.py      # dashboard click -> Nav2 goal
 │   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
 │   │   ├── battery_manager.py        # --ai: low battery -> dock
 │   │   ├── vlm_reasoning_node.py     # --ai: Ollama llava -> /vlm_decision
@@ -801,9 +846,11 @@ Unitree_GO2_Agricultural/
 │   ├── worlds/agri_field.sdf
 │   └── models/                       # downloaded Unitree models (not in git)
 ├── twin/                             # go2-3d container for wifi_3d_nav.sh
-│   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + bridges + CPU PyTorch + YOLO11s)
-│   ├── start_inside.sh               # starts bridge, click-to-goal, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
-│   └── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
+│   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + rosbridge + CPU PyTorch + YOLO11s + dashboard build)
+│   ├── start_inside.sh               # starts rosbridge, dashboard server, click-to-goal, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
+│   ├── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
+│   ├── image_compressor.py           # JPEG camera copies for the dashboard
+│   └── webapp/                       # web dashboard: React + three.js (Vite), served on :3000
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used
@@ -1004,7 +1051,8 @@ and manual waypoint navigation via RViz. This repo adds:
   unchanged stack and arm scripts run against it (`wifi_nav.sh --sim`)
 - **Diagnostic and tuning scripts** — preflight, test_explore, campus_session, tune_costmap
 - **3D digital twin** — `wifi_3d_nav.sh`:
-  - live RTAB-Map 3D map in Foxglove, coloured from the Go2 camera;
+  - live RTAB-Map 3D map in a custom web dashboard (React + three.js),
+    coloured from the Go2 camera;
   - click-to-go goals snapped to safe floor;
   - database saved every run, `--resume` after a battery swap;
   - PLY export and mesh.
@@ -1012,7 +1060,7 @@ and manual waypoint navigation via RViz. This repo adds:
   - YOLO11s obstacles, optionally fed to the Nav2 costmap;
   - local VLM scene reasoning (Ollama llava);
   - low-battery return to the dock;
-  - named locations from Foxglove clicks.
+  - named locations from clicked points.
 
 ---
 
@@ -1030,7 +1078,8 @@ part of the active pipeline. See [`cmu-legacy/README.md`](cmu-legacy/README.md).
 |---|---|
 | [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) | SLAM (Point-LIO) + Nav2 + Wi-Fi relay |
 | [RTAB-Map](https://github.com/introlab/rtabmap_ros) | Dense 3D mapping in the `go2-3d` container (`ros-humble-rtabmap-ros`) |
-| [Foxglove](https://foxglove.dev) / [`foxglove_bridge`](https://github.com/foxglove/ros-foxglove-bridge) | 3D web visualization of the twin; [Lichtblick](https://github.com/lichtblick-suite/lichtblick) works too |
+| [three.js](https://threejs.org) / [React Three Fiber](https://github.com/pmndrs/react-three-fiber) / [roslib](https://github.com/RobotWebTools/roslibjs) / [rosbridge](https://github.com/RobotWebTools/rosbridge_suite) | Web dashboard (`twin/webapp`) |
+| [Foxglove](https://foxglove.dev) / [`foxglove_bridge`](https://github.com/foxglove/ros-foxglove-bridge) | Alternative 3D visualization (`--foxglove`); [Lichtblick](https://github.com/lichtblick-suite/lichtblick) works too |
 | [`cyclonedds`](https://pypi.org/project/cyclonedds/) | Python DDS bindings used by the D1-T arm scripts (`pip3 install cyclonedds` on the VM) |
 | [`JeewanthaSadaruwan/unitree-D1-550-Robot-ARM`](https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM) | Reference only: ideas behind an earlier smooth-motion version of the arm control (reimplemented, no code copied) |
 

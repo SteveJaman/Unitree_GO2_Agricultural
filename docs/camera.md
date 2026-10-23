@@ -35,6 +35,9 @@ ros2 topic hz /camera/image_raw
   camera has none.
 - **With `--ai`:** YOLO11s publishes `/yolo/image` (boxes drawn) and the VLM
   sends frames to Ollama.
+- **Web dashboard:** [`image_compressor.py`](../twin/image_compressor.py)
+  makes 640 px JPEG copies (`/twin/camera/compressed`,
+  `/twin/yolo/compressed`) at 5 Hz, only while a browser watches.
 
 If the relay isn't publishing, the 3D session falls back to a LiDAR-only map,
 and YOLO and the VLM stay off.

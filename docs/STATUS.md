@@ -122,15 +122,15 @@ Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 
 [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs `wifi_nav.sh`
 unchanged, plus a separate `go2-3d` container ([`twin/`](../twin/)). The
-container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), foxglove_bridge
-`:8765` (or rosbridge `:9090`) and
+container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), rosbridge `:9090`
+with the web dashboard `:3000` (foxglove_bridge `:8765` with `--foxglove`) and
 [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)
 (`/clicked_point` → nearest safe floor → `/goal_pose`). It copies the session's DDS settings, and
 the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](3d_nav.md).
 
 Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
-the `go2-3d:local` image build, RTAB-Map on live data, the Foxglove
-connection, click-to-go, `--export`.
+the `go2-3d:local` image build, RTAB-Map on live data, the dashboard on the
+robot, click-to-go, `--export`.
 
 **Camera fusion + YOLO11s (2026-10-23).**
 - **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
@@ -164,7 +164,27 @@ starts three nodes:
 
 The other two features:
 - `--resume` reopens the newest RTAB-Map database, after taking a `.bak` copy.
-- `--save-location` labels Foxglove clicks into `config/semantic_locations.json`.
+- `--save-location` labels clicked points into `config/semantic_locations.json`.
+
+**Web dashboard (2026-10-23).**
+- **What it is:** [`twin/webapp`](../twin/webapp/), React + three.js + roslib,
+  replacing Foxglove as the main viewer.
+- **Where it runs:** built into `go2-3d`, served on `:3000`, over rosbridge
+  `:9090`.
+- **What it shows:** status bar (battery from the new `/battery_state`, speed,
+  VLM, explorer START/STOP), 3D map, robot, plan, goal and YOLO boxes,
+  click-to-go, and the camera (JPEG via `twin/image_compressor.py`).
+- **Battery:** `battery_manager.py` now always runs as a monitor; it docks
+  only with `--ai`.
+- **Verified off-robot:**
+  - `npm run build`;
+  - in headless Chrome against a mock rosbridge: map, robot, plan, goal, YOLO
+    labels and both camera feeds render, the status bar values are correct,
+    click-to-go publishes `/clicked_point`, and STOP publishes
+    `/explore/resume false`;
+  - battery monitor vs dock mode.
+- **Not yet run:** the image build with the dashboard stage, real rosbridge,
+  and the robot.
 
 Verified off-robot:
 - the `--ai` / `--no-*` flag logic;
@@ -215,11 +235,11 @@ relay is unconfirmed.
 | 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
 | 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
 | 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
-| 19 | Dense map grows | Foxglove 3D panel, `/rtabmap/cloud_map` | map fills in as the dog walks |
-| 20 | Click-to-go | Foxglove Publish → Point on the floor, then on a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
+| 19 | Dense map grows | dashboard `http://<VM IP>:3000`, 3D view | map fills in as the dog walks |
+| 20 | Click-to-go | dashboard Click-to-go, click the floor, then a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
 | 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
 | 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
-| 23 | Camera TF / intrinsics | Foxglove: `/lidar3d/registered` over `/yolo/image` region | colours on the right surfaces (else calibrate, roadmap 3.4) |
+| 23 | Camera TF / intrinsics | dashboard: coloured map vs camera panel | colours on the right surfaces (else calibrate, roadmap 3.4) |
 | 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
 | 25 | YOLO → Nav2 | `add-yolo-costmap-source.sh`, chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
 | 26 | Battery data | `go2sh; ros2 topic echo /lf/lowstate --field bms_state.soc` | matches the app's battery % |
@@ -227,6 +247,9 @@ relay is unconfirmed.
 | 28 | VLM | Ollama + `llava:7b`, `--ai` | `/vlm_decision` updates; `vlm.log` shows answer times |
 | 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
 | 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
+| 31 | Dashboard | open `http://<VM IP>:3000` from Windows | green rosbridge dot, robot moves with the dog, battery % matches the app |
+| 32 | Dashboard camera | camera mode, dashboard Camera / YOLO tabs | ~5 fps each |
+| 33 | Dashboard STOP | explorer running, click STOP | dog stops, explorer `IDLE` |
 
 ---
 
@@ -328,7 +351,7 @@ ros2 topic echo /explore/status            # watch goals_sent
 ```
 
 3D twin (instead of step 3, once `--build` has run):
-`./scripts/runtime/wifi_3d_nav.sh --ai`, then Foxglove → `ws://<VM IP>:8765`.
+`./scripts/runtime/wifi_3d_nav.sh --ai`, then open `http://<VM IP>:3000`.
 After a battery swap, restart from the same spot with `--ai --resume`. Work
 through checks 17–30 above (see [3d_nav.md](3d_nav.md)).
 

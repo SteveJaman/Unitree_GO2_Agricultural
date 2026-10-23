@@ -3,10 +3,14 @@
 # start_inside.sh: entry point of the go2-3d container (run by wifi_3d_nav.sh).
 #
 # Starts, on the session's DDS domain:
-#   * web bridge          foxglove_bridge (default) or rosbridge, for Foxglove
+#   * rosbridge :9090     for the web dashboard (skipped if the port is taken)
+#   * web dashboard :3000 twin/webapp, static files served by python http.server
+#                         (/twin/webapp/dist if newer than the image's copy)
+#   * foxglove_bridge     :8765, only with TWIN_FOXGLOVE=1 (alternative viewer)
 #   * go2_click_to_goal   /clicked_point -> nearest safe floor -> /goal_pose
 #   * camera support      (if the camera publishes) base_link -> camera TF,
-#                         go2_camera_info.py (intrinsics)
+#                         go2_camera_info.py (intrinsics), image_compressor.py
+#                         (JPEG copies for the dashboard)
 #   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
 #   * yolo_node.py        (TWIN_YOLO=1 and camera) /yolo/detections, /yolo/obstacles
 #   * vlm_reasoning_node  (TWIN_VLM=1 and camera) Ollama llava -> /vlm_decision
@@ -31,7 +35,8 @@
 # Environment (set by wifi_3d_nav.sh; ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI
 # are copied from the running wifi_nav.sh session):
 #   TWIN_DB=/data/rtabmap.db   TWIN_MODE=auto|lidar|camera|rgbd
-#   TWIN_BRIDGE=foxglove|rosbridge|none   TWIN_BRIDGE_PORT=8765
+#   TWIN_ROSBRIDGE=1  TWIN_ROSBRIDGE_PORT=9090   TWIN_WEB=1  TWIN_WEB_PORT=3000
+#   TWIN_FOXGLOVE=0   TWIN_FOXGLOVE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC=/camera/image_raw (rgbd: /camera/color/image_raw)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode, RealSense defaults)
@@ -51,7 +56,12 @@ set -eo pipefail
 
 TWIN_DB="${TWIN_DB:-/data/rtabmap.db}"
 TWIN_MODE="${TWIN_MODE:-auto}"
-TWIN_BRIDGE="${TWIN_BRIDGE:-foxglove}"
+TWIN_ROSBRIDGE="${TWIN_ROSBRIDGE:-1}"
+TWIN_ROSBRIDGE_PORT="${TWIN_ROSBRIDGE_PORT:-9090}"
+TWIN_WEB="${TWIN_WEB:-1}"
+TWIN_WEB_PORT="${TWIN_WEB_PORT:-3000}"
+TWIN_FOXGLOVE="${TWIN_FOXGLOVE:-0}"
+TWIN_FOXGLOVE_PORT="${TWIN_FOXGLOVE_PORT:-8765}"
 TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
 if [ "$TWIN_MODE" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
@@ -107,17 +117,35 @@ trap 'stop_all; exit 0' TERM INT
 
 echo "[go2-3d] DDS domain ${ROS_DOMAIN_ID:-0}, ${RMW_IMPLEMENTATION:-default RMW}, ${CYCLONEDDS_URI:-no CYCLONEDDS_URI}"
 
-# --- Bridge + click-to-goal first, so Foxglove can connect while we wait ----
-case "$TWIN_BRIDGE" in
-    foxglove)
-        start bridge "$(exe foxglove_bridge foxglove_bridge)" \
-            --ros-args -p port:="${TWIN_BRIDGE_PORT:-8765}" -p address:=0.0.0.0 ;;
-    rosbridge)
-        start bridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml \
-            port:="${TWIN_BRIDGE_PORT:-9090}" ;;
-    none) ;;
-    *) echo "[go2-3d] ERROR: unknown TWIN_BRIDGE=${TWIN_BRIDGE}" >&2; stop_all; exit 1 ;;
-esac
+# True if something already listens on a local TCP port.
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# --- Bridges, dashboard, click-to-goal first: viewers connect while we wait --
+if [ "$TWIN_ROSBRIDGE" = 1 ]; then
+    if port_busy "$TWIN_ROSBRIDGE_PORT"; then
+        echo "[go2-3d] rosbridge: port ${TWIN_ROSBRIDGE_PORT} already in use, using the running server"
+    else
+        start rosbridge ros2 launch rosbridge_server rosbridge_websocket_launch.xml \
+            port:="$TWIN_ROSBRIDGE_PORT"
+    fi
+fi
+if [ "$TWIN_WEB" = 1 ]; then
+    WEBROOT=/opt/webapp
+    # A dashboard built on the host (cd twin/webapp && npm run build) wins if newer.
+    [ /twin/webapp/dist/index.html -nt /opt/webapp/index.html ] && WEBROOT=/twin/webapp/dist
+    if [ ! -f "$WEBROOT/index.html" ]; then
+        echo "[go2-3d] WARN: no dashboard build in the image (rebuild: wifi_3d_nav.sh --build)"
+    elif port_busy "$TWIN_WEB_PORT"; then
+        echo "[go2-3d] WARN: port ${TWIN_WEB_PORT} already in use; dashboard not served"
+    else
+        start web python3 -m http.server "$TWIN_WEB_PORT" --bind 0.0.0.0 --directory "$WEBROOT"
+        echo "[go2-3d] dashboard: ${WEBROOT} on port ${TWIN_WEB_PORT}"
+    fi
+fi
+if [ "$TWIN_FOXGLOVE" = 1 ]; then
+    start foxglove "$(exe foxglove_bridge foxglove_bridge)" \
+        --ros-args -p port:="$TWIN_FOXGLOVE_PORT" -p address:=0.0.0.0
+fi
 start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
     -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
 
@@ -156,6 +184,10 @@ if [ "$TWIN_MODE" = camera ]; then
     start camera_info python3 -u /nodes/go2_camera_info.py --ros-args \
         -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC" \
         -p hfov_deg:="$(float "$TWIN_CAMERA_HFOV_DEG")"
+    if [ "$TWIN_ROSBRIDGE" = 1 ]; then
+        start image_compressor python3 -u /twin/image_compressor.py --ros-args \
+            -p "pairs:=[\"${TWIN_RGB_TOPIC}:/twin/camera/compressed\", \"/yolo/image:/twin/yolo/compressed\"]"
+    fi
     start lidar_depth "$(exe rtabmap_util pointcloud_to_depthimage)" --ros-args \
         -r __node:=lidar_depth \
         -p fixed_frame_id:="$TWIN_MAP_FRAME" -p decimation:=4 \

@@ -1,0 +1,85 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #111821;
+  --border: #1f2a36;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --accent: #38bdf8;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+
+.app { height: 100%; display: flex; flex-direction: column; }
+main { flex: 1; display: flex; min-height: 0; }
+
+.statusbar {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; letter-spacing: .02em; color: var(--accent); }
+.item { display: flex; flex-direction: column; min-width: 80px; }
+.item .label { font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.item .value { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.item small { color: var(--muted); }
+.stale { color: #f59e0b !important; }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; }
+.dot.connected { background: #22c55e; }
+.dot.connecting { background: #f59e0b; }
+.dot.error, .dot.disconnected { background: #ef4444; }
+
+.badge { padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; color: #0b0f14; }
+.badge.warn { background: #f59e0b; }
+
+.btn {
+  background: #1f2a36; color: var(--text); border: 1px solid #2f4256; border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; font: inherit;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.active { background: #0c4a6e; border-color: var(--accent); }
+.btn.go { background: #14532d; border-color: #22c55e; padding: 1px 8px; }
+.btn.stop { background: #7f1d1d; border-color: #ef4444; padding: 1px 8px; }
+
+.viewport { flex: 1; position: relative; min-width: 0; }
+.toolbar {
+  position: absolute; top: 10px; left: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  background: rgba(17, 24, 33, .85); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+}
+.check { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
+.frame { color: var(--muted); font-size: 12px; }
+.toast {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: #0c4a6e; border: 1px solid var(--accent); padding: 6px 14px; border-radius: 8px;
+}
+.overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(11, 15, 20, .7); color: var(--muted); pointer-events: none; text-align: center; padding: 16px;
+}
+code { background: #1f2a36; padding: 1px 5px; border-radius: 4px; }
+
+.side { width: 380px; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
+.camera-head { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid var(--border); }
+.tab { background: none; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.tab.active { color: var(--text); border-color: #2f4256; background: #1f2a36; }
+.fps { margin-left: auto; color: var(--muted); font-size: 12px; }
+.camera-body { position: relative; aspect-ratio: 16 / 9; background: #000; }
+.camera-body img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.camera-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); gap: 4px; font-size: 13px;
+}
+.help { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.yolo-label {
+  background: rgba(249, 115, 22, .9); color: #111; padding: 1px 6px; border-radius: 4px;
+  font-size: 11px; white-space: nowrap; pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  main { flex-direction: column; }
+  .side { width: 100%; border-left: 0; border-top: 1px solid var(--border); }
+  .viewport { min-height: 55vh; }
+}
