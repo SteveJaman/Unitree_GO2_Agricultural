@@ -94,10 +94,10 @@ Required for reconstruction. Currently blocked by hardware.
 | 3.3 | Mount Intel RealSense D435i (if available) | ⏳ hardware |
 | 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](camera_lidar_fusion.md)), ⏳ run on robot |
 
-**Note:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) is already written and bridges
-`/frontvideostream` → `/camera/image_raw`. What is missing is the *camera
-backend* on the Jetson — right now the relay logs
-`WARN: camera unavailable`. See [camera.md](camera.md).
+**Note:** the camera works live. The robot sends its JPEG frames over Wi-Fi
+(`scripts/robot/go2_camera_wifi.sh`, using the Jetson's `go2_camera_jpeg_cli`
+backend), and `go2_camera_relay.py` decodes them to `/camera/image_raw`.
+See [camera.md](camera.md).
 
 **Blocker if no RealSense:** built-in camera + LiDAR gives sparse color
 only. Enough to prototype, not enough for a real-estate quality tour.
@@ -122,6 +122,7 @@ The pipeline that produces the dense 3D tour.
 | 4.9 | Click a 3D point in Foxglove → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
 | 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ⏳ |
+| 4.13 | Camera obstacles in the Nav2 costmap: monocular depth scaled by the LiDAR (`wifi_3d_nav.sh --camera-obstacles`) | ✅ pipeline verified on the dog, ⏳ calibration + drive test |
 | 4.12 | Camera-coloured map from the built-in camera, LiDAR as depth (`wifi_3d_nav.sh --fusion`) | ✅ verified in `--sim`, ⏳ needs the camera calibration on the robot |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;

@@ -70,6 +70,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | Option | Effect |
 |---|---|
 | `--fusion` | **Camera + LiDAR fusion.** RTAB-Map colours the 3D map from the built-in front camera, using the LiDAR as depth. Also publishes `/camera/lidar_overlay`. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
+| `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration and `--build`. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
 | `--rgbd` | Also feed RealSense colour + depth to RTAB-Map (coloured map). Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--rosbridge` | rosbridge on `:9090` instead of foxglove_bridge on `:8765` |
 | `--no-bridge` | RTAB-Map only, no web bridge |
@@ -139,9 +140,8 @@ via [`scripts/tools/rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py):
 
 The image displays open as panels; drag them where you want and save the
 layout. The 3D map display is Transient Local, so it shows the last map even
-while the dog stands still. In `--sim`, the Front camera panel can stutter:
-Gazebo publishes Reliable and the display reads Best Effort, which suits the
-real relay. The LiDAR on camera panel is unaffected.
+while the dog stands still. Both image displays are Reliable, matching the
+camera relay and Gazebo.
 
 ---
 

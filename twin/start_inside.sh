@@ -16,7 +16,8 @@
 # Environment (set by wifi_3d_nav.sh; ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI
 # are copied from the running wifi_nav.sh session):
 #   TWIN_DB=/data/rtabmap.db   TWIN_MODE=lidar|rgbd|fusion
-#   TWIN_CAMERA_INFO=/camera_cfg/front_camera.yaml   (fusion: lens calibration)
+#   TWIN_CAMERA_INFO=/camera_cfg/front_camera.yaml   (fusion / camera obstacles: lens calibration)
+#   TWIN_CAMERA_OBSTACLES=1    camera obstacles for Nav2 (go2_camera_obstacles.py)
 #   TWIN_BRIDGE=foxglove|rosbridge|none   TWIN_BRIDGE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode)
@@ -35,6 +36,7 @@ TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
 TWIN_CAMERA_INFO="${TWIN_CAMERA_INFO:-}"
+TWIN_CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES:-0}"
 TWIN_IMAGE_TOPIC="${TWIN_IMAGE_TOPIC:-/camera/image_raw}"
 LOGS=/logs
 
@@ -144,6 +146,15 @@ if [ "$TWIN_MODE" = fusion ]; then
     start overlay python3 -u /nodes/go2_lidar_overlay.py --ros-args \
         -p image_topic:="$TWIN_IMAGE_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
         -p cloud_topic:="$TWIN_CLOUD_TOPIC"
+fi
+
+if [ "$TWIN_CAMERA_OBSTACLES" = 1 ]; then
+    # Depth Anything V2-Small scaled by the LiDAR -> /camera/obstacle_points,
+    # a marking source in the Nav2 costmaps (scripts/tools/nav2_camera_source.py).
+    [ -f "$TWIN_CAMERA_INFO" ] || { echo "[go2-3d] ERROR: camera obstacles need TWIN_CAMERA_INFO" >&2; stop_all; exit 1; }
+    start camera_obstacles python3 -u /nodes/go2_camera_obstacles.py --ros-args \
+        -p image_topic:="$TWIN_IMAGE_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC" -p map_frame:="$TWIN_MAP_FRAME"
 fi
 
 sleep 3

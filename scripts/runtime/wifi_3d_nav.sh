@@ -19,6 +19,8 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
 #   ./scripts/runtime/wifi_3d_nav.sh --fusion        # + front camera: coloured map,
 #                                                    #   /camera/lidar_overlay check
+#   ./scripts/runtime/wifi_3d_nav.sh --camera-obstacles  # + camera depth (LiDAR-scaled)
+#                                                    #   as Nav2 obstacles: glass, legs
 #   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # + RealSense colour/depth
 #   ./scripts/runtime/wifi_3d_nav.sh --rosbridge     # rosbridge :9090 instead
 #   ./scripts/runtime/wifi_3d_nav.sh --no-bridge     # RTAB-Map only
@@ -28,7 +30,7 @@
 # Environment:
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered  TWIN_BRIDGE_PORT=8765 (9090 rosbridge)
 #   TWIN_RGB_TOPIC / TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC      (--rgbd)
-#   TWIN_CAMERA_INFO_FILE=config/camera/front_camera.yaml       (--fusion; with
+#   TWIN_CAMERA_INFO_FILE=config/camera/front_camera.yaml       (--fusion, --camera-obstacles; with
 #                            --sim: config/camera/sim_front_camera.yaml)
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
 #   TWIN_EXPORT_ARGS="--voxel 0.02"        extra rtabmap-export options (--export)
@@ -59,6 +61,7 @@ TWIN_NODE_SETTLE="${TWIN_NODE_SETTLE:-10}"
 # --- Parse args ------------------------------------------------------------
 ACTION="run"
 TWIN_MODE="lidar"
+TWIN_CAMERA_OBSTACLES=0
 TWIN_BRIDGE="foxglove"
 EXPORT_DB=""
 PASSTHRU=()
@@ -67,6 +70,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --rgbd)       TWIN_MODE="rgbd" ;;
         --fusion)     TWIN_MODE="fusion" ;;
+        --camera-obstacles) TWIN_CAMERA_OBSTACLES=1 ;;
         --rosbridge)  TWIN_BRIDGE="rosbridge" ;;
         --no-bridge)  TWIN_BRIDGE="none" ;;
         --build)      ACTION="build" ;;
@@ -212,9 +216,10 @@ start_twin_when_ready() {
 
     twin_exists && docker rm -f "${TWIN_CONTAINER}" >/dev/null 2>&1
     local camera_args=()
-    if [ "${TWIN_MODE}" = fusion ]; then
+    if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
         camera_args=(-v "${TWIN_CAMERA_INFO_FILE}:/camera_cfg/camera.yaml:ro"
-                     -e TWIN_CAMERA_INFO=/camera_cfg/camera.yaml)
+                     -e TWIN_CAMERA_INFO=/camera_cfg/camera.yaml
+                     -e TWIN_CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}")
     fi
     echo "[3d] Starting ${TWIN_CONTAINER} on DDS $(sed -n 's/^ROS_DOMAIN_ID=/domain /p' <<< "${env_lines}"): RTAB-Map (${TWIN_MODE}), bridge ${TWIN_BRIDGE}, click-to-goal..."
     if ! docker run -d --name "${TWIN_CONTAINER}" "${net[@]}" \
@@ -245,6 +250,10 @@ start_twin_when_ready() {
                 echo "   Foxglove    : Open connection -> $( [ "${TWIN_BRIDGE}" = foxglove ] && echo "Foxglove WebSocket" || echo "Rosbridge" ) -> ws://${host_ip}:${TWIN_BRIDGE_PORT}"
             fi
             echo "   3D panel    : display frame lidar3d_map; topics /rtabmap/cloud_map, /tf, /plan"
+            if [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
+                echo "   Obstacles   : /camera/obstacle_points -> Nav2 (check: /camera/obstacle_depth image)"
+                echo "                 Nav2 waits for the first camera obstacles before driving"
+            fi
             if [ "${TWIN_MODE}" = fusion ]; then
                 echo "   Fusion      : /rtabmap/cloud_map coloured from the camera (RViz: Color Transformer RGB8)"
                 echo "                 /camera/lidar_overlay = LiDAR on the camera image (RViz/Foxglove Image)"
@@ -290,16 +299,16 @@ for f in "${TWIN_DIR}/start_inside.sh" "${NODES_DIR}/go2_click_to_goal.py"; do
 done
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}"
 
-if [ "${TWIN_MODE}" = fusion ]; then
-    [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && die "--fusion needs the camera: drop --no-camera"
+if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
+    [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && die "--fusion / --camera-obstacles need the camera: drop --no-camera"
     if [[ " ${PASSTHRU[*]} " == *" --sim "* ]]; then
         TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/sim_front_camera.yaml}"
     else
         TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
     fi
-    [ -f "${TWIN_CAMERA_INFO_FILE}" ] || die "--fusion needs a camera calibration: ${TWIN_CAMERA_INFO_FILE} not found.
+    [ -f "${TWIN_CAMERA_INFO_FILE}" ] || die "--fusion / --camera-obstacles need a camera calibration: ${TWIN_CAMERA_INFO_FILE} not found.
        Run ./scripts/tools/calibrate_camera.sh with a session up (docs/camera_lidar_fusion.md)."
-    for f in go2_fusion_camera.py go2_lidar_overlay.py; do
+    for f in go2_fusion_camera.py go2_lidar_overlay.py go2_camera_obstacles.py; do
         [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
     done
 fi
@@ -314,7 +323,10 @@ echo "================================================================"
 echo " Go2 3D digital twin (wifi_nav.sh + RTAB-Map + ${TWIN_BRIDGE} bridge)"
 echo "================================================================"
 echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
-[ "${TWIN_MODE}" = fusion ] && echo "  Camera      : ${TWIN_CAMERA_INFO_FILE}"
+[ -n "${TWIN_CAMERA_INFO_FILE:-}" ] && echo "  Camera      : ${TWIN_CAMERA_INFO_FILE}"
+[ "${TWIN_CAMERA_OBSTACLES}" = 1 ] && echo "  Obstacles   : camera depth (LiDAR-scaled) -> Nav2 costmap source 'camera'"
+# wifi_nav.sh adds (or, without this flag, removes) the costmap camera source.
+export CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}"
 echo "  Bridge      : ${TWIN_BRIDGE}$( [ "${TWIN_BRIDGE}" != none ] && echo " on port ${TWIN_BRIDGE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"

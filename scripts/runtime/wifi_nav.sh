@@ -28,8 +28,10 @@ CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
+ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # go2_camera_wifi.{sh,py}
 CAMERA_CALIB="${CAMERA_CALIB:-$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )/config/camera/front_camera.yaml}"
-CAMERA_RESOLUTION="${CAMERA_RESOLUTION:-720p}"   # must match the calibration
+CAMERA_WIDTH="${CAMERA_WIDTH:-960}"   # robot-side JPEG width (1920 native); the calibration must match
+CAMERA_FPS="${CAMERA_FPS:-5}"
 ARM_START_SCRIPT="${SCRIPT_DIR}/start_arm.sh"
 SIM_RUN="$( cd "${SCRIPT_DIR}/../../gazebo" &> /dev/null && pwd )/run_sim.sh"
 ARM_LOG="${NAV2_WIFI_DIR}/ws/log/arm.log"
@@ -143,7 +145,7 @@ stop_exploration() {
 
 remote_kill_relays() {
     robot_ssh -T -o ConnectTimeout="${1:-5}" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" bash -s <<'REMOTE_KILL'
-pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
+pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge|go2_camera_wifi|go2_camera_jpeg_cli' 2>/dev/null || true
 rm -f /tmp/robot-relay.pid /tmp/go2-relay-wifi.sock*
 REMOTE_KILL
 }
@@ -172,7 +174,7 @@ start_robot_relay() {
 set -e
 export GO2_HOST_IP="${WN_HOST_IP}" GO2_ROBOT_IP="${WN_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${WN_DOMAIN_ID}"
 
-pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
+pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge|go2_camera_wifi|go2_camera_jpeg_cli' 2>/dev/null || true
 rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
 
@@ -703,6 +705,12 @@ cleanup() {
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
     stop_robot_relay
+    # Leave go2-nav2-wifi's planner config without the camera source, so a
+    # later mapping.sh run never waits on camera obstacles that never come.
+    if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then
+        python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" --disable \
+            "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
+    fi
     if [ "${SIM}" = "true" ]; then
         docker exec "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh stop lidar3d-viz \
             --owner "${SIM_OWNER}" >/dev/null 2>&1 || true
@@ -754,9 +762,24 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             else
                 echo "[camera] No ${CAMERA_CALIB}: no /camera/camera_info (run scripts/tools/calibrate_camera.sh)"
             fi
+            # In 3D mode mapping.sh starts the robot relay without the camera
+            # (GO2_RELAY_CAMERA=0), so the robot sends JPEG frames itself:
+            # scripts/robot/go2_camera_wifi.sh -> /go2/front_camera/compressed.
+            echo "[camera] Starting the robot camera publisher (${GO2_ROBOT_USER}@${GO2_ROBOT_IP}:~/go2-agri-camera)..."
+            robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+                "pkill -f 'go2_camera_[w]ifi|go2_camera_jpeg_[c]li' 2>/dev/null; mkdir -p ~/go2-agri-camera" 2>/dev/null || true
+            if scp -q "${GO2_SSH_OPTS[@]}" "${ROBOT_CAMERA_DIR}/go2_camera_wifi.sh" "${ROBOT_CAMERA_DIR}/go2_camera_wifi.py" \
+                    "${NAV2_WIFI_DIR}/ws/scripts/robot-source-unitree-ros.sh" \
+                    "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}:go2-agri-camera/" 2>/dev/null; then
+                robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+                    "GO2_HOST_IP=${GO2_HOST_IP} GO2_RELAY_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} GO2_CAM_WIDTH=${CAMERA_WIDTH} GO2_CAM_FPS=${CAMERA_FPS} nohup bash ~/go2-agri-camera/go2_camera_wifi.sh > /tmp/go2_camera_wifi.log 2>&1 < /dev/null &" \
+                    2>/dev/null || echo "[camera] WARN: could not start the robot camera publisher"
+            else
+                echo "[camera] WARN: could not copy the camera publisher to the robot"
+            fi
             echo "[camera] Starting camera relay..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_topic:=/frontvideostream -p output_topic:=/camera/image_raw -p frame_id:=front_camera -p resolution:=${CAMERA_RESOLUTION} ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${EXPLORE}" = "true" ]; then
@@ -797,6 +820,12 @@ if [ "${ARM}" = "true" ]; then
     ) &
     ARM_PID=$!
 fi
+
+# Camera obstacles in the Nav2 costmaps only for wifi_3d_nav.sh --camera-obstacles:
+# the source makes Nav2 stop when camera data stops, so every other session removes it.
+if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then cam_src=--enable; else cam_src=--disable; fi
+python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src}" \
+    "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
 
 # Live camera, LiDAR-on-camera overlay and the RTAB-Map 3D map in RViz (once per file).
 python3 "${SCRIPT_DIR}/../tools/rviz_add_camera.py" \

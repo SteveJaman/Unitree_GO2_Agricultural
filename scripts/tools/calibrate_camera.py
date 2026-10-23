@@ -40,7 +40,12 @@ def find_board(gray, pattern, fast=True):
         return None
     corners = (corners / scale).astype(np.float32)
     crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
-    cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), crit)
+    # The refinement window must stay inside one square: a wide-angle lens at
+    # 960x540 can show the board with squares of ~10 px.
+    c = corners.reshape(pattern[1], pattern[0], 2)
+    sq = min(np.linalg.norm(np.diff(c, axis=1), axis=2).min(), np.linalg.norm(np.diff(c, axis=0), axis=2).min())
+    win = int(max(2, min(11, sq * 0.4)))
+    cv2.cornerSubPix(gray, corners, (win, win), (-1, -1), crit)
     return corners
 
 
@@ -163,7 +168,7 @@ def run_offline(args, pattern):
 def run_live(args, pattern):
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Image
 
     views_dir = os.path.join(args.out, "views")
@@ -176,8 +181,13 @@ def run_live(args, pattern):
             self.size = None
             self.last = 0.0
             self.frames = 0
+            self.searched = 0
+            self.seen = 0
             self.done = False
-            self.create_subscription(Image, args.topic, self.on_image, qos_profile_sensor_data)
+            # The relay and Gazebo publish reliable; a best-effort reader would
+            # lose most large raw frames.
+            qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=1)
+            self.create_subscription(Image, args.topic, self.on_image, qos)
             self.create_timer(5.0, self.status)
             print(f"waiting for {args.topic} ... board {pattern[0]}x{pattern[1]} inner corners, "
                   f"{args.square * 1000:.0f} mm squares, {args.samples} views")
@@ -185,6 +195,13 @@ def run_live(args, pattern):
         def status(self):
             if self.frames == 0:
                 print(f"  no images on {args.topic} yet")
+            elif not self.done:
+                print(
+                    f"  {self.frames} frames, {self.searched} searched, board seen in {self.seen}, "
+                    f"views {len(self.views)}/{args.samples}"
+                    + ("  <- no board found: hold it fully in view, check --cols/--rows" if self.seen == 0 else "")
+                )
+                self.frames = self.searched = self.seen = 0
 
         def on_image(self, msg):
             self.frames += 1
@@ -207,9 +224,11 @@ def run_live(args, pattern):
                 self.done = True
                 return
             self.size = size
+            self.searched += 1
             c = find_board(gray, pattern)
             if c is None:
                 return
+            self.seen += 1
             p = board_params(c, pattern, size)
             if self.params and min(np.abs(p - q).sum() for q in self.params) < args.min_change:
                 return

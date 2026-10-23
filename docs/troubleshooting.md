@@ -471,40 +471,33 @@ Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
   docker exec -u root go2-lidar3d apt-get install -y python3-opencv
   ```
 
-### RViz Image display is empty
+### RViz camera display says "No Image"
 
-QoS mismatch. The relay publishes with `BEST_EFFORT`; RViz defaults to
-`RELIABLE`. In the Image display properties, set **Reliability Policy** to
-`Best Effort`. This is the single most common cause.
+1. Is the robot sending frames?
 
-### `frame not JPEG-decodable` in `camera_relay.log`
+   ```bash
+   ssh unitree@<robot-ip> tail -3 /tmp/go2_camera_wifi.log
+   ```
 
-Firmware ships raw H.264 instead of JPEG. Try lowering the resolution:
-
-```bash
-# In wifi_nav.sh, change -p resolution:=720p to -p resolution:=360p
-```
-
-Or install `python3-opencv` with H.264 support (see relay crashes above).
+   - `NN frames in 10 s` with NN > 0: the robot side is fine, go to step 2.
+   - `0 frames in 10 s`: the camera backend gets no video. Check
+     `~/bin/go2_camera_jpeg_cli` exists (go2-nav2-wifi
+     `robot-build-camera-cli.sh`). Run it alone for a few seconds; it should
+     print binary JPEG data.
+   - No log: `wifi_nav.sh` couldn't copy or start it. See the `[camera]` lines
+     in its output.
+2. Is the laptop relay decoding? `docker exec go2-lidar3d tail /tmp/camera_relay.log`
+   should show `published N frames`.
+3. Is the RViz display set to **Reliability Policy: Reliable**? A Best Effort
+   display drops most of the large raw frames (older layouts had Best Effort;
+   `wifi_nav.sh` updates them on the next start).
 
 ### Camera feed stutters or lags
 
-Wi-Fi bandwidth. The relay publishes raw frames on `/camera/image_raw`
-(~27 MB/s at 720p30). Options:
-
-1. Lower resolution (`-p resolution:=360p`)
-2. Move to compressed transport — see [camera.md](camera.md)
-3. Close the RViz point cloud display while viewing the camera (RViz
-   renders on the CPU)
-
-### Camera unavailable warning on Jetson
-
-```
-WARN: camera unavailable; install its backend or use GO2_RELAY_CAMERA=0
-```
-
-Not a blocker for exploration. Either install the backend or run the relay
-with `GO2_RELAY_CAMERA=0` to silence it.
+The robot sends 960x540 JPEG at 5 fps (~0.3 MB/s). On a weak Wi-Fi link,
+lower it, e.g. `CAMERA_WIDTH=640 CAMERA_FPS=3 ./scripts/runtime/wifi_nav.sh`
+(recalibrate at the new width). Closing heavy RViz point cloud displays also
+helps, because RViz renders on the CPU.
 
 ---
 

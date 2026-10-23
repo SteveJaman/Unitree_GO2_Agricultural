@@ -390,8 +390,10 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | File | Purpose |
 |---|---|
 | [`frontier_explorer.py`](scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
-| [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
+| [`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) | Robot JPEG frames (`/go2/front_camera/compressed`) → `/camera/image_raw` (bgr8) + `/camera/camera_info` |
+| [`scripts/robot/go2_camera_wifi.sh`](scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
+| [`go2_camera_obstacles.py`](scripts/nodes/go2_camera_obstacles.py) | `--camera-obstacles`: Depth Anything V2-Small depth, scaled by the LiDAR → `/camera/obstacle_points` for the Nav2 costmap |
 | [`go2_fusion_camera.py`](scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
 | [`go2_lidar_overlay.py`](scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |
 | [`go2_click_to_goal.py`](scripts/nodes/go2_click_to_goal.py) | Foxglove `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
@@ -414,6 +416,7 @@ EXPLORE_MAP_TOPIC=/global_costmap/costmap_raw ./scripts/runtime/wifi_nav.sh
 | [`calibrate_camera.sh`](scripts/tools/calibrate_camera.sh) | Headless checkerboard calibration of the front camera → `config/camera/front_camera.yaml` (`/camera/camera_info`) |
 | [`lidar_overlay.sh`](scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
 | [`rviz_add_camera.py`](scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
+| [`nav2_camera_source.py`](scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`) |
 | [`export_tour.py`](scripts/tools/export_tour.py) | Open3D Poisson mesh reconstruction from an RTAB-Map PLY |
 | [`diag_arm.sh`](scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
@@ -650,6 +653,7 @@ container ([`twin/`](twin/)) with:
 ./scripts/runtime/wifi_3d_nav.sh --build          # once (needs internet)
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # any wifi_nav.sh option passes through
 ./scripts/runtime/wifi_3d_nav.sh --fusion         # + front camera: map coloured from the camera
+./scripts/runtime/wifi_3d_nav.sh --camera-obstacles  # + camera depth as Nav2 obstacles (glass, legs)
 ./scripts/runtime/wifi_3d_nav.sh --export         # newest map -> PLY
 ```
 
@@ -711,21 +715,16 @@ click-to-go). Full steps:
 
 ## Live Camera
 
-The Go2's front camera publishes on `/frontvideostream` as a custom
-`unitree_go/Go2FrontVideoData` message that RViz can't render. The camera relay
-([`scripts/nodes/go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py)) subscribes to that topic, decodes the
-H.264/JPEG payload, and republishes as standard `sensor_msgs/Image` on
-`/camera/image_raw`.
+The Go2's front camera reaches the laptop as colour `sensor_msgs/Image` on
+`/camera/image_raw`. On the robot,
+[`scripts/robot/go2_camera_wifi.sh`](scripts/robot/go2_camera_wifi.sh) sends the
+camera's JPEG frames over Wi-Fi (960x540, 5 fps, ~0.3 MB/s). On the laptop,
+[`go2_camera_relay.py`](scripts/nodes/go2_camera_relay.py) decodes them. The
+relay also publishes `/camera/camera_info` once the camera is calibrated.
 
-The relay launches automatically when `wifi_nav.sh` runs (unless `--no-camera`).
-
-**In RViz:**
-
-1. Click **Add** at the bottom of the Displays panel
-2. Select **Image** → OK
-3. Set **Topic** to `/camera/image_raw`
-4. Set **Reliability** to `Best Effort` (critical — default Reliable will drop frames)
-5. **File → Save Config As** to [`config/tour.rviz`](config/tour.rviz) so it loads next time
+Both start automatically with `wifi_nav.sh` / `wifi_3d_nav.sh` (unless
+`--no-camera`). The session's RViz layout has a **Front camera** display. If you
+add one yourself, set its **Reliability Policy** to `Reliable`.
 
 Or view outside RViz:
 
@@ -785,6 +784,8 @@ Unitree_GO2_Agricultural/
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   │   └── direct_test_movement.py   # small safe arm movement test
+│   ├── robot/                        # run ON the robot (copied by wifi_nav.sh)
+│   │   └── go2_camera_wifi.{sh,py}   # front camera JPEG -> Wi-Fi DDS
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh
@@ -957,7 +958,7 @@ Common items:
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
 | Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [gazebo/README.md](gazebo/README.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](scripts/tools/test_explore.sh) |
-| Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` — see [docs/camera.md](docs/camera.md) |
+| Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [troubleshooting](docs/troubleshooting.md#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
@@ -995,7 +996,7 @@ and manual waypoint navigation via RViz. This repo adds:
 - **Visited-cell coverage** pass to fill gaps after frontiers are exhausted
 - **Spin-on-goal capture** for tour reconstruction
 - **RViz control panel** with START/STOP buttons
-- **Live camera relay** — `/frontvideostream` → `/camera/image_raw`
+- **Live camera** — robot JPEG over Wi-Fi → `/camera/image_raw` (+ `/camera/camera_info` when calibrated)
 - **Floor-plane filter** to prevent the ground being treated as an obstacle
 - **D1-T arm control**: direct DDS/JSON commands chained in one process,
   shoulder lift and joint sweep tests, folded-pose and per-joint offset calibration

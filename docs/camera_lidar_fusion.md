@@ -72,9 +72,9 @@ printing, because printers scale.
 5. Restart `wifi_nav.sh`. The relay now publishes `/camera/camera_info`
    alongside every image (`[camera] Calibration … -> /camera/camera_info`).
 
-The calibration is only valid at the resolution it was taken at. The relay
-uses 720p by default (`CAMERA_RESOLUTION=720p`), and it warns if the frames and
-the calibration don't match.
+The calibration is only valid at the resolution it was taken at. The robot
+sends 960x540 by default (`CAMERA_WIDTH=960`, see [camera.md](camera.md)), and
+the relay warns if the frames and the calibration don't match.
 
 To recalibrate from saved images without the robot:
 
@@ -174,11 +174,82 @@ SIM_GUI=0 SIM_RENDER_ENGINE=ogre ./scripts/runtime/wifi_nav.sh --sim --no-explor
 | `no images on /camera/image_raw` | Relay not running or crashing: `docker exec go2-lidar3d tail /tmp/camera_relay.log` |
 | `no camera_info` | No `config/camera/front_camera.yaml` yet (calibrate), or the session started before it existed (restart) |
 | `no TF to front_camera` | `robot_state_publisher` not up yet, or the session is still starting |
-| Overlay frames arrive slowly | The node subscribes with the image publisher's reliability; at 720p over Wi-Fi a few Hz is normal |
+| Overlay frames arrive slowly | The robot sends 5 fps (`CAMERA_FPS`); the overlay can only be as fast as the camera |
 | Calibrator never captures | Board not found: more light, a flatter board, `--cols/--rows` count *inner* corners |
 | `image size changed` in the calibrator | The relay resolution changed mid-run; restart the calibration |
 
 ---
+
+## Camera obstacles for Nav2
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --build               # once: adds ONNX Runtime + the depth model to go2-3d
+./scripts/runtime/wifi_3d_nav.sh --camera-obstacles    # needs config/camera/front_camera.yaml
+```
+
+The LiDAR misses **glass**, **thin chair and table legs**, **dark surfaces**
+and the area **just in front of the sensor**. The camera sees them but has no
+depth. [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py)
+(in `go2-3d`) closes that gap at about 1–2 Hz:
+
+1. It undistorts the frame and runs **Depth Anything V2-Small** (ONNX, CPU,
+   Apache-2.0), which gives relative depth for every pixel.
+2. It projects the LiDAR into the same image and fits the network output to
+   it (robust least squares), which turns relative depth into metres.
+3. Pixels nearer than 3 m become 3D points. The node moves them to
+   `base_footprint`, keeps those between the floor (estimated every frame) and
+   1 m above it, and publishes them as `/camera/obstacle_points`.
+
+`wifi_nav.sh` adds a **`camera` source** to the obstacle layer of the Nav2
+costmaps (planner and controller), using
+[`nav2_camera_source.py`](../scripts/tools/nav2_camera_source.py) on
+go2-nav2-wifi's `lidar3d_planner.yaml`. It is **marking only**: LiDAR rays
+that pass through glass can't clear what the camera marked. In any session
+without `--camera-obstacles` the source is removed again, and the file
+returns byte-for-byte to how it was.
+
+**Safety behaviour:**
+- The source has `expected_update_rate: 5.0`. If no camera obstacles arrive
+  for 5 s, Nav2 treats the costmap as out of date and the controller stops.
+  The 5 s leaves room for slow inference on a busy CPU; LiDAR obstacles
+  still update at full rate.
+- At start-up, the dog won't drive until `go2-3d` is up and the first camera
+  obstacles have arrived (about 30–60 s after RViz opens).
+- A frame whose LiDAR fit is poor (median error above 25%, or fewer than 30
+  LiDAR points in view) reuses the last good fit for up to 2 s, then
+  publishes an empty cloud.
+
+**Check it:**
+- **RViz:** **Camera obstacles** (red points) should sit on chair legs, the
+  glass door and walls. **Camera depth** (off by default) shows the metric
+  depth, labelled with the fit error.
+- **Log:** `~/files/go2-nav2-wifi/ws/log/3d/camera_obstacles.log` reports
+  every 10 s: frames, obstacle points per frame, inference time and the
+  median fit error. Under about 15% is good; above 25% means the calibration
+  or the camera mount is off.
+
+**Tested on the dog (pipeline only, before calibration):** with lens
+settings guessed from a 110° field of view, the fit matched the LiDAR to a
+median 7% (90°: 31%, 130°: 16%). That suggests the lens is about 110° wide.
+The lab chair (pole, foot ring, base) came out as a cluster 1.1 m ahead and
+the glass door as a wall about 2.5 m away. Inference took about 1 s per
+frame on this VM, with the rest of the session running.
+
+| Node parameter | Default | Meaning |
+|---|---|---|
+| `max_range` | `3.0` | Only pixels nearer than this (m) become obstacles |
+| `min_height` / `max_height` | `0.08` / `1.0` | Height band above the estimated floor (m) |
+| `input_height` | `266` | Model input height (px, multiple of 14). 364 is sharper but about 2x slower |
+| `rate` | `2.0` | Max frames/s processed |
+| `max_fit_error` | `0.25` | Reject a frame's LiDAR fit above this median relative error |
+
+**Limits:**
+- **Calibration dependent:** the fit is only as good as the calibration and
+  the camera mount. Run the [overlay check](#2-overlay-check) first.
+- **Glass:** it's seen as a surface in most frames, not every frame; door
+  frames and reflections help.
+- **Floor estimate:** floor removal assumes the floor is the lowest dense
+  band in view. A low step or ramp can be marked as an obstacle.
 
 ## What comes next
 
@@ -187,10 +258,8 @@ These steps build on a passing overlay:
 1. **Fusion for mapping (done: `wifi_3d_nav.sh --fusion`).** The LiDAR is
    projected into the camera as a depth image, and RTAB-Map runs RGB-D +
    scan and colours the 3D map. See [3d_nav.md](3d_nav.md#camera--lidar-fusion---fusion).
-2. **Fusion for collisions.** The camera finds what the LiDAR misses or can't
-   classify (people, plants, thin or low objects). The LiDAR points inside
-   each detection give its range. The result is published as a point cloud
-   and added as a second observation source in the Nav2 costmap.
+2. **Fusion for collisions (done: `wifi_3d_nav.sh --camera-obstacles`).** See
+   [Camera obstacles](#camera-obstacles-for-nav2) below.
 3. **Language-queryable map (VLMaps-style).** RGB, the LiDAR depth image and
    camera poses are logged in the VLMaps dataset format and mapped offline on
    a GPU machine. The Go2 can then be sent to goals such as "the tomato
