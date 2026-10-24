@@ -75,5 +75,14 @@ else()
   message(WARNING "frontier_explorer.py not found in ${GO2_NODES_DIR}; not installing it")
 endif()
 
+# The package's own older explorer (2D /map stack, 2026-10-13 revision),
+# kept for reference and comparison. Runs as frontier_explorer_pkg.py;
+# frontier_explorer.py above stays the fixed, maintained version.
+install(PROGRAMS
+  go2_expolore_panel/frontier_explorer.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME frontier_explorer_pkg.py
+)
+
 
 ament_package()

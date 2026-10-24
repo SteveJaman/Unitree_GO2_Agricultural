@@ -129,6 +129,61 @@ below, so it has not been exercised in sim yet.
   rosout: publisher's context is invalid` on shutdown. That comes from its own
   code, not the explorer.
 
+### Wall clearance (2026-10-22)
+
+The real robot sometimes touched walls even with a larger footprint. The
+explorer does not steer (Nav2 does), but it chose goals and moves that put
+the robot there:
+
+- **Goals on the frontier itself.** A frontier is the edge of known space, so
+  an unseen wall can be right behind it. go2_goal_pose_nav plans once and
+  does not replan, so the robot kept following the old path as the wall
+  appeared. *Now:* each goal moves to the nearest free cell within
+  `goal_search_radius_m` (1.5 m) that is at least `goal_clearance_m` (0.6 m)
+  from any wall and `goal_unknown_clearance_m` (0.3 m) from unknown space.
+  Frontiers with no such cell are skipped.
+- **A wall showing up at the goal.** *Now:* if a newly seen wall comes within
+  `goal_unsafe_clearance_m` (0.4 m) of the active goal, the explorer abandons
+  it and cancels the Nav2 leg.
+- **Nav2 kept driving after the explorer gave up.** Timeouts, STOP and Ctrl+C
+  only forgot the goal; a new `/goal_pose` does not preempt
+  go2_goal_pose_nav, and a zero Twist only pauses the controller for an
+  instant. *Now:* all three cancel the `follow_path` and
+  `compute_path_to_pose` goals through the action cancel services.
+- **Turning in place next to a wall.** The rotation shim turns in place when
+  a path starts more than 0.8 rad off the heading, sweeping the footprint's
+  rear corner about 0.53 m out. *Now:* when the robot is within
+  `turn_clearance_m` (0.6 m) of a wall, frontiers straight ahead are
+  preferred. If every option needs a turn, it first reverses up to 0.3 m when
+  `unstick_enable` is on and the strip behind is free.
+- **Blind moves.** The unstick reverse, the blind lead-in and `spin_360` drive
+  without Nav2. They now check the costmap first (behind, ahead, and a 0.53 m
+  radius respectively) and skip or stop near a wall.
+- Goals now face the direction of travel. That changes nothing while the
+  goal checker's yaw tolerance is 3.14, but avoids a final turn if it is
+  tightened.
+
+The checks use `scipy.ndimage` (installed both on the host and in the
+`go2-lidar3d` container). Without scipy, goals fall back to frontier centroids.
+
+Same 4-minute `--autostart --no-rviz` run, with a monitor sampling the
+footprint against lethal costmap cells at 5 Hz:
+
+| Explorer | Sent | Reached | Abandoned | Footprint touching a wall | Closest approach (centre) | Time < 0.5 m |
+|---|---|---|---|---|---|---|
+| Before | 11 | 8 | 2 | 0 samples | 0.37 m | 1.1% |
+| After | 18 | 16 | 1 | 0 samples | 0.38 m | 2.5% |
+
+- Goals moved about 0.5 m off the frontier, and "too close to turn" backed the
+  robot off twice.
+- **The sim did not reproduce a wall touch in either run**, so these numbers
+  show the new behaviour works, not that it fixes the robot's collisions. The
+  sim moves exactly as commanded. On the robot, gait drift, lidar points
+  closer than 0.35 m or lower than 0.15 m (never marked), and RPP
+  path-following are the likely remaining causes. Those are Nav2 settings in
+  go2-nav2-wifi (inflation, `footprint_padding`,
+  `use_cost_regulated_linear_velocity_scaling`), not explorer behaviour.
+
 ## Files
 
 | File | Role |
