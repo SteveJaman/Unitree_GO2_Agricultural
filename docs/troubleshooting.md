@@ -259,6 +259,13 @@ Diagnose without the RViz button: [`test_explore.sh`](../scripts/tools/test_expl
 
 Either the button isn't publishing, or the explorer isn't subscribed.
 
+If `ros2 topic info -v /explore/resume` lists the explorer but not `rviz`,
+the two are on different DDS setups. Anything started with `docker exec` must
+get the stack's `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and
+`CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml`. `wifi_nav.sh` does
+this for the explorer, relays and stop (`DDS_EXEC_ENV`); add both with `-e`
+when you run `ros2` commands by hand as root.
+
 ```bash
 go2sh
 ros2 topic echo /explore/resume

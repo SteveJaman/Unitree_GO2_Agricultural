@@ -151,6 +151,14 @@ do_sync_clock() {
     echo "[clock] OK. The robot keeps this until it reboots; NTP/chrony on the robot makes it permanent."
 }
 
+# Nodes we start with `docker exec` must use the same DDS setup as the
+# go2-session stack (Cyclone + its generated config). A bare root exec gets
+# the image's default RMW and no CYCLONEDDS_URI, so it cannot see Nav2/RViz
+# (in --sim the stack is loopback-only) and the explorer never receives
+# /explore/resume (nor the stop on exit).
+DDS_EXEC_ENV=(-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+              -e CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml)
+
 kill_explore_inside_container() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
         pids=$(ps -eo pid,cmd | grep -E "frontier_explorer|explore_lite|ros2 run explore" \
@@ -183,7 +191,7 @@ kill_camera_relay_inside_container() {
 }
 
 stop_exploration() {
-    docker exec -u root "${CONTAINER_NAME}" bash -c '
+    docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c '
         source /opt/ros/humble/setup.bash
         source /ws/install/setup.bash 2>/dev/null
         timeout 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
@@ -827,7 +835,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
             ' 2>/dev/null || true
             docker cp "${FLOOR_FILTER_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_floor_filter.py" 2>/dev/null || true
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_floor_filter.py --ros-args -p input_topic:=/lidar3d/registered -p output_topic:=/lidar3d/obstacle_points -p floor_margin:=0.20 > /tmp/floor_filter.log 2>&1 &" 2>/dev/null || true
         fi
 
@@ -837,7 +845,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             echo "[camera] Copying go2_camera_relay.py into container..."
             docker cp "${CAMERA_RELAY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_camera_relay.py" 2>/dev/null || true
             echo "[camera] Starting camera relay..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_topic:=/frontvideostream -p output_topic:=/camera/image_raw -p frame_id:=camera_link -p resolution:=720p > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
@@ -855,7 +863,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             docker cp "${EXPLORER_PARAMS}" "${CONTAINER_NAME}:/tmp/frontier_explorer.yaml" 2>/dev/null || true
             [ -n "${EXPLORE_OVERRIDES}" ] && echo "[explore] overrides:${EXPLORE_OVERRIDES}"
             echo "[explore] Starting custom frontier explorer..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && \
                  source /ws/install/setup.bash 2>/dev/null; \
                  exec python3 /tmp/frontier_explorer.py \
