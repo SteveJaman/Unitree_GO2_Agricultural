@@ -23,6 +23,9 @@
 #   SIM_ARM=1             create simarm0 + run the D1 emulator (0 = no arm)
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
+#   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the VM)
+#   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halves the sim speed on the VM
+#   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
 #   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
 #   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
@@ -132,7 +135,8 @@ report_rtf() {
     rtf="$(awk -v a="$a" -v b="$b" -v w0="$w0" -v w1="$w1" 'BEGIN{printf "%.2f", (b-a)/(w1-w0)}')"
     if awk -v r="$rtf" 'BEGIN{exit !(r < 0.8)}'; then
         echo "[sim] WARN: sim runs at ${rtf}x real time; the robot will crawl and goals time out."
-        echo "[sim]       Keep SIM_GUI=0, close other heavy apps, or give the VM more CPU cores."
+        echo "[sim]       Try SIM_CAMERA=0 (wifi_nav --no-camera does this), keep SIM_GUI=0 and"
+        echo "[sim]       SIM_LIDAR_HZ=5, close other heavy apps, or give the VM more CPU cores."
     else
         echo "[sim] real-time factor ${rtf}"
     fi
@@ -169,7 +173,7 @@ cmd_up() {
         -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}" \
         -e SIM_GUI="$gui" -e SIM_ARM="$SIM_ARM" -e SIM_ARM_IFACE="$SIM_ARM_IFACE" \
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
-        -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
+        -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
         -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
         -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \

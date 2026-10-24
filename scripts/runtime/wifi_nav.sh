@@ -710,6 +710,7 @@ if [ "${SIM}" = "true" ]; then
     docker ps --format '{{.Names}}' | grep -x go2-sim >/dev/null || SIM_STARTED="true"
     if ! GO2_HOST_IP="${GO2_HOST_IP}" GO2_ROBOT_IP="${GO2_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
             SIM_ARM="$( [ "${ARM}" = "true" ] && echo 1 || echo 0 )" SIM_ARM_IFACE="${ARM_IFACE}" \
+            SIM_CAMERA="${SIM_CAMERA:-$( [ "${CAMERA}" = "true" ] && echo 1 || echo 0 )}" \
             bash "${SIM_RUN}" up; then
         echo "ERROR: simulator did not start (see: ./gazebo/run_sim.sh logs)." >&2
         exit 1

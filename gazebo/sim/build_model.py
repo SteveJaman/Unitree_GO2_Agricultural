@@ -17,10 +17,11 @@ What the builder changes:
   * The D1 is attached to the Go2 trunk (--mount), with names prefixed "d1_".
     Its URDF ships effort=0 velocity=0 on every joint, which would make the
     joint controllers apply no force, so real limits are patched in.
-  * A virtual lidar is placed where the stack's measured mount puts the
+  * A virtual lidar (5 Hz by default, --lidar-hz) is placed where the stack's measured mount puts the
     sensor (inverse of sensor_from_base from go2-nav2-wifi
     go2_nav2/config/lidar3d_robot_viz.yaml), level, with a wide vertical FOV.
-  * A camera is placed at Unitree's front_camera mount.
+  * A camera is placed at Unitree's front_camera mount (--camera 0 skips the
+    sensor: software rendering of it costs sim speed).
   * Gazebo plugins: VelocityControl, OdometryPublisher, JointStatePublisher
     and one JointPositionController per D1 joint.
 
@@ -253,7 +254,8 @@ def gz(robot, xml_text):
     robot.append(ET.fromstring(xml_text))
 
 
-def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE):
+def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE,
+          camera=True, lidar_hz=5.0):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
     robot = ET.parse(go2_urdf).getroot()
     robot.set("name", MODEL_NAME)
@@ -288,13 +290,14 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
 
     gz(robot, f"""<gazebo reference="sim_lidar"><sensor name="lidar3d" type="gpu_lidar">
   <topic>/sim/lidar</topic><gz_frame_id>sim_lidar</gz_frame_id>
-  <update_rate>10</update_rate><always_on>1</always_on><visualize>false</visualize>
+  <update_rate>{lidar_hz:g}</update_rate><always_on>1</always_on><visualize>false</visualize>
   <lidar><scan>
     <horizontal><samples>180</samples><resolution>1</resolution><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal>
     <vertical><samples>16</samples><resolution>1</resolution><min_angle>-0.4363</min_angle><max_angle>0.6981</max_angle></vertical>
   </scan><range><min>0.15</min><max>25.0</max><resolution>0.01</resolution></range></lidar>
 </sensor></gazebo>""")
-    gz(robot, """<gazebo reference="sim_camera"><sensor name="front_camera" type="camera">
+    if camera:
+        gz(robot, """<gazebo reference="sim_camera"><sensor name="front_camera" type="camera">
   <topic>/camera/image_raw</topic><gz_frame_id>camera_link</gz_frame_id>
   <update_rate>10</update_rate><always_on>1</always_on>
   <camera><horizontal_fov>1.2</horizontal_fov><image><width>640</width><height>360</height><format>R8G8B8</format></image>
@@ -365,6 +368,12 @@ def main():
     ap.add_argument("--mount", default=os.environ.get("SIM_D1_MOUNT", "0.0 0 0.057 0 0 0"),
                     help="D1 base pose on the Go2 trunk: 'x y z roll pitch yaw' (m, rad). "
                          "Default: centre of the trunk top")
+    ap.add_argument("--lidar-hz", type=float, default=float(os.environ.get("SIM_LIDAR_HZ", "5") or 5),
+                    help="lidar rate (default env SIM_LIDAR_HZ or 5). Software rendering of each "
+                         "scan stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43x real "
+                         "time, 5 Hz at 0.85x. Nav2's costmap expects a scan every 0.8 s")
+    ap.add_argument("--camera", choices=("0", "1"), default=os.environ.get("SIM_CAMERA", "1") or "1",
+                    help="1 = render the front camera; 0 saves CPU (default env SIM_CAMERA)")
     ap.add_argument("--sensor-from-base", default=os.environ.get("SIM_SENSOR_FROM_BASE", ""),
                     help="lidar mount 'x y z qx qy qz qw' from the laptop's lidar3d_robot_viz.yaml "
                          "(default: built-in 2026-09-09 calibration)")
@@ -379,7 +388,8 @@ def main():
     for p in (a.go2, a.d1):
         if not os.path.isdir(p):
             sys.exit(f"missing model directory: {p} (run gazebo/setup_gazebo.sh)")
-    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base)
+    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base,
+                         camera=a.camera == "1", lidar_hz=a.lidar_hz)
     print(f"wrote {urdf}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "
           f"D1 joints: {len(params['d1_joints'])}")
