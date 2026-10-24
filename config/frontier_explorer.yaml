@@ -26,6 +26,7 @@ frontier_explorer:
     goal_clearance_m: 0.6
     goal_unknown_clearance_m: 0.3
     turn_clearance_m: 0.6
+    unknown_hole_max_cells: 16           # lidar-ring gaps count as free, not frontiers
 
     # Goal tracking
     goal_xy_tolerance: 0.35

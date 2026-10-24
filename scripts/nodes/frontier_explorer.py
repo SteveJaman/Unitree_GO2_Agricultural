@@ -52,9 +52,9 @@ from action_msgs.srv import CancelGoal
 from tf2_ros import Buffer, TransformListener
 
 try:
-    from scipy.ndimage import distance_transform_edt
+    from scipy.ndimage import distance_transform_edt, label
 except ImportError:  # wall clearance checks are skipped without scipy
-    distance_transform_edt = None
+    distance_transform_edt = label = None
 
 # OccupancyGrid value of a lethal costmap cell (an obstacle seen by the lidar).
 LETHAL = 100
@@ -122,6 +122,12 @@ DEFAULTS = {
     'goal_clearance_m':          0.6,
     'goal_unknown_clearance_m':  0.3,
     'goal_search_radius_m':      1.5,
+    # Unknown pockets of at most this many cells inside scanned space are
+    # gaps between lidar rings, not unexplored space: they are treated as
+    # free for frontiers and clearances. Without this a fresh, speckled map
+    # has hundreds of fake frontiers and no cell far enough from "unknown"
+    # (the sim start had 1 valid goal cell; 2219 after filling). 0 = off.
+    'unknown_hole_max_cells':    16,
     # While driving: if a newly seen wall comes within this of the goal,
     # cancel the Nav2 leg and pick another frontier.
     'goal_unsafe_clearance_m':   0.4,
@@ -169,6 +175,23 @@ def clearance_maps(grid, res):
         else:
             out.append(np.full(grid.shape, np.inf))
     return out[0], out[1]
+
+
+def fill_lidar_gaps(grid, max_cells):
+    """Copy of grid with unknown pockets of <= max_cells cells set to free."""
+    if label is None or max_cells <= 0:
+        return grid
+    lab, n = label(grid == -1)
+    if n == 0:
+        return grid
+    sizes = np.bincount(lab.ravel())
+    small = sizes <= max_cells
+    small[0] = False
+    if not small.any():
+        return grid
+    out = grid.copy()
+    out[small[lab]] = 0
+    return out
 
 
 def snap_goal(grid, clear_wall, clear_unknown, ox, oy, res, x, y,
@@ -264,6 +287,7 @@ class FrontierExplorer(Node):
         self.goal_clearance = float(p('goal_clearance_m'))
         self.goal_unknown_clearance = float(p('goal_unknown_clearance_m'))
         self.goal_search_radius = float(p('goal_search_radius_m'))
+        self.unknown_hole_max_cells = int(p('unknown_hole_max_cells'))
         self.goal_unsafe_clearance = float(p('goal_unsafe_clearance_m'))
         self.turn_clearance = float(p('turn_clearance_m'))
         self.turn_threshold = float(p('turn_threshold_rad'))
@@ -373,6 +397,7 @@ class FrontierExplorer(Node):
             f'unstick={self.unstick_enable} '
             f'goal_clearance={self.goal_clearance} '
             f'clearance_checks={distance_transform_edt is not None} '
+            f'gap_fill={self.unknown_hole_max_cells} '
             f'blind={self.blind_enable} coverage={self.coverage_enable} '
             f'return_to_init={self.return_to_init} '
             f'spin_on_goal={self.spin_on_goal}')
@@ -643,6 +668,7 @@ class FrontierExplorer(Node):
         grid = self.to_numpy(self.map)
         if grid is None:
             return
+        grid = fill_lidar_gaps(grid, self.unknown_hole_max_cells)
 
         known_cells = int(np.count_nonzero(grid != -1))
 
