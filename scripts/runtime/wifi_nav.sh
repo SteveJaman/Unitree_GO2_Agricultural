@@ -42,15 +42,16 @@ SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
 SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
 # --- Explore runtime overrides --------------------------------------------
-EXPLORE_MAP_FRAME="${EXPLORE_MAP_FRAME:-lidar3d_map}"
-EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
-EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
-EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
-EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
-EXPLORE_MIN_GOAL_DIST="${EXPLORE_MIN_GOAL_DIST:-0.8}"
-EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
-EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
-EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
+# Explorer parameters live in config/frontier_explorer.yaml (shared by the
+# robot and --sim). EXPLORE_<NAME>=value in the environment overrides one
+# parameter for this run, e.g. EXPLORE_MIN_GOAL_DIST=1.0.
+EXPLORER_PARAMS="${EXPLORER_PARAMS:-$( cd "${SCRIPT_DIR}/../../config" &> /dev/null && pwd )/frontier_explorer.yaml}"
+EXPLORE_OVERRIDES=""
+while IFS='=' read -r _name _value; do
+    _param="$(echo "${_name#EXPLORE_}" | tr '[:upper:]' '[:lower:]')"
+    [[ "${_value}" =~ ^[A-Za-z0-9_./:+-]+$ ]] || { echo "ERROR: ${_name} has an unsupported value" >&2; exit 2; }
+    EXPLORE_OVERRIDES+=" -p ${_param}:=${_value}"
+done < <(env | grep -E '^EXPLORE_[A-Z0-9_]+=' | grep -vE '^EXPLORE_HOST_PID=' || true)
 
 # --- Parse args ------------------------------------------------------------
 MODE="--nav"
@@ -82,6 +83,7 @@ while [ $# -gt 0 ]; do
         --clean)        ACTION="clean" ;;
         --check)        ACTION="check" ;;
         --setup-ssh)    ACTION="setup-ssh" ;;
+        --sync-clock)   ACTION="sync-clock" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
         --sim)          SIM="true" ;;
@@ -99,6 +101,54 @@ done
 # ===========================================================================
 robot_ssh() {
     ssh "${GO2_SSH_OPTS[@]}" "$@"
+}
+
+# --- Robot/laptop clock offset ---------------------------------------------
+# Point-LIO stamps TF with the Jetson clock; Nav2 runs on the laptop clock.
+# With skew, the rotation controller looks up a stale robot orientation and
+# over-turns, then crawls/shudders (go2-nav2-wifi
+# docs/NAVIGATION-INCIDENT-2026-09-12.md: 5 s skew). Without internet the
+# Jetson has no time source (it has shown 1970). Four-timestamp estimate,
+# best of 5 by round trip: offset = robot - laptop midpoint, in seconds.
+CLOCK_MAX_SKEW="${CLOCK_MAX_SKEW:-0.1}"
+ROBOT_CLOCK_OFFSET=""
+ROBOT_CLOCK_RTT=""
+measure_robot_clock_offset() {
+    local best_rtt="" best_off="" t0 r t1 rtt off
+    for _ in 1 2 3 4 5; do
+        t0="$(date +%s.%N)"
+        r="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
+        t1="$(date +%s.%N)"
+        [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+        read -r rtt off < <(awk -v a="$t0" -v b="$r" -v c="$t1" 'BEGIN {printf "%.6f %.6f\n", c - a, b - (a + c) / 2}')
+        if [ -z "${best_rtt}" ] || awk -v x="$rtt" -v y="$best_rtt" 'BEGIN {exit !(x < y)}'; then
+            best_rtt="$rtt"; best_off="$off"
+        fi
+    done
+    ROBOT_CLOCK_OFFSET="${best_off}"
+    # Uncertainty is half the round trip (SSH connection setup dominates it).
+    ROBOT_CLOCK_RTT="${best_rtt}"
+}
+
+clock_skew_too_large() {
+    awk -v o="${ROBOT_CLOCK_OFFSET}" -v m="${CLOCK_MAX_SKEW}" 'BEGIN {if (o < 0) o = -o; exit !(o > m)}'
+}
+
+# Set the Jetson clock from this laptop (asks for the robot's sudo password).
+# The robot computes "now - offset" itself after sudo authenticates, so the
+# time spent typing the password does not add error.
+do_sync_clock() {
+    measure_robot_clock_offset || { echo "[clock] ERROR: cannot read the robot clock over SSH." >&2; return 1; }
+    echo "[clock] robot - laptop = ${ROBOT_CLOCK_OFFSET} s; setting the robot clock (enter the robot sudo password)"
+    robot_ssh -t "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "sudo sh -c 'date -s \"@\$(python3 -c \"import time; print(f\\\"{time.time() - (${ROBOT_CLOCK_OFFSET}):.6f}\\\")\")\" >/dev/null'" || return 1
+    measure_robot_clock_offset || return 1
+    echo "[clock] now robot - laptop = ${ROBOT_CLOCK_OFFSET} s (±$(awk -v r="${ROBOT_CLOCK_RTT}" 'BEGIN {printf "%.3f", r / 2}') s)"
+    if clock_skew_too_large; then
+        echo "[clock] ERROR: still above ${CLOCK_MAX_SKEW} s." >&2
+        return 1
+    fi
+    echo "[clock] OK. The robot keeps this until it reboots; NTP/chrony on the robot makes it permanent."
 }
 
 kill_explore_inside_container() {
@@ -455,6 +505,12 @@ if [ "${ACTION}" = "setup-ssh" ]; then
     exit $?
 fi
 
+if [ "${ACTION}" = "sync-clock" ]; then
+    [ "${SIM}" = "true" ] && { echo "--sync-clock is for the real robot (not --sim)." >&2; exit 2; }
+    do_sync_clock
+    exit $?
+fi
+
 if [ "${ACTION}" = "clean" ]; then
     echo "================================================================"
     echo " Cleaning stale processes and partial runs"
@@ -526,6 +582,20 @@ elif robot_ssh -T -o ConnectTimeout=3 \
         "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
     go2_save_robot_ip "${GO2_ROBOT_IP}"
+    if measure_robot_clock_offset; then
+        if clock_skew_too_large; then
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
+            echo "         Skew makes Nav2 act on stale robot poses: over-turning, shudder, wall hits."
+            echo "         Fix:  ./wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
+            if [ "${ACTION}" = "run" ] && [ "${GO2_ALLOW_CLOCK_SKEW:-0}" != 1 ]; then
+                exit 1
+            fi
+        else
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... OK"
+        fi
+    else
+        echo "[checks] robot clock offset ......................... UNKNOWN (could not read robot clock)"
+    fi
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
@@ -780,30 +850,17 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
                 sleep 1
             ' 2>/dev/null || true
-            echo "[explore] Copying frontier_explorer.py into container..."
+            echo "[explore] Copying frontier_explorer.py + $(basename "${EXPLORER_PARAMS}") into container..."
             docker cp "${EXPLORER_SCRIPT}" "${CONTAINER_NAME}:/tmp/frontier_explorer.py" 2>/dev/null || true
+            docker cp "${EXPLORER_PARAMS}" "${CONTAINER_NAME}:/tmp/frontier_explorer.yaml" 2>/dev/null || true
+            [ -n "${EXPLORE_OVERRIDES}" ] && echo "[explore] overrides:${EXPLORE_OVERRIDES}"
             echo "[explore] Starting custom frontier explorer..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && \
                  source /ws/install/setup.bash 2>/dev/null; \
                  exec python3 /tmp/frontier_explorer.py \
                      --ros-args \
-                     -p robot_base_frame:=base_link \
-                     -p map_frame:=${EXPLORE_MAP_FRAME} \
-                     -p map_topic:=${EXPLORE_MAP_TOPIC} \
-                     -p goal_topic:=/goal_pose \
-                     -p cmd_vel_topic:=/cmd_vel_nav \
-                     -p stop_topic:=${EXPLORE_STOP_TOPIC} \
-                     -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} \
-                     -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} \
-                     -p min_goal_dist:=${EXPLORE_MIN_GOAL_DIST} \
-                     -p blind_enable:=${EXPLORE_BLIND_ENABLE} \
-                     -p blind_trigger_cells:=100 \
-                     -p blind_step_distance:=0.6 \
-                     -p blind_step_speed:=0.12 \
-                     -p coverage_enable:=${EXPLORE_COVERAGE_ENABLE} \
-                     -p return_to_init:=${EXPLORE_RETURN_TO_INIT} \
-                     -p tick_hz:=1.0" \
+                     --params-file /tmp/frontier_explorer.yaml${EXPLORE_OVERRIDES}" \
                 > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
     ) &
