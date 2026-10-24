@@ -16,7 +16,10 @@
 #
 # Environment:
 #   GO2_HOST_IP=...       DDS bind address (default: auto on enp0s3, else 127.0.0.1)
-#   SIM_GUI=1             Gazebo window (0 = headless)
+#   SIM_GUI=0             1 = Gazebo window. Off by default: on the 4-core VM
+#                         the window ran the sim at ~14% real time, so the
+#                         robot crawled while Nav2/explorer timed out
+#                         (they run on wall-clock time). RViz shows the same.
 #   SIM_ARM=1             create simarm0 + run the D1 emulator (0 = no arm)
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
@@ -30,7 +33,7 @@ GZ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${GZ_DIR}/.." && pwd)"
 NAME="${SIM_CONTAINER:-go2-sim}"
 IMAGE="${SIM_IMAGE:-go2-sim:local}"
-SIM_GUI="${SIM_GUI:-1}"
+SIM_GUI="${SIM_GUI:-0}"
 SIM_ARM="${SIM_ARM:-1}"
 SIM_ARM_IFACE="${SIM_ARM_IFACE:-simarm0}"
 SIM_ARM_SUBNET="${SIM_ARM_SUBNET:-192.168.123}"
@@ -109,6 +112,32 @@ remove_arm_iface() {
     rm -f "$IFACE_MARKER"
 }
 
+# Sim seconds per wall second, measured over 5 s. The laptop stack runs on
+# wall-clock time, so below ~0.8 the robot moves slower than Nav2 commands
+# and goals time out.
+sim_seconds() {
+    docker exec "$NAME" bash -c 'GZ_PARTITION=go2sim GZ_IP=127.0.0.1 timeout 3 gz topic -e -n 1 -t /stats' 2>/dev/null \
+        | awk '/^sim_time/{f=1} f&&/ sec:/{s=$2} f&&/nsec:/{print s+$2/1e9; exit}'
+}
+
+report_rtf() {
+    local a b w0 w1 rtf
+    a="$(sim_seconds)"; w0="$(date +%s.%N)"
+    sleep 5
+    b="$(sim_seconds)"; w1="$(date +%s.%N)"
+    if [ -z "$a" ] || [ -z "$b" ]; then
+        echo "[sim] (could not measure the real-time factor)"
+        return 0
+    fi
+    rtf="$(awk -v a="$a" -v b="$b" -v w0="$w0" -v w1="$w1" 'BEGIN{printf "%.2f", (b-a)/(w1-w0)}')"
+    if awk -v r="$rtf" 'BEGIN{exit !(r < 0.8)}'; then
+        echo "[sim] WARN: sim runs at ${rtf}x real time; the robot will crawl and goals time out."
+        echo "[sim]       Keep SIM_GUI=0, close other heavy apps, or give the VM more CPU cores."
+    else
+        echo "[sim] real-time factor ${rtf}"
+    fi
+}
+
 cmd_up() {
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image ${IMAGE} missing: run ./gazebo/setup_gazebo.sh"
     [ -d "$GZ_DIR/models/go2_description" ] && [ -d "$GZ_DIR/models/d1_description" ] \
@@ -165,6 +194,7 @@ cmd_up() {
                     echo "[sim] WARN: D1 emulator not ready yet; see ./gazebo/run_sim.sh logs"
                 fi
             fi
+            report_rtf
             return 0
         fi
         sleep 2; t=$((t + 2))

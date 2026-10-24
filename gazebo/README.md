@@ -93,7 +93,7 @@ the VM, so the VM needs `pip3 install cyclonedds`.
 
 | Variable | Default | |
 |---|---|---|
-| `SIM_GUI` | `1` | Gazebo window (`0` = headless) |
+| `SIM_GUI` | `0` | `1` opens the Gazebo window. On the 4-core VM the window slowed the sim to ~14 % of real time, so the robot crawled and goals timed out. `up` prints the real-time factor and warns below 0.8 |
 | `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black on the VM |
 | `SIM_ARM` | `1` | Create `simarm0` and run the D1 emulator |
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
@@ -129,6 +129,7 @@ These are deliberate. They're listed so test results aren't over-read:
 |---|---|
 | `image go2-sim:local missing` | `./gazebo/setup_gazebo.sh` |
 | `no lidar frame after 240 s` | Software rendering is slow: `SIM_TIMEOUT=600`, or `SIM_GUI=0`, or `SIM_RENDER_ENGINE=ogre` |
+| Robot crawls, explorer goals time out, Nav2 commands 0.3 m/s | Sim below real time (see the real-time factor from `up`). Nav2 runs on wall-clock time. Use `SIM_GUI=0` and close heavy apps |
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
 | `enp0s8 already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
