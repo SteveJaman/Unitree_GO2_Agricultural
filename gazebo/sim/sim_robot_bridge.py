@@ -103,6 +103,35 @@ def drift_step(est, prev_true, true, k_yaw, k_scale):
             quat_mul(quat_yaw(nyaw), tilt))
 
 
+def upright_cmd(true, vx, vy, vyaw, k_att, max_att=1.5):
+    """Body-frame (linear, angular) velocity for gz VelocityControl that drives
+    (vx, vy, vyaw) like the real Go2 and also turns the gliding base back to
+    level.
+
+    VelocityControl overrides the body's angular velocity every step and
+    nothing corrects its orientation: the fixed legs drag on the ground, and
+    one knock (a leg or the arm catching, a turn) left the base tilted for the
+    rest of the run (seen at roll -84, pitch 51 deg), shown as a slanted,
+    floating dog in RViz. true is the ground-truth (p, q) in the sim world.
+    VelocityControl ignores linear z (gravity keeps the feet down), so planar
+    motion is sent along the level heading.
+    """
+    _, q = true
+    if q[3] < 0:
+        q = tuple(-c for c in q)
+    yaw = yaw_of(q)
+    ex, ey, ez, ew = quat_mul(quat_yaw(yaw), quat_conj(q))   # current -> level, world frame
+    if ew < 0:
+        ex, ey, ez, ew = -ex, -ey, -ez, -ew
+    n = math.sqrt(ex * ex + ey * ey + ez * ez)
+    rate = min(k_att * 2 * math.atan2(n, ew), max_att) / n if n > 1e-9 else 0.0
+    w_world = (ex * rate, ey * rate, ez * rate + vyaw)
+    c, s_ = math.cos(yaw), math.sin(yaw)
+    v_world = (c * vx - s_ * vy, s_ * vx + c * vy, 0.0)
+    qi = quat_conj(q)
+    return quat_rotate(qi, v_world), quat_rotate(qi, w_world)
+
+
 def rot_matrix(q):
     x, y, z, w = q
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
@@ -328,7 +357,12 @@ def run_node(params, args):
         def publish_cmd(self):
             vx, vy, vyaw = self.tcp.current()
             t = Twist()
-            t.linear.x, t.linear.y, t.angular.z = float(vx), float(vy), float(vyaw)
+            if args.upright_gain > 0 and self.true_base is not None:
+                lin, ang = upright_cmd(self.true_base, vx, vy, vyaw, args.upright_gain)
+                t.linear.x, t.linear.y, t.linear.z = (float(v) for v in lin)
+                t.angular.x, t.angular.y, t.angular.z = (float(v) for v in ang)
+            else:
+                t.linear.x, t.linear.y, t.angular.z = float(vx), float(vy), float(vyaw)
             self.cmd_pub.publish(t)
 
         def publish_joints(self):
@@ -368,6 +402,8 @@ def main():
     ap.add_argument("--cmd-timeout", type=float, default=0.5)
     ap.add_argument("--max-linear", type=float, default=1.2)
     ap.add_argument("--max-angular", type=float, default=1.5)
+    ap.add_argument("--upright-gain", type=float, default=2.0,
+                    help="1/s gain turning the gliding base back to level; 0 = off")
     ap.add_argument("--drift-yaw", type=float, default=float(os.environ.get("SIM_DRIFT_YAW", "0") or 0),
                     help="heading error added per radian turned (e.g. 0.02); 0 = ground truth")
     ap.add_argument("--drift-scale", type=float, default=float(os.environ.get("SIM_DRIFT_SCALE", "0") or 0),
