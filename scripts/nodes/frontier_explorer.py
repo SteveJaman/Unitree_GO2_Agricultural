@@ -74,6 +74,12 @@ DEFAULTS = {
     'stop_topic':       '/cmd_vel',
 
     # Frontier detection
+    # Cells up to this cost count as free space on a frontier edge. 0 alone
+    # missed doorways: inflation from the door frame leaves only a 1-2 cell
+    # strip at cost 0, under min_frontier_size, so the rooms behind looked
+    # explored. 98 = anything below inscribed (99), where the robot centre
+    # may stand. Goals are still snapped to cost-0 cells clear of walls.
+    'frontier_max_cost':     98,
     'min_frontier_size':     4,
     # Ignore frontiers closer than this. Must exceed goal_xy_tolerance, or a
     # goal counts as reached the moment it is sent and the robot never moves.
@@ -87,10 +93,19 @@ DEFAULTS = {
     # is skipped. Keyed in world coordinates because the rolling costmap
     # origin moves, so pixel keys do not survive between ticks.
     'frontier_blacklist_radius_m': 0.5,
+    # After this many abandoned goals at the same frontier it is skipped for
+    # good. Until then a blacklisted frontier still counts as unexplored, so
+    # exploration is not declared complete while one is only waiting out
+    # frontier_blacklist_s (rooms were left unvisited that way).
+    'frontier_max_attempts': 3,
 
     # Goal tracking
     'goal_xy_tolerance':     0.35,
     'goal_timeout_s':        60.0,
+    # Added per metre of straight-line distance to the goal: a fixed 60 s
+    # abandoned a 9.7 m goal that needs 30 s+ at 0.3 m/s plus turns.
+    # progress_timeout_s still catches a robot that stops moving.
+    'goal_timeout_per_m':    4.0,
     'progress_timeout_s':    20.0,
     'progress_min_m':        0.15,
     # Nav2 actions that go2_goal_pose_nav drives. Their status topics tell
@@ -246,6 +261,7 @@ class FrontierExplorer(Node):
         self.stop_topic = p('stop_topic')
 
         self.min_frontier_size = int(p('min_frontier_size'))
+        self.frontier_max_cost = int(p('frontier_max_cost'))
         self.min_goal_dist = float(p('min_goal_dist'))
         self.min_known_cells = int(p('min_known_cells'))
         self.blacklist_s = float(p('frontier_blacklist_s'))
@@ -253,6 +269,8 @@ class FrontierExplorer(Node):
 
         self.goal_xy_tol = float(p('goal_xy_tolerance'))
         self.goal_timeout = float(p('goal_timeout_s'))
+        self.goal_timeout_per_m = float(p('goal_timeout_per_m'))
+        self.frontier_max_attempts = int(p('frontier_max_attempts'))
         self.progress_timeout = float(p('progress_timeout_s'))
         self.progress_min_m = float(p('progress_min_m'))
 
@@ -301,6 +319,9 @@ class FrontierExplorer(Node):
         self.origin_xy: Optional[Tuple[float, float]] = None
         # (x, y, expiry) in map_frame world coordinates
         self.blacklist: List[Tuple[float, float, float]] = []
+        self.attempts: List[List[float]] = []    # [x, y, abandoned count]
+        self.frontiers_waiting = 0               # skipped for a temporary blacklist
+        self.active_goal_timeout = 0.0
         self.empty_frontier_ticks = 0
         self.goals_sent = 0
         self.goals_succeeded = 0
@@ -733,6 +754,13 @@ class FrontierExplorer(Node):
                     return
 
         # PHASE 4: Nothing left to do
+        if self.frontiers_waiting:
+            self.empty_frontier_ticks = 0
+            self.get_logger().info(
+                f'{self.frontiers_waiting} frontier(s) blacklisted for now; '
+                f'waiting to retry before finishing',
+                throttle_duration_sec=10.0)
+            return
         if self.empty_frontier_ticks >= 5:
             self.get_logger().info('Exploration complete')
             self.state = 'RETURNING' if self.return_to_init else 'DONE'
@@ -827,6 +855,7 @@ class FrontierExplorer(Node):
         # goal checker's yaw tolerance is ever tightened.
         pose = self.get_robot_pose()
         yaw = math.atan2(y - pose[1], x - pose[0]) if pose is not None else 0.0
+        dist = math.hypot(x - pose[0], y - pose[1]) if pose is not None else 0.0
         msg.pose.orientation.z = math.sin(yaw / 2.0)
         msg.pose.orientation.w = math.cos(yaw / 2.0)
 
@@ -837,10 +866,13 @@ class FrontierExplorer(Node):
         self.active_goal_xy = (x, y)
         self.active_goal_tag = tag
         self.active_goal_start = time.time()
+        self.active_goal_timeout = self.goal_timeout + self.goal_timeout_per_m * dist
         self.active_goal_last_progress_xy = None
         self.active_goal_last_progress_time = time.time()
 
-        self.get_logger().info(f'Goal sent: ({x:.2f}, {y:.2f})')
+        self.get_logger().info(
+            f'Goal sent: ({x:.2f}, {y:.2f}) {dist:.1f} m, '
+            f'timeout {self.active_goal_timeout:.0f}s')
 
     def tick_active_goal(self):
         pose = self.get_robot_pose()
@@ -880,7 +912,7 @@ class FrontierExplorer(Node):
             self.abandon_goal('no progress')
             return
 
-        if now - self.active_goal_start > self.goal_timeout:
+        if now - self.active_goal_start > self.active_goal_timeout:
             self.abandon_goal('goal timeout')
             return
 
@@ -923,17 +955,36 @@ class FrontierExplorer(Node):
                 cli.call_async(CancelGoal.Request())
 
     def blacklist_tag(self):
-        """Blacklist the active frontier goal (tag is its world x, y)."""
-        if self.active_goal_tag is not None:
-            bx, by = self.active_goal_tag
+        """Blacklist the active frontier goal (tag is its world x, y):
+        for frontier_blacklist_s, or for good after frontier_max_attempts
+        abandoned goals there."""
+        if self.active_goal_tag is None:
+            return
+        bx, by = self.active_goal_tag
+        r2 = self.blacklist_radius ** 2
+        entry = next((a for a in self.attempts
+                      if (a[0] - bx) ** 2 + (a[1] - by) ** 2 < r2), None)
+        if entry is None:
+            entry = [bx, by, 0]
+            self.attempts.append(entry)
+        entry[2] += 1
+        if entry[2] >= self.frontier_max_attempts:
+            self.blacklist.append((bx, by, math.inf))
+            self.get_logger().info(
+                f'Blacklisted ({bx:.2f}, {by:.2f}) for good '
+                f'({entry[2]} abandoned goals)')
+        else:
             self.blacklist.append((bx, by, time.time() + self.blacklist_s))
             self.get_logger().info(
-                f'Blacklisted ({bx:.2f}, {by:.2f}) for {self.blacklist_s:.0f}s')
+                f'Blacklisted ({bx:.2f}, {by:.2f}) for {self.blacklist_s:.0f}s '
+                f'(attempt {entry[2]}/{self.frontier_max_attempts})')
 
-    def is_blacklisted(self, x, y):
+    def blacklist_expiry(self, x, y):
+        """Latest expiry of a blacklist entry covering (x, y), or None."""
         r2 = self.blacklist_radius ** 2
-        return any((x - bx) ** 2 + (y - by) ** 2 < r2
-                   for bx, by, _ in self.blacklist)
+        hits = [t for bx, by, t in self.blacklist
+                if (x - bx) ** 2 + (y - by) ** 2 < r2]
+        return max(hits) if hits else None
 
     def clear_active_goal(self):
         self.active_goal_xy = None
@@ -1066,7 +1117,7 @@ class FrontierExplorer(Node):
         return np.array(occ.data, dtype=np.int8).reshape(h, w)
 
     def detect_frontiers(self, grid, robot_xy):
-        free = (grid == 0)
+        free = (grid >= 0) & (grid <= self.frontier_max_cost)
         unknown = (grid == -1)
 
         # Use np.pad instead of np.roll to avoid wrap-around.
@@ -1081,6 +1132,7 @@ class FrontierExplorer(Node):
         now = time.time()
         self.blacklist = [b for b in self.blacklist if b[2] > now]
 
+        self.frontiers_waiting = 0
         ys, xs = np.where(frontier_mask)
         if len(xs) == 0:
             return []
@@ -1115,7 +1167,10 @@ class FrontierExplorer(Node):
             cxw = px.mean() * res + ox + res / 2
             cyw = py.mean() * res + oy + res / 2
 
-            if self.is_blacklisted(cxw, cyw):
+            expiry = self.blacklist_expiry(cxw, cyw)
+            if expiry is not None:
+                if expiry != math.inf:
+                    self.frontiers_waiting += 1
                 continue
 
             dist = math.hypot(cxw - robot_xy[0], cyw - robot_xy[1])

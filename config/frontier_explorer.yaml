@@ -16,11 +16,13 @@ frontier_explorer:
     stop_topic: /cmd_vel                 # e-stop bypasses the smoother
 
     # Frontier selection
+    frontier_max_cost: 98                # free on a frontier edge: below inscribed (doorways)
     min_frontier_size: 4
     min_known_cells: 200
     min_goal_dist: 0.8                   # > goal_xy_tolerance; skips the lidar blind ring
     frontier_blacklist_s: 30.0
     frontier_blacklist_radius_m: 0.5
+    frontier_max_attempts: 3             # then skipped for good; until then it blocks "complete"
 
     # Keep goals and turns away from walls (distances to lethal cells)
     goal_clearance_m: 0.6
@@ -31,6 +33,7 @@ frontier_explorer:
     # Goal tracking
     goal_xy_tolerance: 0.35
     goal_timeout_s: 60.0
+    goal_timeout_per_m: 4.0              # + this per metre to the goal
     progress_timeout_s: 20.0
 
     # Optional behaviours (off until verified on the robot)
