@@ -1,7 +1,8 @@
 # Gazebo simulation: Go2 + D1
 
 A Gazebo Harmonic simulation of the Unitree Go2 with the D1 arm on its back, in a
-small field with raised beds and plants. The simulator stands in for the real
+small field with raised beds and plants, plus a building with rooms for
+exploration tests. The simulator stands in for the real
 robot: the **unchanged** project scripts (`wifi_nav.sh`, `start_arm.sh`,
 `d1_arm_control.py`, `d1_arm_calibration.py`, the explorer, `diag_arm.sh` …)
 run against it.
@@ -97,6 +98,9 @@ the VM, so the VM needs `pip3 install cyclonedds`.
 | `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black on the VM |
 | `SIM_ARM` | `1` | Create `simarm0` and run the D1 emulator |
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
+| `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
+| `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
+| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
@@ -150,3 +154,35 @@ These are deliberate. They're listed so test results aren't over-read:
 | `sim/d1_arm_emulator.py` | The "D1 controller": JSON-over-DDS protocol → Gazebo joints |
 | `sim/bridge.yaml` | `ros_gz_bridge` topic map |
 | `worlds/agri_field.sdf` | 12 × 8 m field, three planted beds, walls, crates |
+| `worlds/agri_rooms.sdf` | Generated: the field + a 12 × 7 m building through a doorway in the field's north wall. A 2 m corridor, three 4 × 5 m rooms with 1.2 m doors (room 2 ↔ 3 too), crates, a workbench, an alcove. 1.2 m walls hide each room until the robot looks in |
+| `worlds/build_rooms_world.py` | Writes `agri_rooms.sdf` from `agri_field.sdf`. Edit the layout there and rerun |
+
+## Exploration world
+
+The open field is mapped from the spawn point in one scan, so the frontier
+explorer reports "Exploration complete" after two or three goals. The default
+`agri_rooms` world adds space that is only visible from inside: a corridor
+and three rooms behind 1.2 m walls, entered through a doorway in the field's
+north wall (x = -4). The whole site is 12 × 15 m, so it stays inside Nav2's
+30 × 30 m rolling global costmap wherever the robot is, and mapped space is
+not forgotten and explored again.
+
+```bash
+./scripts/runtime/wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera
+# RViz: Auto Explore: START
+SIM_WORLD=agri_field ./scripts/runtime/wifi_nav.sh --sim ...   # field only
+```
+
+First run (2026-10-24, `--no-camera`, 5 Hz lidar): the robot went through the
+doorway, into the corridor and all three rooms in about 2 minutes (27.5 m).
+Of 6 goals, 5 were reached and 1 was aborted by Nav2 at the room 3 door. Then
+it reported "Exploration complete" with every area mapped (room 2 at 98 %,
+the rest of the workbench's shadow).
+
+The sim needs a desktop session even without the Gazebo window. The server
+renders the lidar through `$DISPLAY`. `--headless-rendering` (EGL, used only
+when there is no display) returns empty lidar scans on the VM's software GL,
+so Nav2 gets no map.
+
+`run_sim.sh up` does nothing if the sim is already running. Run
+`./gazebo/run_sim.sh down` first when you switch worlds.
