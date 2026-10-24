@@ -56,8 +56,11 @@ launches, pointed at this machine instead of the robot.
 - The D1 is mounted on the trunk top (`SIM_D1_MOUNT`, default `0 0 0.057 0 0 0`).
 - **The D1 URDF ships `effort=0 velocity=0` on every joint** (the controllers would
   apply no force); real limits are patched in.
-- A virtual lidar is placed where the stack's measured mount puts the sensor
-  (0.291, 0.014, −0.005 m), so the laptop's `go2_odom_tf` recovers the exact body pose.
+- A virtual lidar is placed using the **same lidar mount the laptop uses**
+  (`sensor_from_base` in go2-nav2-wifi `go2_nav2/config/lidar3d_robot_viz.yaml`,
+  read by `run_sim.sh` and passed in `SIM_SENSOR_FROM_BASE`), so the laptop's
+  `go2_odom_tf` recovers the exact body pose. If the two differ, RViz shows the
+  dog shifted, tilted or floating, and Nav2 plans from that wrong pose.
 
 ## Commands
 
@@ -97,14 +100,21 @@ the VM, so the VM needs `pip3 install cyclonedds`.
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
-| `GO2_HOST_IP` | auto (`enp0s3`, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
+| `GO2_HOST_IP` | auto (`enp0s3`, else the default-route interface, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
+| `SIM_SENSOR_FROM_BASE` | read from go2-nav2-wifi `lidar3d_robot_viz.yaml` | Lidar mount `x y z qx qy qz qw`; must match the laptop |
+| `SIM_DRIFT_YAW` | `0` | Heading error added per radian turned (e.g. `0.02`). Tests drift tolerance |
+| `SIM_DRIFT_SCALE` | `0` | Distance scale error (e.g. `0.03` = 3 % long) |
 
 ## Simulation differences
 
 These are deliberate. They're listed so test results aren't over-read:
 
 - **No gait.** Body sway, foot slip, stairs, and gait-induced lidar motion aren't simulated.
-- **Perfect localization.** `/lidar3d/odom` is ground truth. Point-LIO drift and initialization aren't tested.
+- **Perfect localization by default.** `/lidar3d/odom` is ground truth. Point-LIO
+  startup jumps aren't simulated. To test how the explorer and Nav2 cope with
+  drift, set `SIM_DRIFT_YAW` / `SIM_DRIFT_SCALE`: the reported pose then
+  diverges from the truth and the lidar cloud is placed with the drifted pose,
+  so walls smear and double as they do with real drift.
 - **Lidar.** It's a level 360°×65° scanner (180×16 rays at 10 Hz), not the L1's hemispherical pattern.
 - **D1 motion.**
   - Motion is rate-limited to 60°/s, or paced by `delay_ms`. The real controller's own profile is unknown.

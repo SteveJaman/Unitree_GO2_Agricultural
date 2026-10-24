@@ -21,6 +21,8 @@
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
+#   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
+#   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -46,6 +48,29 @@ resolve_host_ip() {
     else
         GO2_HOST_IP=127.0.0.1
         echo "[sim] no Wi-Fi address; using ${GO2_HOST_IP} (sim only needs this machine)"
+    fi
+}
+
+# The laptop's go2_odom_tf turns /lidar3d/odom into base_link with
+# sensor_from_base from go2-nav2-wifi's lidar3d_robot_viz.yaml (bind-mounted
+# into go2-lidar3d). The sim must place its virtual sensor with the same
+# transform, or RViz/Nav2 see a shifted, tilted robot. Read it from that file.
+resolve_sensor_from_base() {
+    if [ -n "${SIM_SENSOR_FROM_BASE:-}" ]; then
+        echo "[sim] lidar mount from SIM_SENSOR_FROM_BASE"
+        return 0
+    fi
+    local yaml="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}/go2_nav2/config/lidar3d_robot_viz.yaml"
+    if [ -f "$yaml" ]; then
+        # First uncommented "sensor_from_base: [..]" line.
+        SIM_SENSOR_FROM_BASE="$(sed -n 's/^[[:space:]]*sensor_from_base:[[:space:]]*\[\(.*\)\].*/\1/p' "$yaml" \
+            | head -1 | tr ',' ' ' | tr -s ' ')"
+    fi
+    if [ -n "${SIM_SENSOR_FROM_BASE:-}" ]; then
+        echo "[sim] lidar mount from ${yaml}: ${SIM_SENSOR_FROM_BASE}"
+    else
+        echo "[sim] WARN: ${yaml} not found; using build_model.py's built-in lidar mount." >&2
+        echo "[sim]       If the laptop uses a different mount, the robot pose in RViz will be wrong." >&2
     fi
 }
 
@@ -94,6 +119,7 @@ cmd_up() {
     fi
     sim_exists && docker rm -f "$NAME" >/dev/null
     resolve_host_ip
+    resolve_sensor_from_base
     setup_arm_iface
 
     local gui="$SIM_GUI"
@@ -115,6 +141,8 @@ cmd_up() {
         -e SIM_GUI="$gui" -e SIM_ARM="$SIM_ARM" -e SIM_ARM_IFACE="$SIM_ARM_IFACE" \
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
         -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
+        -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
+        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -v "$GZ_DIR:/sim:ro" \

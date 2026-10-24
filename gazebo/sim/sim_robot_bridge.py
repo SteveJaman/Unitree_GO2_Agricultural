@@ -25,6 +25,7 @@ The maths and the TCP server have no ROS dependency (tested off-robot).
 import argparse
 import json
 import math
+import os
 import socket
 import struct
 import sys
@@ -71,6 +72,35 @@ def inverse(t):
     qi = quat_conj(q)
     r = quat_rotate(qi, p)
     return (-r[0], -r[1], -r[2]), qi
+
+
+def yaw_of(q):
+    x, y, z, w = q
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def quat_yaw(yaw):
+    return (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
+
+
+def drift_step(est, prev_true, true, k_yaw, k_scale):
+    """Advance a drifting pose estimate by one true motion step (planar).
+
+    Point-LIO-like drift for testing: every radian turned adds k_yaw rad of
+    heading error (always the same sign, like an uncorrected gyro bias), and
+    every metre walked is reported as (1 + k_scale) m. est, prev_true and true
+    are (p, q); the result keeps true's height and roll/pitch.
+    """
+    d = compose(inverse(prev_true), true)              # motion in the previous body frame
+    dyaw = yaw_of(d[1])
+    dx, dy = d[0][0] * (1 + k_scale), d[0][1] * (1 + k_scale)
+    eyaw = yaw_of(est[1])
+    c, s_ = math.cos(eyaw), math.sin(eyaw)
+    nyaw = eyaw + dyaw + k_yaw * abs(dyaw)
+    # Re-attach true roll/pitch to the drifted heading.
+    tilt = quat_mul(quat_conj(quat_yaw(yaw_of(true[1]))), true[1])
+    return ((est[0][0] + c * dx - s_ * dy, est[0][1] + s_ * dx + c * dy, true[0][2]),
+            quat_mul(quat_yaw(nyaw), tilt))
 
 
 def rot_matrix(q):
@@ -218,7 +248,13 @@ def run_node(params, args):
             self.cmd_pub = self.create_publisher(Twist, "/sim/cmd_vel", 10)
             self.create_subscription(Odometry, "/sim/odom", self.on_odom, 50)
             self.create_subscription(PointCloud2, "/sim/lidar/points", self.on_points, qos_profile_sensor_data)
-            self.base = None              # (p, q) of base in the sim world
+            self.base = None              # (p, q) of base as reported (drifted if enabled)
+            self.true_base = None         # (p, q) of base in the sim world (ground truth)
+            self.drift = (args.drift_yaw, args.drift_scale)
+            if any(self.drift):
+                self.get_logger().warn(
+                    f"DRIFT ON: {args.drift_yaw:+.3f} rad heading error per rad turned, "
+                    f"{args.drift_scale:+.1%} distance scale (/lidar3d/* are no longer ground truth)")
             self.last_odom_stamp = None   # stamp of the newest *published* /lidar3d/odom
             self.path = Path()
             self.path.header.frame_id = "lidar3d_map"
@@ -238,7 +274,12 @@ def run_node(params, args):
 
         def on_odom(self, msg):
             p, o = msg.pose.pose.position, msg.pose.pose.orientation
-            self.base = ((p.x, p.y, p.z), (o.x, o.y, o.z, o.w))
+            true = ((p.x, p.y, p.z), (o.x, o.y, o.z, o.w))
+            if not any(self.drift) or self.true_base is None:
+                self.base = true
+            else:
+                self.base = drift_step(self.base, self.true_base, true, *self.drift)
+            self.true_base = true
             sp, sq = compose(self.base, t_base_sensor_virtual)
             out = Odometry()
             out.header.stamp = self.get_clock().now().to_msg()
@@ -251,7 +292,7 @@ def run_node(params, args):
             self.odom_pub.publish(out)
             self.last_odom_stamp = out.header.stamp
             self.odom_count += 1
-            xy = (p.x, p.y)
+            xy = (self.base[0][0], self.base[0][1])
             if self.last_path_xy is None or math.dist(xy, self.last_path_xy) > 0.1:
                 ps = PoseStamped()
                 ps.header = out.header
@@ -327,6 +368,10 @@ def main():
     ap.add_argument("--cmd-timeout", type=float, default=0.5)
     ap.add_argument("--max-linear", type=float, default=1.2)
     ap.add_argument("--max-angular", type=float, default=1.5)
+    ap.add_argument("--drift-yaw", type=float, default=float(os.environ.get("SIM_DRIFT_YAW", "0") or 0),
+                    help="heading error added per radian turned (e.g. 0.02); 0 = ground truth")
+    ap.add_argument("--drift-scale", type=float, default=float(os.environ.get("SIM_DRIFT_SCALE", "0") or 0),
+                    help="distance scale error (e.g. 0.03 = 3%% long); 0 = ground truth")
     args = ap.parse_args()
     with open(args.params) as f:
         params = json.load(f)

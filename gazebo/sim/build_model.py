@@ -35,8 +35,12 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-# T_sensor_base measured on the robot (xyz, quaternion xyzw), from
-# go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml (2026-09-09).
+# T_sensor_base (xyz, quaternion xyzw): the lidar mount the laptop's go2_odom_tf
+# uses to turn /lidar3d/odom into base_link. It MUST equal sensor_from_base in
+# go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml, or the laptop recovers
+# a shifted, tilted body pose. run_sim.sh reads that file and passes it in
+# SIM_SENSOR_FROM_BASE; this constant (the 2026-09-09 measured calibration) is
+# only the fallback.
 SENSOR_FROM_BASE = [-0.14056185097700238, 0.24211459251444103, -0.08014714132241024,
                     0.8713242364998213, -0.47301693680109264, 0.11500275477832939,
                     0.06183379966256489]
@@ -249,7 +253,7 @@ def gz(robot, xml_text):
     robot.append(ET.fromstring(xml_text))
 
 
-def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
+def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
     robot = ET.parse(go2_urdf).getroot()
     robot.set("name", MODEL_NAME)
@@ -265,7 +269,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
     spawn_z = -lowest_point(robot, poses) + CLEARANCE_M
 
     # Virtual lidar at the measured sensor position, level, wide vertical FOV.
-    t, q = SENSOR_FROM_BASE[:3], SENSOR_FROM_BASE[3:]
+    t, q = sensor_from_base[:3], sensor_from_base[3:]
     R = rot_quat(*q)
     lidar_xyz = [-sum(R[r][c] * t[r] for r in range(3)) for c in range(3)]
     add_link(robot, "sim_lidar")
@@ -332,7 +336,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
     params = {
         "model_name": MODEL_NAME,
         "spawn_z": round(spawn_z, 4),
-        "sensor_from_base": SENSOR_FROM_BASE,
+        "sensor_from_base": list(sensor_from_base),
         "lidar_offset_xyz": [round(v, 5) for v in lidar_xyz],
         "camera_offset_xyz": cam_xyz,
         "leg_joint_names": LEG_ORDER,
@@ -361,17 +365,26 @@ def main():
     ap.add_argument("--mount", default=os.environ.get("SIM_D1_MOUNT", "0.0 0 0.057 0 0 0"),
                     help="D1 base pose on the Go2 trunk: 'x y z roll pitch yaw' (m, rad). "
                          "Default: centre of the trunk top")
+    ap.add_argument("--sensor-from-base", default=os.environ.get("SIM_SENSOR_FROM_BASE", ""),
+                    help="lidar mount 'x y z qx qy qz qw' from the laptop's lidar3d_robot_viz.yaml "
+                         "(default: built-in 2026-09-09 calibration)")
     a = ap.parse_args()
     mount = floats(a.mount, 6)
+    sensor_from_base = floats(a.sensor_from_base.replace(",", " "), 7) if a.sensor_from_base.strip() \
+        else SENSOR_FROM_BASE
+    if math.sqrt(sum(v * v for v in sensor_from_base[3:])) < 0.5:
+        sys.exit(f"--sensor-from-base: quaternion is not unit length: {sensor_from_base[3:]}")
     mesh_root = a.mesh_root or os.path.dirname(os.path.abspath(a.go2))
     mesh_root = mesh_root.replace("\\", "/").rstrip("/")
     for p in (a.go2, a.d1):
         if not os.path.isdir(p):
             sys.exit(f"missing model directory: {p} (run gazebo/setup_gazebo.sh)")
-    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND)
+    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base)
     print(f"wrote {urdf}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "
           f"D1 joints: {len(params['d1_joints'])}")
+    print(f"sensor_from_base={params['sensor_from_base']}"
+          f" ({'SIM_SENSOR_FROM_BASE' if a.sensor_from_base.strip() else 'built-in default'})")
 
 
 if __name__ == "__main__":
