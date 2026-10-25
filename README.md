@@ -26,9 +26,13 @@ SLAM on the Jetson, Nav2 on a laptop VM, bridged over Wi-Fi. It adds:
 ```bash
 git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree_GO2_Agricultural
 cd ~/files/Unitree_GO2_Agricultural
-./scripts/runtime/wifi_3d_nav.sh --build    # once: 3D / AI image (needs internet)
-./scripts/runtime/wifi_3d_nav.sh --ai       # dog powered on, standing at the dock
+./scripts/runtime/wifi_3d_nav.sh            # dog powered on, standing at the dock
 ```
+
+That one command does everything. The first run builds the 3D / AI image and
+pulls the VLM model (needs internet). Then the dog maps the area on its own,
+splits it into rooms, names each, saves a report and returns to the dock.
+`--manual` keeps the AI but leaves starting and steering to you.
 
 Then open **<http://localhost:3000>** on the VM, or `http://<VM IP>:3000` from
 Windows. The terminal prints the address.
@@ -47,7 +51,7 @@ Other entry points:
 | Command | Use |
 |---|---|
 | `./scripts/runtime/wifi_nav.sh --arm` | 2D navigation + explorer in RViz, D1 arm folded |
-| `./scripts/runtime/wifi_3d_nav.sh --ai --resume` | Restart after a battery swap; continue the last map |
+| `./scripts/runtime/wifi_3d_nav.sh --resume` | Restart after a battery swap; continue the last map |
 | `./scripts/runtime/wifi_nav.sh --sim --arm` | Same stack against the Gazebo simulation |
 | `./scripts/runtime/wifi_3d_nav.sh --view` | Show saved 3D scans without the robot |
 
@@ -100,7 +104,8 @@ Other entry points:
   - Docker;
   - the upstream [`go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi)
     clone in `~/files/go2-nav2-wifi`.
-- **Ollama** with `llava:7b`, for the VLM in `--ai`. Run `ollama serve`. A
+- **Ollama** with `llava:7b`, for the VLM. `wifi_3d_nav.sh` starts `ollama serve` and pulls the model
+  when needed. A
   host with a GPU is much faster.
 - **Hardware:** Unitree Go2 EDU (Jetson). D1-T arm and a RealSense camera are
   optional.

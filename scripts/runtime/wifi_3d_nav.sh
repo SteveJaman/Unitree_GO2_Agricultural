@@ -11,28 +11,36 @@
 #                         over rosbridge ws://<VM IP>:9090
 #   * go2_click_to_goal   a point clicked in the dashboard becomes a Nav2 goal
 #   * battery monitor     /battery_state (in go2-lidar3d)
-# and with --ai:
+#   * rooms + survey      room segmentation; the autonomous survey (explore,
+#                         rooms, visit + name each, report, dock)
+# and the AI (on by default, --no-ai turns it off):
 #   * YOLO11s             camera detections -> /yolo/detections, /yolo/obstacles
 #   * VLM (Ollama llava)  camera view -> /vlm_decision (HYDROPONIC/BLOCKED/CLEAR)
 #   * battery dock        < 15 %: pause the explorer, go to the dock (map
 #                         origin); explorer blocked until 20 %
 #
-# wifi_nav.sh runs unchanged and every option not listed below is passed to
-# it (--no-explore, --robot-ip, --sim, ...). RTAB-Map lives in its own
-# container so the wifi_nav.sh teardown never kills it before it saves.
+# ONE COMMAND: with the dog standing at the dock,
+#   ./scripts/runtime/wifi_3d_nav.sh
+# builds (or refreshes) the go2-3d image when needed, starts Ollama and pulls
+# the VLM model, starts the session, localizes at the dock, and runs the
+# autonomous survey with no user input: the dog maps the area, splits it into
+# rooms, names each, writes config/survey_report.json and returns to the dock.
 #
-# One-time:  ./scripts/runtime/wifi_3d_nav.sh --build    (needs internet)
+# wifi_nav.sh runs unchanged and every option not listed below is passed to
+# it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
+# wifi_nav.sh teardown never kills it before it saves.
 #
 # Usage:
-#   ./scripts/runtime/wifi_3d_nav.sh                 # explore + 3D map
-#   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only
-#   ./scripts/runtime/wifi_3d_nav.sh --ai            # + YOLO, VLM, battery manager
-#   ./scripts/runtime/wifi_3d_nav.sh --ai --no-yolo  # --ai without YOLO (also --no-vlm, --no-battery)
-#                      --ai also: adds /yolo/obstacles to the Nav2 costmap config
+#   ./scripts/runtime/wifi_3d_nav.sh                 # everything: AI + unattended survey
+#   ./scripts/runtime/wifi_3d_nav.sh --manual        # AI on, but you start/steer (dashboard Auto Survey, Auto Explore, clicks)
+#   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only (no explorer, so no survey)
+#   ./scripts/runtime/wifi_3d_nav.sh --no-ai         # 3D map only: no YOLO, VLM or battery docking
+#   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # leave one AI node out (also --no-vlm, --no-battery)
+#                      The AI also: adds /yolo/obstacles to the Nav2 costmap config
 #                      (add-yolo-costmap-source.sh), VLM BLOCKED -> pause + dock,
-#                      and auto-localization (as --resume). Needs Ollama for the VLM.
-#   ./scripts/runtime/wifi_3d_nav.sh --no-localize   # with --ai/--resume: no /initialpose
-#   ./scripts/runtime/wifi_3d_nav.sh --survey        # unattended: explore, rooms, categorize, report, dock (= --ai + auto start)
+#                      and auto-localization at the dock.
+#   ./scripts/runtime/wifi_3d_nav.sh --no-localize   # no /initialpose at start
+#   ./scripts/runtime/wifi_3d_nav.sh --no-build      # never build the image by itself (offline)
 #   ./scripts/runtime/wifi_3d_nav.sh --resume        # continue the newest map (after a battery swap)
 #   ./scripts/runtime/wifi_3d_nav.sh --save-location # (2nd terminal) label clicked points
 #   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion (no YOLO/VLM)
@@ -45,6 +53,8 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --export --mesh # + solid Poisson mesh <db>_mesh.ply (dashboard "Mesh")
 #   ./scripts/runtime/wifi_3d_nav.sh --view          # dashboard + saved meshes only, no robot (presentations)
 #   ./scripts/runtime/wifi_3d_nav.sh --stop          # stop go2-3d, save DB
+#   ./scripts/runtime/wifi_3d_nav.sh --build         # rebuild the image now
+#   (--ai and --survey are the defaults now; still accepted.)
 #
 # Environment:
 #   TWIN_WEB_PORT=3000  TWIN_ROSBRIDGE_PORT=9090  TWIN_FOXGLOVE_PORT=8765
@@ -58,6 +68,8 @@
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
 #   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
 #   TWIN_ROOMS=1 (room segmentation)  TWIN_ROOM_DOOR_WIDTH=0.9  TWIN_ROOM_MIN_AREA=1.5
+#   TWIN_SURVEY=1 (survey node)  TWIN_SURVEY_AUTO=1 (start it unattended; --manual = 0)
+#   TWIN_AUTO_BUILD=1 (build a missing/outdated image; --no-build = 0)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC                       (--rgbd)
 #   TWIN_MAP_FRAME=lidar3d_map   TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="--Grid/CellSize 0.1"   extra RTAB-Map parameters
@@ -94,7 +106,8 @@ TWIN_MODE="auto"
 TWIN_ROSBRIDGE="1"
 TWIN_WEB="1"
 TWIN_FOXGLOVE="0"
-AI="false"
+AI="true"            # one-and-done: YOLO + VLM + battery dock unless --no-ai
+SURVEY_AUTO="1"      # ... and the unattended survey unless --manual
 NO_AI=()
 RESUME="false"
 SIM="false"
@@ -106,8 +119,12 @@ while [ $# -gt 0 ]; do
         --rgbd)       TWIN_MODE="rgbd" ;;
         --lidar-only) TWIN_MODE="lidar" ;;
         --camera)     TWIN_MODE="camera" ;;
-        --ai)         AI="true" ;;
-        --survey)     AI="true"; TWIN_SURVEY_AUTO="1" ;;   # unattended survey needs YOLO + VLM
+        --ai|--survey) ;;  # the defaults now (kept for old command lines)
+        --no-ai)      AI="false" ;;
+        --manual)     SURVEY_AUTO="0" ;;
+        --no-build)   TWIN_AUTO_BUILD="0" ;;
+        --no-explore|--plan|--nav)
+                      SURVEY_AUTO="0"; PASSTHRU+=("$1") ;;   # no explorer: nothing for the survey to drive
         --no-yolo|--no-vlm|--no-battery)
                       NO_AI+=("${1#--no-}") ;;
         --resume)     RESUME="true" ;;
@@ -150,6 +167,8 @@ if { [ "${AI}" = "true" ] || [ "${RESUME}" = "true" ]; } && [ "${NO_LOCALIZE:-fa
     TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-1}"
 fi
 TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
+TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-${SURVEY_AUTO}}"
+TWIN_AUTO_BUILD="${TWIN_AUTO_BUILD:-1}"
 
 if [ "${TWIN_MODE}" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
@@ -200,11 +219,73 @@ do_build() {
     echo "[3d] Built ${TWIN_IMAGE}."
 }
 
+# The image bakes in only the Dockerfile and the dashboard (twin/webapp); the
+# Python nodes are mounted. A source file newer than the image -> rebuild
+# (Docker's layer cache keeps that to the changed stages).
+image_stale() {
+    local created
+    created="$(docker image inspect -f '{{.Created}}' "${TWIN_IMAGE}" 2>/dev/null)" || return 1
+    [ -n "$(find "${TWIN_DIR}/docker" "${TWIN_DIR}/webapp" \
+              \( -name node_modules -o -name dist \) -prune -o \
+              -type f -newermt "${created}" -print -quit 2>/dev/null)" ]
+}
+
+# Missing or outdated image: build it now (needs internet), unless --no-build.
+ensure_image() {
+    if ! image_present; then
+        [ "${TWIN_AUTO_BUILD}" = 1 ] || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
+        echo "[3d] Image ${TWIN_IMAGE} missing: building it now (first run only; needs internet)."
+        do_build
+    elif image_stale; then
+        if [ "${TWIN_AUTO_BUILD}" = 1 ]; then
+            echo "[3d] Dashboard / Dockerfile changed since ${TWIN_IMAGE} was built: rebuilding (cached, usually < 1 min)..."
+            do_build || echo "[3d] WARN: rebuild failed (offline?); using the existing image"
+        else
+            echo "[3d] NOTE: ${TWIN_IMAGE} is older than twin/webapp or twin/docker (--no-build: not rebuilt)"
+        fi
+    fi
+}
+
+# The VLM needs Ollama up with the model pulled. Start `ollama serve` if it is
+# installed but not running, pull a missing model; never block the session.
+ensure_ollama() {
+    local url="${TWIN_VLM_URL:-http://localhost:11434/api/generate}" model="${TWIN_VLM_MODEL:-llava:7b}" base tags
+    base="${url%/api/*}"
+    command -v curl >/dev/null 2>&1 || return 0
+    if ! tags="$(curl -s -m 3 "${base}/api/tags")"; then
+        if [[ "${base}" == *://localhost* || "${base}" == *://127.0.0.1* ]] && command -v ollama >/dev/null 2>&1; then
+            echo "[checks] Ollama not running: starting 'ollama serve' (log ${TWIN_LOG_DIR}/ollama.log)"
+            nohup ollama serve > "${TWIN_LOG_DIR}/ollama.log" 2>&1 &
+            local serve_pid=$!
+            for _ in $(seq 1 15); do
+                tags="$(curl -s -m 2 "${base}/api/tags")" && break
+                kill -0 "${serve_pid}" 2>/dev/null || break   # serve exited (see ollama.log)
+                sleep 1
+            done
+        fi
+        if [ -z "${tags:-}" ]; then
+            echo "[checks] WARN: Ollama not reachable at ${base}$(command -v ollama >/dev/null 2>&1 || echo " (not installed: curl -fsSL https://ollama.com/install.sh | sh)"); rooms are named from YOLO objects only"
+            return 0
+        fi
+    fi
+    if ! grep -q "\"${model}\"" <<< "${tags}"; then
+        if command -v ollama >/dev/null 2>&1; then
+            echo "[checks] Ollama has no ${model}: pulling it now (~4.7 GB, once)..."
+            OLLAMA_HOST="${base}" ollama pull "${model}" \
+                || { echo "[checks] WARN: 'ollama pull ${model}' failed (offline?); the VLM stays idle"; return 0; }
+        else
+            echo "[checks] WARN: Ollama at ${base} has no ${model}: run 'ollama pull ${model}' there"
+            return 0
+        fi
+    fi
+    echo "[checks] Ollama ${model} at ${base} ............ OK"
+}
+
 do_export() {
     local db="${EXPORT_DB:-$(newest_db)}" dir name out
     [ -n "${db}" ] || die "no database in ${TWIN_DB_DIR} (pass one: --export <file.db>)"
     [ -f "${db}" ] || die "${db} not found."
-    image_present || die "image ${TWIN_IMAGE} missing: run $0 --build"
+    ensure_image
     dir="$(cd "$(dirname "${db}")" && pwd)"
     name="$(basename "${db}" .db)"
     out="${dir}/${name}-export"
@@ -242,7 +323,7 @@ do_export() {
 # Dashboard + saved meshes without a robot or session (presentations).
 # Same served layout as start_inside.sh: app, maps/, config/. Ctrl+C stops.
 do_view() {
-    image_present || die "image ${TWIN_IMAGE} missing: run $0 --build"
+    ensure_image
     twin_running && die "${TWIN_CONTAINER} is running: its dashboard already serves the meshes (port ${TWIN_WEB_PORT})."
     mkdir -p "${TWIN_DB_DIR}" "${REPO_DIR}/config"
     local meshes
@@ -398,6 +479,12 @@ start_twin_when_ready() {
             echo "   YOLO        : ${yolo}"
             echo "   VLM         : ${vlm}"
             echo "   Battery     : ${battery}"
+            if [ "${TWIN_SURVEY_AUTO}" = 1 ]; then
+                echo "   Survey      : AUTO - starts once the explorer is up; hands off until the dog is back at the dock"
+                echo "                 (stop: dashboard Auto Survey; report: config/survey_report.json)"
+            else
+                echo "   Survey      : on demand - dashboard 'Auto Survey'"
+            fi
             if [ "${TWIN_WEB}" = 1 ]; then
                 echo "   Dashboard   : http://${host_ip}:${TWIN_WEB_PORT}   (on the VM: http://localhost:${TWIN_WEB_PORT})"
                 echo "   Click-to-go : dashboard toolbar 'Click-to-go', then click the floor"
@@ -434,17 +521,20 @@ case "${ACTION}" in
             "source /opt/ros/humble/setup.bash && exec python3 -u /nodes/save_location.py --ros-args -p map_frame:=${TWIN_MAP_FRAME}" ;;
     passthru)
         if [[ " ${PASSTHRU[*]} " == *" --check "* ]]; then
-            if image_present; then
-                echo "[checks] 3D image ${TWIN_IMAGE} ................. OK"
+            if ! image_present; then
+                echo "[checks] 3D image ${TWIN_IMAGE} ................. MISSING (built on the next run, or $0 --build)"
+            elif image_stale; then
+                echo "[checks] 3D image ${TWIN_IMAGE} ................. OUTDATED (rebuilt on the next run)"
             else
-                echo "[checks] 3D image ${TWIN_IMAGE} ................. MISSING (run $0 --build)"
+                echo "[checks] 3D image ${TWIN_IMAGE} ................. OK"
             fi
         fi
         [[ " ${PASSTHRU[*]} " == *" --clean "* ]] && stop_twin
         exec bash "${WIFI_NAV}" "${PASSTHRU[@]}" ;;
 esac
 
-image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
+mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
+ensure_image
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
          "${TWIN_DIR}/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
@@ -453,19 +543,7 @@ for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/i
     [ -f "${f}" ] || die "${f} not found."
 done
 
-# The VLM needs Ollama up with the model pulled before the session starts.
-if [ "${TWIN_VLM}" = 1 ] && command -v curl >/dev/null 2>&1; then
-    vlm_url="${TWIN_VLM_URL:-http://localhost:11434/api/generate}"
-    vlm_model="${TWIN_VLM_MODEL:-llava:7b}"
-    if ! tags="$(curl -s -m 3 "${vlm_url%/api/*}/api/tags")"; then
-        echo "[checks] WARN: Ollama not reachable at ${vlm_url%/api/*}: run 'ollama serve' (the VLM stays idle until it answers)"
-    elif ! grep -q "\"${vlm_model}\"" <<< "${tags}"; then
-        echo "[checks] WARN: Ollama has no ${vlm_model}: run 'ollama pull ${vlm_model}'"
-    else
-        echo "[checks] Ollama ${vlm_model} at ${vlm_url%/api/*} ............ OK"
-    fi
-fi
-mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
+[ "${TWIN_VLM}" = 1 ] && ensure_ollama
 
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin

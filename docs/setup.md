@@ -38,13 +38,15 @@ pre-commit install
 After the navigation setup above (needs internet):
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --build     # go2-3d image: RTAB-Map, YOLO, web dashboard
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llava:7b                          # VLM for --ai (~4.7 GB); keep `ollama serve` running
+curl -fsSL https://ollama.com/install.sh | sh   # Ollama, for the VLM
 ```
 
-Every session after that: dog standing at the dock, then
-`./scripts/runtime/wifi_3d_nav.sh --ai` and open `http://<VM IP>:3000`.
+That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
+`go2-3d` image (RTAB-Map, YOLO, web dashboard; ~3–4 GB) and pulls
+`llava:7b` (~4.7 GB). It also starts `ollama serve` when it isn't running.
+
+Every session: dog standing at the dock, then
+`./scripts/runtime/wifi_3d_nav.sh` and open `http://<VM IP>:3000`.
 Details: [3d_nav.md](3d_nav.md).
 
 ## Navigation — every session
@@ -59,7 +61,7 @@ cd ~/files/Unitree_GO2_Agricultural
 # 3. In RViz (opens automatically):
 #    a. Wait ~12 s for the map to appear
 #    b. "2D Pose Estimate" — click the dog's position
-#       (not needed with wifi_3d_nav.sh --ai / --resume: auto-localized at the dock)
+#       (not needed with wifi_3d_nav.sh: auto-localized at the dock)
 #    c. Click "Auto Explore: START" in the Go2 Explore panel
 ```
 

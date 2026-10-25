@@ -299,9 +299,10 @@ relay is unconfirmed.
 | 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
 | 44 | Explorer re-plan | explore a room with an open doorway | log `explored before arrival: re-planning`; fewer stops; `replans=` grows |
 | 45 | Explorer STOP during spin | `spin_on_goal:=true`, STOP mid-spin | rotation stops within ~0.1 s |
-| 46 | Autonomous survey | `--survey`, dog at the dock, two or more rooms, a bed or fridge in one | no input needed: rooms visited and spun in, named (✨), dog docks; `config/survey_report.json` written |
+| 46 | Autonomous survey | plain `wifi_3d_nav.sh`, dog at the dock, two or more rooms, a bed or fridge in one | no input needed: rooms visited and spun in, named (✨), dog docks; `config/survey_report.json` written |
 | 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
-| 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 … --survey` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
+| 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
+| 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
 
 ---
 
@@ -405,23 +406,19 @@ ros2 topic echo /explore/status            # watch goals_sent
 ### Autonomous loop test (3D twin)
 
 ```bash
-# Once, with internet: image (incl. dashboard) + VLM model
-./scripts/runtime/wifi_3d_nav.sh --build
-ollama pull llava:7b
-
-# Every run
-ollama serve &                                   # unless already running as a service
 # Dog standing AT THE DOCK (the map origin, dock goal and auto-localization assume it)
-./scripts/runtime/wifi_3d_nav.sh --ai            # banner: YOLO → Nav2 on, Ollama OK, Localize auto
-# Open http://<VM IP>:3000 (READY block); START the explorer from the dashboard
-# Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh --ai
-# VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --ai
+# First run needs internet: builds the image, pulls llava:7b, starts ollama serve
+./scripts/runtime/wifi_3d_nav.sh                # banner: YOLO → Nav2 on, Ollama OK, Localize auto, Survey AUTO
+# Open http://<VM IP>:3000 (READY block) and watch; the survey needs no input
+# Step-by-step instead: ./scripts/runtime/wifi_3d_nav.sh --manual
+# Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh
+# VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --manual
 
 # After a battery swap: dog back at the dock, then
-./scripts/runtime/wifi_3d_nav.sh --ai --resume
+./scripts/runtime/wifi_3d_nav.sh --resume
 ```
 
-Work through checks 17–37 above (see [3d_nav.md](3d_nav.md)). Keep the
+Work through checks 17–49 above (see [3d_nav.md](3d_nav.md)). Keep the
 handheld remote as the emergency stop.
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`

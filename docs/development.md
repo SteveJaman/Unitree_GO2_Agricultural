@@ -26,7 +26,7 @@ Unitree_GO2_Agricultural/
 ├── docs/
 │   ├── setup.md                      # one-time setup, everyday commands, flags
 │   ├── architecture.md               # scope, data flow, network / DDS
-│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, web dashboard, --ai, --resume)
+│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
 │   ├── explorer.md                   # frontier explorer
 │   ├── scripts.md                    # scripts reference
 │   ├── d1arm.md                      # D1 arm runbook
@@ -40,7 +40,7 @@ Unitree_GO2_Agricultural/
 ├── scripts/
 │   ├── runtime/                      # shell entry points
 │   │   ├── wifi_nav.sh               # main orchestrator
-│   │   ├── wifi_3d_nav.sh            # wifi_nav.sh + RTAB-Map + web dashboard (3D twin), --ai, --resume
+│   │   ├── wifi_3d_nav.sh            # the one command: wifi_nav.sh + 3D twin + AI + autonomous survey, --manual, --resume
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # older manual RTAB-Map launcher
 │   │   ├── start_arm.sh              # D1-T arm entry point (preflight, fold, control)
@@ -51,9 +51,9 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_floor_filter.py       # floor-plane filter
 │   │   ├── go2_click_to_goal.py      # dashboard click -> Nav2 goal
 │   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
-│   │   ├── battery_manager.py        # --ai: low battery -> dock
-│   │   ├── vlm_reasoning_node.py     # --ai: Ollama llava -> /vlm_decision; BLOCKED -> dock
-│   │   ├── auto_localize.py          # --ai/--resume: /initialpose at the dock
+│   │   ├── battery_manager.py        # AI (default): low battery -> dock
+│   │   ├── vlm_reasoning_node.py     # AI (default): Ollama llava -> /vlm_decision; BLOCKED -> dock
+│   │   ├── auto_localize.py          # AI (default)/--resume: /initialpose at the dock
 │   │   ├── save_location.py          # --save-location: named points
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
@@ -68,7 +68,7 @@ Unitree_GO2_Agricultural/
 │       ├── verify_costmap.sh
 │       ├── save_rviz_config.sh
 │       ├── export_tour.py
-│       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (automatic with --ai)
+│       ├── add-yolo-costmap-source.sh # YOLO obstacles -> Nav2 costmap (automatic unless --no-ai)
 │       ├── apply-lab-nav-fixes.sh    # one-time upstream go2-nav2-wifi fixes
 │       ├── diag_arm.sh               # D1 arm diagnostic
 │       └── calibrate_arm.py          # D1 arm per-joint offset calibration

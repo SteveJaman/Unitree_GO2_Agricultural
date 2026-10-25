@@ -13,7 +13,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
-| [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--survey` (unattended mapping + room naming), `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
+| [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
 | [`wifi_mapping.sh`](../scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |
@@ -27,9 +27,9 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) | Bridge `/frontvideostream` (custom Unitree msg) → `/camera/image_raw` (standard `sensor_msgs/Image`) |
 | [`go2_floor_filter.py`](../scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py) | `/camera/camera_info` for a camera without one (pinhole from a field of view, or fx/fy/cx/cy) |
-| [`battery_manager.py`](../scripts/nodes/battery_manager.py) | Always: `/battery_state` for the dashboard. With `--ai`: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
-| [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) | `--ai`: camera frame → local Ollama `llava:7b` → `/vlm_decision`; confirmed `BLOCKED` → pause explorer + dock |
-| [`auto_localize.py`](../scripts/nodes/auto_localize.py) | `--ai` / `--resume`: one-shot `/initialpose` at the dock (0, 0, 0) |
+| [`battery_manager.py`](../scripts/nodes/battery_manager.py) | Always: `/battery_state` for the dashboard. By default: low battery (< 15 %) → pause explorer, go to the dock; explorer blocked until 20 % |
+| [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) | Default (not `--no-ai`): camera frame → local Ollama `llava:7b` → `/vlm_decision`; confirmed `BLOCKED` → pause explorer + dock |
+| [`auto_localize.py`](../scripts/nodes/auto_localize.py) | Default / `--resume`: one-shot `/initialpose` at the dock (0, 0, 0) |
 | [`save_location.py`](../scripts/nodes/save_location.py) | `--save-location`: label clicked points → `config/semantic_locations.json` |
 | [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) | Dashboard (or Foxglove) `/clicked_point` (any TF frame) → nearest safe floor (BFS on the global costmap, 3×3 clearance) → `/goal_pose`; markers on `/clicked_goal_markers` |
 | [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) | D1-T arm chain-style CLI + `D1Arm` class (JSON over CycloneDDS): state, enable, release, home, power, joint(s), feedback, `lift`, `sweep` |
@@ -49,7 +49,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`verify_costmap.sh`](../scripts/tools/verify_costmap.sh) | Confirm the costmap topic exists and publishes |
 | [`save_rviz_config.sh`](../scripts/tools/save_rviz_config.sh) | Interactive guide to save the RViz layout to [`config/tour.rviz`](../config/tour.rviz) |
 | [`export_tour.py`](../scripts/tools/export_tour.py) | Open3D Poisson mesh from an RTAB-Map PLY (normals, distance trim, decimation); run by `wifi_3d_nav.sh --export --mesh` |
-| [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh --ai` (`--undo` restores) |
+| [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh` (unless `--no-ai`) (`--undo` restores) |
 | [`apply-lab-nav-fixes.sh`](../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](../scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |

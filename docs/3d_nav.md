@@ -4,11 +4,17 @@
 
 [`scripts/runtime/wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs the
 normal 2D session and adds a live, dense 3D map of the building on top of it.
-When the Go2 camera publishes, the map is coloured from it. With `--ai`:
+When the Go2 camera publishes, the map is coloured from it. By default (turn
+it off with `--no-ai`):
 
 - **YOLO11s** labels objects and can mark them as obstacles for Nav2.
 - **A local VLM** describes the view.
 - **The battery manager** brings the dog back to the dock on low battery.
+
+It is the **one command** for the 3D twin. With the dog at the dock, a plain
+`./scripts/runtime/wifi_3d_nav.sh` builds or refreshes the image, readies
+Ollama, localizes, and runs the [autonomous survey](#autonomous-survey---survey)
+from start to dock without any input.
 
 You can view all of it in the **web dashboard**, a React + three.js app served
 by the session at `http://<VM IP>:3000`. You can also send the dog somewhere
@@ -68,7 +74,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   `go2-3d` waits up to `TWIN_CAMERA_WAIT` (60 s) for a frame on
   `/camera/image_raw`.
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
-    loop closures), and with `--ai` YOLO and the VLM start.
+    loop closures), and YOLO and the VLM start (unless `--no-ai`).
   - **No frame:** for example the Jetson camera backend is down
     ([STATUS](STATUS.md#blocked-by-hardware)). The map stays LiDAR-only, so a
     missing camera never stops mapping.
@@ -135,7 +141,7 @@ the upstream go2-nav2-wifi repo.
 ./scripts/tools/add-yolo-costmap-source.sh --undo   # back to the original config
 ```
 
-The change stays after the session. Sessions without `--ai` just have a
+The change stays after the session. Sessions with `--no-ai` just have a
 `yolo` source with no data, which is harmless. `--undo` removes it.
 
 The script adds a `yolo` observation source (marking only) to the global
@@ -154,16 +160,24 @@ Limits:
 
 ## One-time setup
 
-On the VM (needs internet, ~3–4 GB download: RTAB-Map, CPU PyTorch, YOLO11s
-weights, and the web dashboard build):
+Nothing to run by hand. The first session needs internet: it builds
+`go2-3d:local` (~3–4 GB: RTAB-Map, CPU PyTorch, YOLO11s weights and the
+dashboard build) and pulls the VLM model. Install Ollama once
+(`curl -fsSL https://ollama.com/install.sh | sh`); the script starts
+`ollama serve` when needed.
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --build      # builds go2-3d:local (incl. twin/webapp)
-./scripts/runtime/wifi_3d_nav.sh --check      # wifi_nav.sh checks + image check
+./scripts/runtime/wifi_3d_nav.sh --check      # wifi_nav.sh checks + image MISSING / OUTDATED / OK
+./scripts/runtime/wifi_3d_nav.sh --build      # rebuild by hand (optional)
 ```
 
+When `twin/webapp` or `twin/docker` is newer than the image (after a
+`git pull`, say), the next run rebuilds it. Docker's cache keeps that short.
+Offline, `--no-build` uses the existing image as it is. The Python nodes are
+mounted, so changing them never needs a rebuild.
+
 Nothing to install on Windows: the dashboard runs in any browser (Chrome,
-Edge, Firefox). Re-run `--build` after changing `twin/webapp`. For quicker
+Edge, Firefox). For quicker
 iterations, see [Developing the dashboard](#developing-the-dashboard).
 
 ---
@@ -171,11 +185,11 @@ iterations, see [Developing the dashboard](#developing-the-dashboard).
 ## Running
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh                  # explore + 3D map (wifi_nav.sh defaults)
-./scripts/runtime/wifi_3d_nav.sh --no-explore     # you drive by clicking goals
-./scripts/runtime/wifi_3d_nav.sh --ai             # + YOLO, VLM, battery manager
-./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
-./scripts/runtime/wifi_3d_nav.sh --survey         # unattended: map, find and name every room, dock
+./scripts/runtime/wifi_3d_nav.sh                  # everything: AI + unattended survey, then dock
+./scripts/runtime/wifi_3d_nav.sh --manual         # AI on; you start the survey / explorer or click goals
+./scripts/runtime/wifi_3d_nav.sh --no-explore     # you drive by clicking goals (no survey)
+./scripts/runtime/wifi_3d_nav.sh --no-ai          # 3D map only: no YOLO, VLM or battery docking
+./scripts/runtime/wifi_3d_nav.sh --resume         # after a battery swap: continue the last map
 ./scripts/runtime/wifi_3d_nav.sh --sim            # against the Gazebo simulation
 ```
 
@@ -184,10 +198,12 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 
 | Option | Effect |
 |---|---|
-| *(default)* | `auto`: Go2 camera fusion if `/camera/image_raw` publishes, else LiDAR-only |
-| `--ai` | Also start YOLO11s and the VLM (both need the camera) and the battery manager. See [AI nodes](#ai-nodes---ai) |
-| `--survey` | `--ai`, and start the [autonomous survey](#autonomous-survey---survey) by itself: no user input from start to dock |
-| `--no-yolo` / `--no-vlm` / `--no-battery` | With `--ai`: leave that one out |
+| *(default)* | Go2 camera fusion if `/camera/image_raw` publishes, else LiDAR-only. [AI nodes](#ai-nodes---ai) on, auto-localization at the dock, and the [autonomous survey](#autonomous-survey---survey) starting by itself. A missing or outdated image is built first |
+| `--manual` | Everything above, but the survey waits for **Auto Survey** in the dashboard |
+| `--no-ai` | No YOLO, VLM or battery docking (the battery is still monitored); no auto-localization |
+| `--no-build` | Never build the image by itself (offline; a missing image is an error) |
+| `--ai` / `--survey` | Old flags, now the default; still accepted |
+| `--no-yolo` / `--no-vlm` / `--no-battery` | Leave that one AI node out |
 | `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
 | `--save-location` | In a second terminal: label points clicked in the dashboard, saved to `config/semantic_locations.json` |
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
@@ -219,8 +235,9 @@ With `--resume`, it continues the newest one instead.
 
 ## AI nodes (`--ai`)
 
-`--ai` starts the autonomy loop. Each part can be left out (`--no-yolo`,
-`--no-vlm`, `--no-battery`, `--no-localize`). Logs are in `ws/log/3d/`:
+The autonomy loop runs by default (`--ai` is the old flag for it; `--no-ai`
+turns it off). Each part can be left out (`--no-yolo`, `--no-vlm`,
+`--no-battery`, `--no-localize`). Logs are in `ws/log/3d/`:
 `yolo.log`, `vlm.log`, `battery.log`, `auto_localize.log`.
 
 - **YOLO11s**, with its obstacles patched into the Nav2 costmap (above).
@@ -308,7 +325,7 @@ a GPU is much faster:
 2. Set `OLLAMA_HOST=0.0.0.0` there.
 3. Allow port 11434 through the Windows firewall.
 4. On the VM, run
-   `TWIN_VLM_URL=http://<Windows IP>:11434/api/generate ./scripts/runtime/wifi_3d_nav.sh --ai`.
+   `TWIN_VLM_URL=http://<Windows IP>:11434/api/generate ./scripts/runtime/wifi_3d_nav.sh`.
 
 Other settings: `TWIN_VLM_MODEL`, `TWIN_VLM_PERIOD`.
 
@@ -404,7 +421,7 @@ Lab, Office)"*. It shortens the answer to at most three words and publishes
 - **What it sees:** the camera shows what is in front of the robot, so the
   suggestion is meaningful only while the robot is in, or looking into, that
   room. The dialog says so.
-- **Needs `--ai`** and Ollama.
+- **Needs the VLM** (on unless `--no-ai` / `--no-vlm`) and Ollama.
 
 | Topic | Type | Use |
 |---|---|---|
@@ -421,12 +438,13 @@ The survey maps and organises an unknown building **with nobody at the
 controls**, like a robot vacuum's first "fast mapping" run. One command:
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --survey      # dog standing at the dock
+./scripts/runtime/wifi_3d_nav.sh               # dog standing at the dock
 ```
 
-`--survey` is `--ai` plus `TWIN_SURVEY_AUTO=1`. Without it the survey still
-runs in every session and waits: **Auto Survey** (top of the bottom-left
-panel) starts and stops it from the dashboard.
+This is the default (`TWIN_SURVEY_AUTO=1`). With `--manual`, `--no-explore`,
+`--plan` or `--nav`, the survey still runs but waits. **Auto Survey** (top
+of the bottom-left panel) starts and stops it from the dashboard, and
+stopping it there also ends an automatic survey.
 
 [`twin/survey_manager.py`](../twin/survey_manager.py) conducts the existing
 nodes through these steps:
@@ -491,7 +509,7 @@ dock and both files were written.
 After a battery swap, restart with `--resume`:
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --ai --resume
+./scripts/runtime/wifi_3d_nav.sh --resume
 ```
 
 1. The newest `.db` in `TWIN_DB_DIR` is copied to `<db>.bak-<time>`.
@@ -680,7 +698,7 @@ camera images. The database also opens in
 | `TWIN_VLM_URL` | `http://localhost:11434/api/generate` | Ollama endpoint |
 | `TWIN_VLM_MODEL` / `TWIN_VLM_PERIOD` | `llava:7b` / `5` | VLM model, minimum seconds between requests |
 | `TWIN_VLM_ACT` / `TWIN_VLM_CONFIRM` | `1` / `2` | Act on `BLOCKED` (0 = report only) / answers in a row needed |
-| `TWIN_AUTOLOCALIZE` | `1` with `--ai`/`--resume` | `/initialpose` at the dock on start (`--no-localize` = 0) |
+| `TWIN_AUTOLOCALIZE` | `1` (`0` with `--no-ai`, unless `--resume`) | `/initialpose` at the dock on start (`--no-localize` = 0) |
 | `TWIN_ROOMS` / `TWIN_ROOM_DOOR_WIDTH` / `TWIN_ROOM_MIN_AREA` | `1` / `0.9` / `1.5` | Room segmentation on/off, widest opening (m) treated as a doorway, smallest room (m²) |
 | `TWIN_BATTERY_LOW` / `TWIN_BATTERY_RESUME` | `15` / `20` | % to return to the dock / to allow exploring again |
 | `TWIN_DOCK` | `0 0 0` | Dock `x y yaw` in `lidar3d_map` |
@@ -699,7 +717,9 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 
 | Symptom | Check / fix |
 |---|---|
-| `image go2-3d:local missing` | `./scripts/runtime/wifi_3d_nav.sh --build` |
+| `image go2-3d:local missing` | Only with `--no-build`: run once with internet, or `./scripts/runtime/wifi_3d_nav.sh --build` |
+| Every run rebuilds the image | A file in `twin/webapp` or `twin/docker` has a future timestamp; `touch` it, or use `--no-build` |
+| `ollama serve` won't start (`bind: Only one usage…` in `ollama.log`) | Ollama already runs under another URL; set `TWIN_VLM_URL` to it |
 | `no ROS nodes in go2-lidar3d … 3D stack NOT started` | The 2D session never came up. Fix that first with `wifi_nav.sh` alone |
 | Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
 | Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
@@ -709,7 +729,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Merge refused | The two rooms don't touch; merge through the room between them first |
 | Auto Survey button greyed out | `survey_manager` isn't running: `tail …/ws/log/3d/survey.log` (`TWIN_SURVEY=0`?) |
 | Survey stuck in `EXPLORING` | The explorer never reports `DONE` (an unreachable frontier keeps it busy). It moves on after 30 min; check `/explore/status` |
-| Rooms only get numbers | No objects inside the room and no VLM answer: needs the camera and `--ai` (or `--survey`). `survey_report.json` shows the objects found per room |
+| Rooms only get numbers | No objects inside the room and no VLM answer: needs the camera, YOLO and the VLM (not `--no-ai`). `survey_report.json` shows the objects found per room |
 | Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
