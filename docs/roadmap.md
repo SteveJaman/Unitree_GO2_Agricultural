@@ -152,9 +152,9 @@ Make the explorer pause and capture at each frontier.
 
 | # | Task | Status |
 |---|---|---|
-| 5.1 | Add `spin_360()` to `frontier_explorer.py` | ✅ implemented |
-| 5.2 | Call `spin_360()` after each `goals_succeeded` | ✅ gated by `spin_on_goal` param |
-| 5.3 | Suppress goal publishing during spin | ✅ (spin blocks the tick loop) |
+| 5.1 | Add spin-on-goal (`start_spin()`) to `frontier_explorer.py` | ✅ implemented |
+| 5.2 | Spin after each `goals_succeeded` | ✅ gated by `spin_on_goal` param |
+| 5.3 | Suppress goal publishing during spin | ✅ (non-blocking: tick picks no goal while spinning; STOP ends it) |
 | 5.4 | Wait for RTAB-Map to process spin frames | ⏳ verify on robot |
 
 **Enable:** `-p spin_on_goal:=true`. Default is `false` so normal

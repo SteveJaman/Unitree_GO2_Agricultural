@@ -18,6 +18,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Dashboard UI overhaul: full-screen map, glass panels, waypoint pin + neon route, smoothed robot, Auto Explore / Return to Dock, battery icon, VLM toasts, camera PiP | **Implemented (pending physical test)**: tested against a mock rosbridge (2026-10-23) |
 | Solid map (live voxels, lighting, shadows) and presentation mesh (`--export --mesh`, `--view`) | **Implemented**: meshing tested on a synthetic room (Open3D); real scans pending |
 | Semantic rooms: segmentation, naming with VLM suggestion, merge, navigate to room | **Implemented (pending physical test)**: segmentation tested on a synthetic floor plan; UI tested against a mock rosbridge |
+| Explorer fixes: path-distance BFS, snapped goal + heading, re-plan when the frontier is seen, position blacklist, non-blocking stop/spin | **Implemented (pending physical test)**: tested on synthetic maps (2026-10-25) |
 | Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
 | VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
 | Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
@@ -295,6 +296,8 @@ relay is unconfirmed.
 | 41 | Room segmentation | map two rooms joined by a door | two coloured rooms split at the doorway; `config/semantic_rooms.json` written |
 | 42 | Room naming | Rooms → Edit, click a room, robot inside it, `--ai` | dialog shows a VLM suggestion; Save keeps the name after the next re-segmentation |
 | 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
+| 44 | Explorer re-plan | explore a room with an open doorway | log `explored before arrival: re-planning`; fewer stops; `replans=` grows |
+| 45 | Explorer STOP during spin | `spin_on_goal:=true`, STOP mid-spin | rotation stops within ~0.1 s |
 
 ---
 
