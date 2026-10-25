@@ -25,8 +25,11 @@ Subscribes: /camera/image_raw, /camera/camera_info, /lidar3d/registered, TF
 Publishes:  /yolo/detections  (vision_msgs/Detection2DArray)
             /yolo/obstacles   (sensor_msgs/PointCloud2, map_frame)
             /yolo/markers     (visualization_msgs/MarkerArray, labelled boxes)
+            /yolo/objects     (std_msgs/String JSON: every placed detection, any class,
+                               {class, score, x, y, depth, source}; for room typing)
             /yolo/image       (sensor_msgs/Image, annotated; publish_image)
 """
+import json
 import math
 
 import numpy as np
@@ -36,6 +39,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from sensor_msgs_py.point_cloud2 import create_cloud_xyz32
+from std_msgs.msg import String
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -131,6 +135,7 @@ class YoloObstacles(Node):
         self.det_pub = self.create_publisher(Detection2DArray, '/yolo/detections', 10)
         self.obs_pub = self.create_publisher(PointCloud2, '/yolo/obstacles', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/yolo/markers', 10)
+        self.objects_pub = self.create_publisher(String, '/yolo/objects', 10)
         self.img_pub = self.create_publisher(Image, '/yolo/image', qos_profile_sensor_data)
         self.create_subscription(Image, gp('image_topic'), self.on_image, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, gp('camera_info_topic'), self.on_info,
@@ -180,9 +185,8 @@ class YoloObstacles(Node):
             out.data = plotted.tobytes()
             self.img_pub.publish(out)
 
-        keep = [i for i, n in enumerate(labels)
-                if self.obstacle_classes is None or n in self.obstacle_classes]
-        self.publish_obstacles(msg, xyxy[keep], [labels[i] for i in keep])
+        obstacle = [self.obstacle_classes is None or n in self.obstacle_classes for n in labels]
+        self.publish_obstacles(msg, xyxy, labels, score, obstacle)
 
     def publish_detections(self, header, xyxy, labels, score):
         arr = Detection2DArray()
@@ -204,13 +208,16 @@ class YoloObstacles(Node):
         self.det_pub.publish(arr)
 
     # ------------------------------------------------------------ 3D placement
-    def publish_obstacles(self, img_msg, xyxy, labels):
+    def publish_obstacles(self, img_msg, xyxy, labels, scores, obstacle):
+        """Place every detection in 3D. Obstacle classes become costmap points
+        and boxes; all placed detections go to /yolo/objects (room typing)."""
         header = img_msg.header
         cam_frame = header.frame_id
         out_header = type(header)()
         out_header.stamp, out_header.frame_id = header.stamp, self.map_frame
         points, markers = [], [Marker(action=Marker.DELETEALL, ns='yolo')]
         markers[0].header = out_header
+        objects = []
 
         if len(xyxy) and self.info is not None:
             try:
@@ -238,12 +245,19 @@ class YoloObstacles(Node):
                         continue
                     corners = [R_mc @ np.array([(u - cx) / fx * dd, (y2 - cy) / fy * dd, dd]) + t_mc
                                for dd in (depth, depth + self.obs_d) for u in (x1, x2)]
-                    points.extend(self.box_points(corners, floor_z))
-                    markers.extend(self.box_markers(i, corners, floor_z, name, depth, src,
-                                                    out_header))
+                    centre = np.mean([c[:2] for c in corners], axis=0)
+                    objects.append({'class': name, 'score': round(float(scores[i]), 2),
+                                    'x': round(float(centre[0]), 2), 'y': round(float(centre[1]), 2),
+                                    'depth': round(depth, 2), 'source': src})
+                    if obstacle[i]:
+                        points.extend(self.box_points(corners, floor_z))
+                        markers.extend(self.box_markers(i, corners, floor_z, name, depth, src,
+                                                        out_header))
 
         self.obs_pub.publish(create_cloud_xyz32(out_header, points))
         self.marker_pub.publish(MarkerArray(markers=markers))
+        self.objects_pub.publish(String(data=json.dumps(
+            {'frame': self.map_frame, 'objects': objects})))
 
     def lidar_in_camera(self, R_mc, t_mc):
         """Latest cloud (assumed in map_frame) in the camera optical frame, Nx3, z > 0.2."""

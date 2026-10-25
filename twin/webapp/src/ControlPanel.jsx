@@ -1,4 +1,5 @@
 import { useLatest } from './RosProvider.jsx';
+import SurveyCard from './SurveyCard.jsx';
 
 /**
  * Bottom-left controls: Auto Explore toggle (/explore/resume, state from
@@ -17,6 +18,7 @@ export default function ControlPanel({
 
   return (
     <div className="controls glass">
+      <SurveyCard connected={connected} />
       <button className={`explore ${exploring ? 'on' : ''}`} disabled={!connected}
               onClick={() => onExplore(!exploring)}>
         <span className="explore-icon">{exploring ? '■' : '▶'}</span>

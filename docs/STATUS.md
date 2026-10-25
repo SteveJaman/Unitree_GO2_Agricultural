@@ -18,6 +18,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Dashboard UI overhaul: full-screen map, glass panels, waypoint pin + neon route, smoothed robot, Auto Explore / Return to Dock, battery icon, VLM toasts, camera PiP | **Implemented (pending physical test)**: tested against a mock rosbridge (2026-10-23) |
 | Solid map (live voxels, lighting, shadows) and presentation mesh (`--export --mesh`, `--view`) | **Implemented**: meshing tested on a synthetic room (Open3D); real scans pending |
 | Semantic rooms: segmentation, naming with VLM suggestion, merge, navigate to room | **Implemented (pending physical test)**: segmentation tested on a synthetic floor plan; UI tested against a mock rosbridge |
+| Autonomous survey (`--survey`): explore, segment, visit and name every room, report, dock | **Implemented (pending physical test)**: state machine tested in a simulated session; dashboard card builds |
 | Explorer fixes: path-distance BFS, snapped goal + heading, re-plan when the frontier is seen, position blacklist, non-blocking stop/spin | **Implemented (pending physical test)**: tested on synthetic maps (2026-10-25) |
 | Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
 | VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
@@ -298,6 +299,9 @@ relay is unconfirmed.
 | 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
 | 44 | Explorer re-plan | explore a room with an open doorway | log `explored before arrival: re-planning`; fewer stops; `replans=` grows |
 | 45 | Explorer STOP during spin | `spin_on_goal:=true`, STOP mid-spin | rotation stops within ~0.1 s |
+| 46 | Autonomous survey | `--survey`, dog at the dock, two or more rooms, a bed or fridge in one | no input needed: rooms visited and spun in, named (✨), dog docks; `config/survey_report.json` written |
+| 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
+| 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 … --survey` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
 
 ---
 

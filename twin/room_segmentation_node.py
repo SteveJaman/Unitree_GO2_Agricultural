@@ -23,6 +23,8 @@ start (IDs match a new session if the dog starts at the same dock).
 Subscribes: /global_costmap/costmap  (nav_msgs/OccupancyGrid)
             /semantic_rooms/command  (std_msgs/String JSON:
                 {"op": "rename", "id": "room_2", "label": "Lab Desk"}
+                    (+ "source": "auto", "category", "objects", "vlm_suggestion"
+                     from the survey; an auto name never replaces a user name)
                 {"op": "merge", "ids": ["room_2", "room_3"]}
                 {"op": "unmerge", "id": "room_2"}
                 {"op": "resegment"})
@@ -248,8 +250,18 @@ def main():
                 return
             rooms, merges = self.state['rooms'], self.state['merges']
             if op == 'rename' and cmd.get('id') in rooms:
-                rooms[cmd['id']]['label'] = str(cmd.get('label', '')).strip()[:60]
-                self.get_logger().info(f'{cmd["id"]} named {rooms[cmd["id"]]["label"]!r}')
+                room = rooms[cmd['id']]
+                source = cmd.get('source', 'user')
+                # The survey names rooms automatically; a name a person typed wins.
+                if source == 'auto' and room.get('label') and room.get('label_source', 'user') == 'user':
+                    self.get_logger().info(f'{cmd["id"]}: keeping the user name {room["label"]!r}')
+                else:
+                    room['label'] = str(cmd.get('label', '')).strip()[:60]
+                    room['label_source'] = source
+                for k in ('category', 'objects', 'vlm_suggestion'):
+                    if k in cmd:
+                        room[k] = cmd[k]
+                self.get_logger().info(f'{cmd["id"]} named {room["label"]!r} ({source})')
             elif op == 'merge':
                 ids = [i for i in cmd.get('ids', []) if i in rooms]
                 if len(ids) != 2 or ids[0] == ids[1]:

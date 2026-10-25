@@ -273,3 +273,25 @@ button { font: inherit; color: inherit; }
   .status-text, .brand span:last-child { display: none; }
   .vlm-badge, .vlm-toast { top: 64px; }
 }
+
+/* auto survey card (SurveyCard.jsx) */
+.survey { display: flex; flex-direction: column; gap: 8px; }
+.survey-main {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; border: 0; border-radius: 16px; cursor: pointer;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; text-align: left;
+  box-shadow: 0 8px 24px rgba(124, 58, 237, .45); transition: transform .12s, box-shadow .15s, filter .15s;
+}
+.survey-main:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+.survey.on .survey-main { background: linear-gradient(135deg, #f43f5e, #be123c); box-shadow: 0 8px 24px rgba(244, 63, 94, .45); }
+.survey-main:disabled { filter: grayscale(.8) brightness(.6); cursor: not-allowed; box-shadow: none; }
+.survey-icon {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: rgba(255, 255, 255, .2); font-size: 15px;
+}
+.survey-steps { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+.survey-steps .step { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .15); }
+.survey-steps .step.done { background: #a78bfa; }
+.survey-steps .step.now { background: #c4b5fd; animation: blink 1.2s ease-in-out infinite; }
+.survey-results { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip.small.result { color: #e9d5ff; border-color: rgba(192, 132, 252, .55); cursor: default; }
+.auto-tag { margin-left: 6px; font-size: 11px; }

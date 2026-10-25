@@ -36,7 +36,7 @@ export default function RoomsPanel({
         {rooms.map((r) => (
           <div key={r.id} className={`room-row ${selected.includes(r.id) ? 'selected' : ''}`}>
             <span className="swatch" style={{ background: cssColor(r.color) }} />
-            <span className="room-name">{roomName(r)}</span>
+            <span className="room-name" title={r.objects ? Object.entries(r.objects).map(([k, n]) => `${n} ${k}`).join(', ') : ''}>{roomName(r)}{r.label_source === 'auto' && <span className="auto-tag" title="Named by the survey">✨</span>}</span>
             <span className="room-area">{Math.round(r.area)} m²</span>
             {editing
               ? <button className="chip small" onClick={() => onRename(r)} disabled={!connected}>Name</button>

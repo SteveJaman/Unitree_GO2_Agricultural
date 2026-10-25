@@ -64,6 +64,9 @@ Other entry points:
   dock. It localizes itself at start, so there's no "2D Pose Estimate" click.
 - **Semantic rooms:** the map is split into rooms (robot-vacuum style) that
   you name (with a VLM suggestion), merge, and send the robot to.
+- **Autonomous survey:** `--survey` maps an unknown building, splits it into
+  rooms, visits and names each from what YOLO and the VLM see, saves a
+  report and docks, with no user input.
 - **Arm control:** the D1-T over DDS/JSON (fold, joints, lift, sweep,
   calibration), kept off the Go2 network.
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
@@ -74,7 +77,7 @@ Other entry points:
 |---|---|
 | [Setup](docs/setup.md) | One-time workstation setup, everyday commands, flags and overrides |
 | [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
-| [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, semantic rooms, YOLO, VLM, battery dock, `--resume`, export and mesh |
+| [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, `--resume`, export and mesh |
 | [Explorer](docs/explorer.md) | Frontier explorer phases, parameters, manual launch |
 | [Scripts](docs/scripts.md) | Every runtime script, ROS node and tool |
 | [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |

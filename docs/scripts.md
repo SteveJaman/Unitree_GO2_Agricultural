@@ -13,7 +13,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
-| [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
+| [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) | **3D entry point.** Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--ai` (YOLO, VLM, battery dock), `--survey` (unattended mapping + room naming), `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
 | [`wifi_mapping.sh`](../scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |

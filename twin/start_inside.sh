@@ -18,6 +18,8 @@
 #   * auto_localize       (TWIN_AUTOLOCALIZE=1) one-shot /initialpose at the dock
 #   * room_segmentation   (TWIN_ROOMS=1) costmap -> rooms (/semantic_rooms), names
 #                         and merges from the dashboard -> config/semantic_rooms.json
+#   * survey_manager      (TWIN_SURVEY=1) autonomous survey: explore, rooms, visit and
+#                         categorize each, report, dock; TWIN_SURVEY_AUTO=1 starts it
 #
 # A TWIN_DB that already exists is continued: RTAB-Map adds a new session to
 # it and links it to the old map once it recognises a place (--resume).
@@ -54,6 +56,7 @@
 #   TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5  TWIN_VLM_ACT=1  TWIN_VLM_CONFIRM=2
 #   TWIN_AUTOLOCALIZE=0|1    TWIN_DOCK="0 0 0"  (x y yaw in TWIN_MAP_FRAME)
 #   TWIN_ROOMS=1  TWIN_ROOM_DOOR_WIDTH=0.9 (m)  TWIN_ROOM_MIN_AREA=1.5 (m^2)
+#   TWIN_SURVEY=1  TWIN_SURVEY_AUTO=0|1
 #   TWIN_YOLO_CLASSES="chair,person,..."|all
 #   TWIN_MAP_FRAME=lidar3d_map  TWIN_BASE_FRAME=base_link
 #   TWIN_RTAB_ARGS="..."        extra RTAB-Map parameters, e.g. "--Grid/CellSize 0.1"
@@ -90,6 +93,8 @@ TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
 TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
 TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_ROOMS="${TWIN_ROOMS:-1}"
+TWIN_SURVEY="${TWIN_SURVEY:-1}"
+TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}"
 TWIN_ROOM_DOOR_WIDTH="${TWIN_ROOM_DOOR_WIDTH:-0.9}"
 TWIN_ROOM_MIN_AREA="${TWIN_ROOM_MIN_AREA:-1.5}"
 read -r DOCK_X DOCK_Y DOCK_YAW <<< "${TWIN_DOCK:-0 0 0}"
@@ -174,6 +179,16 @@ start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
 if [ "$TWIN_ROOMS" = 1 ]; then
     start rooms python3 -u /twin/room_segmentation_node.py --ros-args \
         -p door_width:="$(float "$TWIN_ROOM_DOOR_WIDTH")" -p min_room_area:="$(float "$TWIN_ROOM_MIN_AREA")"
+fi
+
+# Autonomous survey: explore -> rooms -> visit + categorize each -> report -> dock.
+# Always running (dashboard "Auto Survey"); TWIN_SURVEY_AUTO=1 (--survey) starts it unattended.
+if [ "$TWIN_SURVEY" = 1 ]; then
+    start survey python3 -u /twin/survey_manager.py --ros-args \
+        -p auto_start:="$( [ "$TWIN_SURVEY_AUTO" = 1 ] && echo true || echo false )" \
+        -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" \
+        -p map_frame:="$TWIN_MAP_FRAME" -p base_frame:="$TWIN_BASE_FRAME" \
+        -p database:="$TWIN_DB"
 fi
 
 # One-shot: /initialpose at the session's start pose (the dock), then exits.

@@ -175,6 +175,7 @@ iterations, see [Developing the dashboard](#developing-the-dashboard).
 ./scripts/runtime/wifi_3d_nav.sh --no-explore     # you drive by clicking goals
 ./scripts/runtime/wifi_3d_nav.sh --ai             # + YOLO, VLM, battery manager
 ./scripts/runtime/wifi_3d_nav.sh --ai --resume    # after a battery swap: continue the last map
+./scripts/runtime/wifi_3d_nav.sh --survey         # unattended: map, find and name every room, dock
 ./scripts/runtime/wifi_3d_nav.sh --sim            # against the Gazebo simulation
 ```
 
@@ -185,6 +186,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 |---|---|
 | *(default)* | `auto`: Go2 camera fusion if `/camera/image_raw` publishes, else LiDAR-only |
 | `--ai` | Also start YOLO11s and the VLM (both need the camera) and the battery manager. See [AI nodes](#ai-nodes---ai) |
+| `--survey` | `--ai`, and start the [autonomous survey](#autonomous-survey---survey) by itself: no user input from start to dock |
 | `--no-yolo` / `--no-vlm` / `--no-battery` | With `--ai`: leave that one out |
 | `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
 | `--save-location` | In a second terminal: label points clicked in the dashboard, saved to `config/semantic_locations.json` |
@@ -413,6 +415,77 @@ Lab, Office)"*. It shortens the answer to at most three words and publishes
 
 ---
 
+## Autonomous survey (`--survey`)
+
+The survey maps and organises an unknown building **with nobody at the
+controls**, like a robot vacuum's first "fast mapping" run. One command:
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --survey      # dog standing at the dock
+```
+
+`--survey` is `--ai` plus `TWIN_SURVEY_AUTO=1`. Without it the survey still
+runs in every session and waits: **Auto Survey** (top of the bottom-left
+panel) starts and stops it from the dashboard.
+
+[`twin/survey_manager.py`](../twin/survey_manager.py) conducts the existing
+nodes through these steps:
+
+| Step | What happens | Ends when |
+|---|---|---|
+| `EXPLORING` | `/explore/resume true`: the frontier explorer maps the area. Every YOLO object is placed on the map (`/yolo/objects`) and remembered | the explorer reports `DONE` (no reachable frontier left), or 30 min |
+| `SEGMENTING` | The room node re-segments the finished map | the new room map arrives |
+| `VISITING` | Rooms in nearest-first order: `/goal_pose` to each room's open centre | arrived (0.7 m), or skipped after 2 min |
+| `SCANNING` | A slow 360° spin, so YOLO sees the whole room; the VLM is asked for a name | spin done and the VLM answered (or 45 s) |
+| `NAMING` | The room is categorised (below) and renamed | immediately |
+| `RETURNING` | `/goal_pose` to the dock | arrived |
+| `DONE` | Writes the report and the home map | — |
+
+**How a room gets its name.** Only objects whose map position lies **inside
+the room's polygon** count. Each COCO class is evidence for a room type, and
+a type needs a score of 2.5:
+
+| Type | Evidence (weight) |
+|---|---|
+| Bedroom | bed (3) |
+| Bathroom | toilet (3), sink (1) |
+| Kitchen | refrigerator (3), oven (3), microwave (2), toaster (2), sink (1) |
+| Living Room | couch (2), tv (1.5) |
+| Dining Room | dining table (2), chair (0.5) |
+| Office | laptop (2), keyboard (1.5), … |
+| Plant Area | potted plant (1 each) |
+
+If no type is confident, the VLM's suggestion is used; if there is none, the
+room keeps its number. The survey renames as `source: auto`, so a name a
+person typed in the dashboard is **never overwritten**. Auto-named rooms show
+✨ in the Rooms panel; hover the name to see the objects found.
+
+**Low battery** pauses the survey while the battery manager docks. When the
+battery is back, the survey continues the step it was in (a room being
+scanned is visited again first).
+
+**Output** (in [`config/`](../config/)):
+
+- `survey_report.json`: per room the name, the reason (`objects (1 bed)`,
+  `vlm` or `no evidence`), the type score, the objects found, the VLM answers
+  and whether it was reached; plus the duration;
+- `home_map.json`: the RTAB-Map database of this survey, to reuse with
+  `--resume`;
+- `semantic_rooms.json`: updated by the room node as usual.
+
+| Topic | Type | Use |
+|---|---|---|
+| `/survey/command` | `std_msgs/String` JSON | `{"op": "start"}` / `{"op": "stop"}` |
+| `/survey/status` | `std_msgs/String` JSON, 1 Hz | `state`, `note`, `room`, `room_index` / `rooms_total`, `elapsed_s`, `results` |
+| `/yolo/objects` | `std_msgs/String` JSON | Every detection with its map position (class, score, x, y, depth) |
+
+Tested off-robot with a simulated session: three rooms visited in order,
+named Bedroom (bed), Kitchen (refrigerator + oven) and, from the VLM,
+Hydroponic Lab. A battery pause mid-room resumed correctly, the dog returned to the
+dock and both files were written.
+
+---
+
 ## Resuming a map (`--resume`)
 
 After a battery swap, restart with `--resume`:
@@ -634,6 +707,9 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Dashboard: camera "no frames" | Camera mode only (see READY `RTAB-Map : camera`); `tail …/ws/log/3d/image_compressor.log` |
 | No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
 | Merge refused | The two rooms don't touch; merge through the room between them first |
+| Auto Survey button greyed out | `survey_manager` isn't running: `tail …/ws/log/3d/survey.log` (`TWIN_SURVEY=0`?) |
+| Survey stuck in `EXPLORING` | The explorer never reports `DONE` (an unreachable frontier keeps it busy). It moves on after 30 min; check `/explore/status` |
+| Rooms only get numbers | No objects inside the room and no VLM answer: needs the camera and `--ai` (or `--survey`). `survey_report.json` shows the objects found per room |
 | Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
@@ -699,6 +775,12 @@ WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
 - **Room polygons follow the costmap.** Furniture splits or dents rooms. The
   door width is a single global setting; tune it per building.
+- **Room types are COCO-limited.** The survey can recognise bedrooms,
+  kitchens, bathrooms and the like; agricultural rooms are only "Plant
+  Area" unless the VLM names them. A custom YOLO model would fix that.
+- **The home map is not yet loaded in localization mode.** `home_map.json`
+  points at the database; a later run reuses it with `--resume` (mapping
+  continues).
 - **Waypoint queue in the dashboard.** Each click replaces the current goal.
   For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
 - **Costmap in the dashboard.** Not drawn; use RViz or Foxglove

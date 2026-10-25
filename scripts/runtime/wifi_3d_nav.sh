@@ -32,6 +32,7 @@
 #                      (add-yolo-costmap-source.sh), VLM BLOCKED -> pause + dock,
 #                      and auto-localization (as --resume). Needs Ollama for the VLM.
 #   ./scripts/runtime/wifi_3d_nav.sh --no-localize   # with --ai/--resume: no /initialpose
+#   ./scripts/runtime/wifi_3d_nav.sh --survey        # unattended: explore, rooms, categorize, report, dock (= --ai + auto start)
 #   ./scripts/runtime/wifi_3d_nav.sh --resume        # continue the newest map (after a battery swap)
 #   ./scripts/runtime/wifi_3d_nav.sh --save-location # (2nd terminal) label clicked points
 #   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion (no YOLO/VLM)
@@ -106,6 +107,7 @@ while [ $# -gt 0 ]; do
         --lidar-only) TWIN_MODE="lidar" ;;
         --camera)     TWIN_MODE="camera" ;;
         --ai)         AI="true" ;;
+        --survey)     AI="true"; TWIN_SURVEY_AUTO="1" ;;   # unattended survey needs YOLO + VLM
         --no-yolo|--no-vlm|--no-battery)
                       NO_AI+=("${1#--no-}") ;;
         --resume)     RESUME="true" ;;
@@ -367,6 +369,7 @@ start_twin_when_ready() {
             -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
+            -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
@@ -443,7 +446,7 @@ esac
 
 image_present || die "image ${TWIN_IMAGE} missing: run $0 --build (one-time, needs internet)"
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
-         "${TWIN_DIR}/room_segmentation_node.py" \
+         "${TWIN_DIR}/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
          "${NODES_DIR}/battery_manager.py" "${NODES_DIR}/vlm_reasoning_node.py" \
          "${NODES_DIR}/save_location.py" "${NODES_DIR}/auto_localize.py"; do
@@ -505,6 +508,7 @@ echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
 echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"
 echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> pause + dock" || echo "report only" ))" )"
 echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialpose at the dock (0 0 0) on start" || echo "manual" )"
+echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
