@@ -94,6 +94,7 @@ both the dog and the arm — is the long-term goal.
 | [gazebo/README.md](gazebo/README.md) | Gazebo simulation of the Go2 + D1: setup, what is simulated, limits |
 | [docs/roadmap.md](docs/roadmap.md) | Phase 1 roadmap |
 | [docs/tour.md](docs/tour.md) | Waypoint mode setup |
+| [docs/exploration.md](docs/exploration.md) | Frontier auto-explore: run it, parameters, fixes so far, known issues |
 | [docs/simulation.md](docs/simulation.md) | Test the explorer + Nav2 in the CMU Unity sim (no robot) |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Standalone troubleshooting guide |
 | [config/README.md](config/README.md) | Config folder notes (RViz layout) |

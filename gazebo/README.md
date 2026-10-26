@@ -25,7 +25,7 @@ Docker and a desktop session (RViz and the Gazebo window). No GPU required
 | Jetson: Point-LIO → `/lidar3d/odom`, `/lidar3d/registered`, `/lidar3d/path` on DDS domain 64 | `sim_robot_bridge.py` publishes the same topics, same frames (`lidar3d_map`), from Gazebo |
 | Leg joints from `/lf/lowstate` | `/joint_states` with a fixed standing pose |
 | cmd_vel TCP server on Jetson :17999 (`go2_cmd_vel_tcp.py`) | Same 12-byte protocol on :17999 of this machine → Gazebo |
-| Sport API walking | **Gliding base**: the body follows `/cmd_vel` (VelocityControl); legs hold a standing pose, no gait. The bridge also turns the base back to level (`--upright-gain`, default 2/s), so a knock can't leave it tilted |
+| Sport API walking | **Gliding base**: the body follows `/cmd_vel` (VelocityControl); legs hold a standing pose, no gait. The bridge also turns the base back to level (`--upright-gain`, default 2/s), so a knock can't leave it tilted. Feet and body are frictionless, so slow turns (0.1 rad/s) move it as commanded |
 | Front camera | Gazebo camera → `/camera/image_raw` (no relay needed) |
 | D1 arm over `enp0s8`, DDS domain 0, JSON on `rt/arm_Command` | `d1_arm_emulator.py` speaks the same protocol on interface `simarm0` and drives the Gazebo joints |
 
@@ -119,7 +119,7 @@ These are deliberate. They're listed so test results aren't over-read:
   drift, set `SIM_DRIFT_YAW` / `SIM_DRIFT_SCALE`: the reported pose then
   diverges from the truth and the lidar cloud is placed with the drifted pose,
   so walls smear and double as they do with real drift.
-- **Lidar.** It's a level 360°×65° scanner (180×16 rays at 10 Hz), not the L1's hemispherical pattern.
+- **Lidar.** It's a level 360°×65° scanner (180×16 rays at 5 Hz, `SIM_LIDAR_HZ`), not the L1's hemispherical pattern.
 - **D1 motion.**
   - Motion is rate-limited to 60°/s, or paced by `delay_ms`. The real controller's own profile is unknown.
   - **Release** holds the pose, because Gazebo joints can't go limp.
@@ -183,6 +183,9 @@ The sim needs a desktop session even without the Gazebo window. The server
 renders the lidar through `$DISPLAY`. `--headless-rendering` (EGL, used only
 when there is no display) returns empty lidar scans on the VM's software GL,
 so Nav2 gets no map.
+
+Explorer settings, results and the known "stuck next to a crate" case:
+[docs/exploration.md](../docs/exploration.md).
 
 `run_sim.sh up` does nothing if the sim is already running. Run
 `./gazebo/run_sim.sh down` first when you switch worlds.

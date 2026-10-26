@@ -282,6 +282,15 @@ If the dog then explores, the bug is in `go2_explore_panel`. Check the
 plugin XML and `CMakeLists.txt` in
 [`src/go2_explore_panel/`](../src/go2_explore_panel/).
 
+### Dog stuck in the purple costmap next to a box, `No frontier has a goal clear of walls`
+
+The dog stopped facing an obstacle inside its inflation zone. Nav2's
+controller aborts every new goal with `RegulatedPurePursuitController detected
+collision ahead!` because it can't turn in place first. The explorer then
+blacklists those frontiers. Drive it clear with 2D Goal Pose and click START
+again, or try `EXPLORE_UNSTICK_ENABLE=true`. Details and the planned fix:
+[exploration.md → Known issue](exploration.md#known-issue-stuck-next-to-an-obstacle).
+
 ### Explorer `state=EXPLORING`, `goals_sent=0`
 
 The explorer enabled but frontier detection isn't producing anything.

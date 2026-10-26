@@ -1,0 +1,104 @@
+# Frontier auto-explore: how to run it and what changed
+
+The Go2 maps an area on its own: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py)
+picks the edge between known and unknown space and sends it to Nav2 as a goal.
+It repeats until no reachable edge is left.
+
+## Run it
+
+```bash
+# Real robot
+./scripts/runtime/wifi_nav.sh
+# Gazebo sim (no robot): field + building with rooms
+./scripts/runtime/wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera
+```
+
+Then click **Auto Explore: START** in RViz (or `ros2 topic pub --once
+/explore/resume std_msgs/Bool "{data: true}"`). Click **STOP**, or press Ctrl+C
+in the terminal, to stop. Ctrl+C also stops the robot and the helpers.
+
+To get a shell that sees the stack's topics (same DDS settings as the stack):
+
+```bash
+./scripts/tools/ros_shell.sh                                   # go2-lidar3d
+./scripts/tools/ros_shell.sh go2-lidar3d ros2 topic echo /explore/status
+```
+
+A plain `docker exec -it go2-lidar3d bash` only shows `/rosout` and
+`/parameter_events`.
+
+## Parameters
+
+There is one file for the real robot and the sim:
+[`config/frontier_explorer.yaml`](../config/frontier_explorer.yaml).
+`wifi_nav.sh` copies it into the container. To override one value without
+editing the file:
+
+```bash
+EXPLORE_GOAL_CLEARANCE_M=0.5 ./scripts/runtime/wifi_nav.sh --sim ...
+```
+
+| Parameter | Value | What it does |
+|---|---|---|
+| `frontier_max_cost` | 98 | A frontier cell can have cost up to this (just below inscribed). With only cost 0, the edges in 1.2 m doorways were too small to count |
+| `min_frontier_size` | 4 | Smallest frontier, in cells |
+| `unknown_hole_max_cells` | 16 | Unknown pockets this small are lidar gaps (the blind ring around the robot, speckles), not frontiers |
+| `goal_clearance_m` | 0.6 | A goal must be this far from walls (lethal cells) |
+| `goal_unknown_clearance_m` | 0.3 | and this far from unknown space |
+| `turn_clearance_m` | 0.6 | Room needed to turn in place before a goal behind the robot |
+| `goal_timeout_s` + `goal_timeout_per_m` | 60 + 4/m | Time allowed per goal grows with its distance |
+| `frontier_blacklist_s` | 30 | A failed frontier is skipped for this long |
+| `frontier_max_attempts` | 3 | After 3 failures it is skipped for good. Until then the explorer waits and retries instead of saying "Exploration complete" |
+| `unstick_enable` | false | Back off when boxed in. Off until tested on the robot |
+
+## Improvements so far (branch `wifi-3d-nav`)
+
+| Problem | Fix |
+|---|---|
+| START in RViz did nothing | The explorer was started without the stack's `RMW_IMPLEMENTATION` / `CYCLONEDDS_URI`, so it was on a different DDS setup from RViz. `wifi_nav.sh` now starts the explorer, the floor filter, the camera relay and the stop with the same settings (`DDS_EXEC_ENV`) |
+| Explorer stalled on a fresh map | Speckles in the lidar ring were treated as frontiers, leaving one valid goal cell. Small unknown pockets are now filled as free (`unknown_hole_max_cells`) |
+| Explorer said "complete" in the corridor | Three causes: doorway frontiers were too small (`frontier_max_cost`), long goals timed out (`goal_timeout_per_m`), and blacklisted frontiers were hidden instead of retried (`frontier_max_attempts`) |
+| Two configs drifted apart | One shared `config/frontier_explorer.yaml` with `EXPLORE_*` overrides |
+| Robot clock off from the laptop | `wifi_nav.sh` checks the clock skew at startup |
+
+Sim fixes (see [`gazebo/README.md`](../gazebo/README.md)):
+
+- The robot no longer tilts or floats: an upright hold.
+- The robot no longer crawls: headless by default, 5 Hz lidar, `--no-camera`, and a real-time-factor check.
+- Lidar scans are no longer empty without the window: rendering goes through `$DISPLAY`.
+- Slow turns now move the robot: frictionless feet.
+- New `agri_rooms` world with a corridor and three rooms for exploration tests.
+
+Results in the sim, `agri_rooms`:
+
+- One run mapped the doorway, the corridor and all three rooms in about 2 minutes.
+- Other runs got stuck as described in the next section.
+
+## Known issue: stuck next to an obstacle
+
+**Symptom.** The robot stops in the purple (inflated) part of the costmap,
+facing a crate or wall about 0.6 m away. The explorer log shows several
+`Nav2 controller ABORTED` within a second each, then repeated
+`No frontier has a goal clear of walls`.
+
+**Cause.**
+1. Nav2's Regulated Pure Pursuit (RPP) controller drives forward along an arc.
+2. Its collision check sees the obstacle in that arc and aborts ("collision ahead").
+3. The rotation shim turns in place only when the path is more than 0.8 rad off the robot's heading, so at smaller angles nothing turns the robot first.
+4. The explorer treats each abort as a bad frontier and blacklists it.
+
+**What helps now.**
+- Drive the robot a little away with 2D Goal Pose, then START again.
+- Or set `EXPLORE_UNSTICK_ENABLE=true` (untested on the robot).
+
+**Planned.**
+- **Explorer:** when Nav2 aborts before the robot has moved, back off and retry instead of blacklisting the frontier.
+- **Nav2 (go2-nav2-wifi):**
+  - Trial `use_rotate_to_heading: true`. It got the robot through the room 2/3 doorway once in the sim.
+  - Trial a lower shim `angular_dist_threshold`.
+
+  Neither change is made yet; both need repeat trials first.
+
+## Troubleshooting
+
+See [troubleshooting.md → Explorer](troubleshooting.md#explorer).

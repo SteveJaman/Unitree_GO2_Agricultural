@@ -14,6 +14,7 @@ Output (in --out):
 What the builder changes:
   * Go2 legs become fixed joints at a standing pose ("gliding base"): the body
     is moved by gz VelocityControl from /cmd_vel; there is no gait.
+    Go2 contacts are frictionless so the body moves exactly as commanded.
   * The D1 is attached to the Go2 trunk (--mount), with names prefixed "d1_".
     Its URDF ships effort=0 velocity=0 on every joint, which would make the
     joint controllers apply no force, so real limits are patched in.
@@ -262,6 +263,14 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
     strip_ros1_extensions(robot)
     rewrite_meshes(robot, "go2_description", mesh_root)
     stand_angles = fix_leg_joints(robot, stand)
+    # Frictionless Go2 contacts. The legs rest on the ground (VelocityControl
+    # ignores linear z, gravity holds the feet down), and per 4 ms step
+    # friction cancelled ~0.04 m/s of foot motion: a 0.1 rad/s turn did not
+    # move the robot at all (Nav2's RPP ramps its turn rate from measured
+    # speed, so it stayed at 0.1 for good) and 0.30 m/s came out as 0.27.
+    for link in robot.findall("link"):
+        if link.find("collision") is not None:
+            gz(robot, f'<gazebo reference="{link.get("name")}"><mu1>0</mu1><mu2>0</mu2></gazebo>')
 
     roots = {l.get("name") for l in robot.findall("link")} - {j.find("child").get("link") for j in robot.findall("joint")}
     if roots != {"base"}:
