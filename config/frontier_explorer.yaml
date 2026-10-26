@@ -23,6 +23,9 @@ frontier_explorer:
     frontier_blacklist_s: 30.0
     frontier_blacklist_radius_m: 0.5
     frontier_max_attempts: 3             # then skipped for good; until then it blocks "complete"
+    traversable_max_cost: 98             # path-distance BFS: cells up to this cost
+    replan_on_explored: true             # drop a goal once its frontier has been seen
+    frontier_gone_radius: 0.6
 
     # Keep goals and turns away from walls (distances to lethal cells)
     goal_clearance_m: 0.6

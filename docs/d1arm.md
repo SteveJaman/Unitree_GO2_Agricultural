@@ -41,6 +41,14 @@ there: `pip3 install cyclonedds`. Don't source ROS in that shell: ROS's
   Joint names: 0 base, 1 shoulder, 2 elbow, 3 wrist roll, 4 wrist pitch, 5 wrist yaw.
 - Arm default IP `192.168.123.100`.
 
+## Hardware
+
+- **Power:** 24V DC via the DC 5.5-2.1 barrel jack (~1 min boot)
+- **Communication:** RJ45 to the VM's `enp0s8`. Arm at `192.168.123.100`, VM at
+  `192.168.123.99` (`sudo ip addr add 192.168.123.99/24 dev enp0s8`). DDS
+  discovery is multicast. It is kept separate from the Go2's Wi-Fi DDS
+- **Debug:** USB-C (serial debug only)
+
 ## Network
 
 The arm must be on its own wired interface in the VM (`enp0s8` by default). The
@@ -111,6 +119,37 @@ $A sweep --joints 0,1 --pct 50 --yes
   (DDS discovery wait, default 20 s), `--retries`, `--verbose`,
   `--skip-preflight`.
 
+## Command reference
+
+Every command is `{"seq":N,"address":1,"funcode":F,"data":{...}}`, where
+`data` is a nested JSON object, not a string.
+
+| Action | funcode | `data` | Purpose |
+|---|---|---|---|
+| Single joint | `1` | `{"id":J,"angle":DEG,"delay_ms":0}` | Move joint J (6 = gripper) |
+| All joints | `2` | `{"mode":1,"angle0":…,"angle6":…}` | Move all 7 at once |
+| Enable all | `5` | `{"mode":80000}` | Motors on, fully locked |
+| Release | `5` | `{"mode":0}` | Motors off (limp, drag-teach) |
+| Home | `7` | *(none)* | Return all joints to zero |
+
+Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
+The scripts reject anything beyond them.
+
+## Parameters
+
+| Flag / env | Default | Notes |
+|---|---|---|
+| `--iface` / `ARM_IFACE` | `enp0s8` | Interface that reaches the arm |
+| `--ip` / `ARM_IP` | `192.168.123.100` | Arm address (preflight ping and route check) |
+| `ARM_HOST_IP` | `192.168.123.99` | VM address `start_arm.sh` expects on the interface |
+| `--domain` / `ARM_DOMAIN` | `0` | DDS domain |
+| `--enable-mode` | `80000` | `enable` value (80000 = fully locked) |
+| `--match-timeout` | `20` | Seconds to wait for DDS discovery |
+| `--deg` | `45` | `lift` target for the shoulder |
+| `--pct` / `--joints` | `90` / `all` | `sweep` range (% of limit) and joints |
+| `--yes` | off | Skip the confirmation prompt for `lift` / `sweep` |
+| `--peer` | *(none)* | Unicast discovery. **Don't use**: this firmware needs multicast |
+
 ## Offset calibration
 
 `calibrate_arm.py` moves each joint through ±`--test-deg` from zero and
@@ -140,6 +179,7 @@ export ARM_IFACE=simarm0 ARM_HOST_IP=192.168.123.51
 `wifi_nav.sh --sim --arm` sets these for you.
 
 Sim differences:
+
 - Motion is rate-limited to 60°/s.
 - `release` holds the pose.
 - Gripper 0–65° maps to 0–30 mm of finger travel.
@@ -160,9 +200,22 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 | `free(): invalid pointer` crash | ROS's CycloneDDS mixed with the pip one | run without sourcing ROS |
 | `wifi_nav.sh --arm` skipped the arm | see `go2-nav2-wifi/ws/log/arm.log` | run `start_arm.sh --check` |
 
+## Arm roadmap
+
+| Step | Purpose | Status |
+|---|---|---|
+| 1. Direct control | Prove the arm responds to JSON commands | Written: chain control, fold, lift/sweep, offset calibration |
+| 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
+| 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
+| 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
+| 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |
+| 6. AI autonomy | Model commands both the dog and the arm | Long-term |
+
+See [docs/roadmap.md](roadmap.md) for the overall project roadmap.
+
 ## References
 
-- Unitree D1 doc: https://support.unitree.com/home/en/developer/D1Arm_services
+- Unitree D1 doc: <https://support.unitree.com/home/en/developer/D1Arm_services>
 - chen37058/Grasp-with-the-Unitree-D1 (C++ SDK grasping demos)
 - SofiaAbal/tfg_go2_arm PR #23 (D1-550 driver: enable mode 80000, home funcode 7)
 - Robot-Learning-Group/d1t-teleop (pure Python, `unitree_sdk2py` + cyclonedds, hardware-verified)

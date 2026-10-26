@@ -1,3 +1,4 @@
+<!-- markdownlint-disable-file MD025 -- "Phase" sections are top-level on purpose -->
 # Roadmap
 
 [← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](tour.md) · [Camera](camera.md) · [Troubleshooting](troubleshooting.md)
@@ -15,6 +16,7 @@ colored 3D map, and produces a viewable "home tour" that can be replayed
 in a standalone viewer.
 
 **Definition of done:**
+
 1. Robot explores a 3×3 m room with no human input after START
 2. A dense colored PLY is exported
 3. The PLY opens in Open3D and looks like a room
@@ -72,6 +74,7 @@ live map. This is the single most important verification in Phase 1.
 | 2.5 | No re-sending of blacklisted goals | ⏳ |
 
 **Fix applied this session:**
+
 - `map_frame` default → `lidar3d_map` (was `map`)
 - `map_topic` default → `/global_costmap/costmap` (was `/map`, doesn't exist)
 - `min_frontier_size` → `4` (was 8, too strict)
@@ -118,10 +121,26 @@ The pipeline that produces the dense 3D tour.
 | 4.5 | Open PLY in Open3D | ✅ [`scripts/tools/export_tour.py`](../scripts/tools/export_tour.py) written |
 | 4.6 | Poisson mesh from point cloud | ✅ `export_tour.py` includes this |
 | 4.7 | RTAB-Map in its own container (`go2-3d`), DB saved on every exit | ✅ [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh), [`twin/`](../twin/) written |
-| 4.8 | Live 3D view in Foxglove (foxglove_bridge / rosbridge) | ✅ written, ⏳ verify on robot |
-| 4.9 | Click a 3D point in Foxglove → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
+| 4.8 | Live 3D view: custom web dashboard (React + three.js, `twin/webapp`); Foxglove as alternative | ✅ written, tested against a mock rosbridge, ⏳ verify on robot |
+| 4.9 | Click a 3D point (dashboard or Foxglove) → Nav2 goal, snapped to safe floor (BFS + 3×3 clearance) | ✅ [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py) written, ⏳ verify |
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
-| 4.11 | YOLO semantic layer (detections → 3D markers in Foxglove) | ⏳ |
+| 4.11 | YOLO semantic layer (detections → 3D markers in the dashboard) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
+| 4.12 | Go2 camera + LiDAR fusion (LiDAR → depth image, coloured map) | ✅ written in `twin/start_inside.sh`, ⏳ verify; accuracy needs 3.4 |
+| 4.13 | YOLO obstacles in the Nav2 costmap | ✅ [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), run automatically with `--ai`, ⏳ verify |
+| 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ |
+| 4.15 | Low-battery return to the dock (`--ai`) | ✅ [`battery_manager.py`](../scripts/nodes/battery_manager.py) written, ⏳ verify |
+| 4.16 | Local VLM scene reasoning (Ollama llava) → `/vlm_decision` | ✅ [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) written, ⏳ verify; nothing acts on it yet |
+| 4.17 | Resume a map after a battery swap (`--resume`) | ✅ written, ⏳ verify |
+| 4.18 | Named semantic locations from clicked points | ✅ [`save_location.py`](../scripts/nodes/save_location.py) written, ⏳ verify |
+| 4.19 | Act on `/vlm_decision` | ✅ `BLOCKED` (2× in a row) → pause explorer + dock, ⏳ verify; `HYDROPONIC` / named-location goals ⏳ |
+| 4.21 | Zero-touch localization at the dock (`--ai` / `--resume`) | ✅ [`auto_localize.py`](../scripts/nodes/auto_localize.py) written, ⏳ verify |
+| 4.20 | Dashboard: costmap layer, waypoint queue | ⏳ (named locations ✅) |
+| 4.22 | Solid map in the dashboard (voxel filter, lighting, shadows) + exported Poisson mesh (`--export --mesh`, `--view`) | ✅ written, mesh tested on a synthetic room, ⏳ real scan |
+| 4.23 | Dashboard UI for demos: full-screen glass UI, waypoint pin + neon route, smoothed robot, dock button, VLM toasts, camera PiP | ✅ written, ⏳ verify on robot |
+| 4.24 | Semantic rooms: segmentation (erosion + geodesic growth), naming with VLM suggestion, merge, navigate to room | ✅ [`twin/room_segmentation_node.py`](../twin/room_segmentation_node.py) written, ⏳ verify on robot |
+| 4.25 | Room-aware behaviour (explore one room, VLM checks per room) | ⏳ |
+| 4.26 | Autonomous survey: explore → segment → visit + categorise each room (YOLO evidence, VLM fallback) → report → dock, no user input (`--survey`) | ✅ [`twin/survey_manager.py`](../twin/survey_manager.py) written, simulated, ⏳ verify on robot |
+| 4.27 | Home map in RTAB-Map localization mode; room divide; cleaning-style room sequence | ⏳ |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.
@@ -135,9 +154,9 @@ Make the explorer pause and capture at each frontier.
 
 | # | Task | Status |
 |---|---|---|
-| 5.1 | Add `spin_360()` to `frontier_explorer.py` | ✅ implemented |
-| 5.2 | Call `spin_360()` after each `goals_succeeded` | ✅ gated by `spin_on_goal` param |
-| 5.3 | Suppress goal publishing during spin | ✅ (spin blocks the tick loop) |
+| 5.1 | Add spin-on-goal (`start_spin()`) to `frontier_explorer.py` | ✅ implemented |
+| 5.2 | Spin after each `goals_succeeded` | ✅ gated by `spin_on_goal` param |
+| 5.3 | Suppress goal publishing during spin | ✅ (non-blocking: tick picks no goal while spinning; STOP ends it) |
 | 5.4 | Wait for RTAB-Map to process spin frames | ⏳ verify on robot |
 
 **Enable:** `-p spin_on_goal:=true`. Default is `false` so normal
@@ -179,6 +198,7 @@ and moves it through a repeatable scanning pattern over crop plants. Data
 is captured for later plant-analysis research.
 
 **Definition of done:**
+
 1. Arm responds to commands from the VM container
 2. Hyperspectral camera is mounted on the arm's end effector
 3. Arm moves the camera through a defined scan path over a plant
@@ -305,7 +325,7 @@ The long-term goal. An AI model commands both the dog and the arm.
 
 ## Order of work
 
-```
+```text
 Phase 1
     Milestone 0  ← foundation, must be green
          │

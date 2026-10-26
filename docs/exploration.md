@@ -49,6 +49,7 @@ EXPLORE_GOAL_CLEARANCE_M=0.5 ./scripts/runtime/wifi_nav.sh --sim ...
 | `goal_timeout_s` + `goal_timeout_per_m` | 60 + 4/m | Time allowed per goal grows with its distance |
 | `frontier_blacklist_s` | 30 | A failed frontier is skipped for this long |
 | `frontier_max_attempts` | 3 | After 3 failures it is skipped for good. Until then the explorer waits and retries instead of saying "Exploration complete" |
+| `replan_on_explored` | true | Drop a goal once its frontier is seen (not next to a wall) |
 | `unstick_enable` | false | Back off when boxed in. Off until tested on the robot |
 
 ## Improvements so far (branch `wifi-3d-nav`)
@@ -60,6 +61,26 @@ EXPLORE_GOAL_CLEARANCE_M=0.5 ./scripts/runtime/wifi_nav.sh --sim ...
 | Explorer said "complete" in the corridor | Three causes: doorway frontiers were too small (`frontier_max_cost`), long goals timed out (`goal_timeout_per_m`), and blacklisted frontiers were hidden instead of retried (`frontier_max_attempts`) |
 | Two configs drifted apart | One shared `config/frontier_explorer.yaml` with `EXPLORE_*` overrides |
 | Robot clock off from the laptop | `wifi_nav.sh` checks the clock skew at startup |
+
+Merged from upstream (`f29ab6d`) on top of these:
+
+- **Path distance.** Frontiers score by size over BFS path length from the
+  robot (`traversable_max_cost` 98), and unreachable ones are dropped.
+- **Goal faces the frontier,** so the robot arrives looking into the unknown.
+- **Re-plan** (`replan_on_explored`). The goal is dropped once its frontier
+  has been seen, but only when no wall is within `turn_clearance_m`.
+  In the first merged sim run, a re-plan stopped the robot in room 1's
+  doorway, where every next goal needed a turn that Nav2 refused.
+- **Nothing blocks the node:** the stop burst and the spin-on-goal run on a 20 Hz timer.
+
+Merged run in the sim (2026-10-26, `agri_rooms`, `--no-camera`, real-time factor 0.85):
+
+- "Exploration complete" after about 4 minutes, with goals in all three rooms.
+- 14 goals: 1 reached, 4 dropped early because their frontier was already
+  seen, and 9 abandoned.
+- Of the 9 abandoned, 7 were Nav2 "collision ahead" aborts (see the known
+  issue below), and 2 were goals that turned out too close to a wall once
+  the map filled in.
 
 Sim fixes (see [`gazebo/README.md`](../gazebo/README.md)):
 
