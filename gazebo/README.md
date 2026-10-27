@@ -32,7 +32,7 @@ The laptop side is **the real one**: `wifi_nav.sh --sim` launches the same
 `go2-session.sh start lidar3d-viz` (Nav2 + RViz) that `mapping.sh --3d --nav`
 launches, pointed at this machine instead of the robot.
 
-```
+```text
  go2-lidar3d container (unchanged)            go2-sim container (this folder)
  ───────────────────────────────              ─────────────────────────────────
  Nav2 + RViz + explorer  ── DDS domain 64 ──► sim_robot_bridge.py ◄─ ros_gz_bridge ◄─ Gazebo
@@ -117,7 +117,8 @@ These are deliberate. They're listed so test results aren't over-read:
   - **Release** holds the pose, because Gazebo joints can't go limp.
   - Motion commands sent before `enable` are acknowledged and ignored.
 - **Gripper.** Protocol 0–65° maps to finger travel of 0–30 mm. That's an assumption.
-- **Not simulated:** `wifi_mapping.sh` / `mapping.sh` themselves (they drive a real Jetson over SSH), RTAB-Map, and the hyperspectral camera.
+- **Not simulated:** `wifi_mapping.sh` / `mapping.sh` themselves (they drive a real Jetson over SSH), the battery, and the hyperspectral camera.
+- **3D twin:** `./scripts/runtime/wifi_3d_nav.sh --sim [--ai]` runs RTAB-Map, camera fusion, YOLO and the web dashboard (`http://localhost:3000`) against the simulated lidar and camera (horizontal FOV 68.75°). The battery manager stays idle (no `/lf/lowstate`). See [docs/3d_nav.md](../docs/3d_nav.md).
 
 ## Troubleshooting
 
