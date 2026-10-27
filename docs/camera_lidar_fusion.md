@@ -53,13 +53,13 @@ printing, because printers scale.
    A view is captured automatically whenever the board is found in a new
    enough pose. The coverage bars show what is still missing:
 
-   ```
+   ```text
      view 12/25   X #######...  Y #####.....  size ####......  skew ###.......
    ```
 
 4. After 25 views (or Ctrl+C with at least 8), it solves and prints:
 
-   ```
+   ```text
    RMS reprojection : 0.31 px   (< 0.5 good, < 1.0 usable, > 1.0 redo)
    fx fy            : 919.4 914.6   (horizontal FOV 69.7 deg)
    ```
@@ -209,6 +209,7 @@ without `--camera-obstacles` the source is removed again, and the file
 returns byte-for-byte to how it was.
 
 **Safety behaviour:**
+
 - The source has `expected_update_rate: 5.0`. If no camera obstacles arrive
   for 5 s, Nav2 treats the costmap as out of date and the controller stops.
   The 5 s leaves room for slow inference on a busy CPU; LiDAR obstacles
@@ -220,6 +221,7 @@ returns byte-for-byte to how it was.
   publishes an empty cloud.
 
 **Check it:**
+
 - **RViz:** **Camera obstacles** (red points) should sit on chair legs, the
   glass door and walls. **Camera depth** (off by default) shows the metric
   depth, labelled with the fit error.
@@ -244,6 +246,7 @@ frame on this VM, with the rest of the session running.
 | `max_fit_error` | `0.25` | Reject a frame's LiDAR fit above this median relative error |
 
 **Limits:**
+
 - **Calibration dependent:** the fit is only as good as the calibration and
   the camera mount. Run the [overlay check](#2-overlay-check) first.
 - **Glass:** it's seen as a surface in most frames, not every frame; door

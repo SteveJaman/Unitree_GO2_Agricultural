@@ -93,6 +93,10 @@ Unitree_GO2_Agricultural/
 │   ├── room_segmentation_node.py     # costmap -> rooms, names/merges -> config/semantic_rooms.json
 │   ├── survey_manager.py             # autonomous survey: explore, rooms, visit + name each, report, dock
 │   └── webapp/                       # web dashboard: React + three.js (Vite), full-screen map + glass UI, :3000
+│       ├── src/Go2Model.jsx          # Unitree Go2 model, leg joints from /joint_states
+│       ├── src/ros/cloudWorker.js    # point cloud decoding + voxels in a Web Worker
+│       ├── src/ros/quality.js        # performance mode (software renderer detection)
+│       └── public/go2/               # decimated go2_description meshes (build_go2_model.py)
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used

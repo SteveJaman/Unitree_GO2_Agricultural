@@ -51,6 +51,7 @@ to Unitree's `Move()`, and so does the simulator.
 ### Why the dog used to stare at walls
 
 Logs from a default-mode session (22:22–22:26) showed a loop:
+
 1. The explorer sends a frontier goal, but the dog is facing an obstacle.
 2. Regulated Pure Pursuit's collision check aborts the leg within
    milliseconds: `detected collision ahead!`

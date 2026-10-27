@@ -799,13 +799,14 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
 | Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
 | Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
-| Dashboard: camera "no frames" | Camera mode only (see READY `RTAB-Map : camera`); `tail …/ws/log/3d/image_compressor.log` |
+| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the VM's UDP buffers are too small: [troubleshooting](troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
+| Map stays empty in camera mode; `rtabmap.log` repeats `Did not receive data` | RTAB-Map waits for camera + LiDAR depth together; the camera is too slow or missing. Same UDP buffer fix; `--lidar-only` maps without the camera |
 | No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
 | Merge refused | The two rooms don't touch; merge through the room between them first |
 | Auto Survey button greyed out | `survey_manager` isn't running: `tail …/ws/log/3d/survey.log` (`TWIN_SURVEY=0`?) |
 | Survey stuck in `EXPLORING` | The explorer never reports `DONE` (an unreachable frontier keeps it busy). It moves on after 30 min; check `/explore/status` |
 | Rooms only get numbers | No objects inside the room and no VLM answer: needs the camera, YOLO and the VLM (not `--no-ai`). `survey_report.json` shows the objects found per room |
-| Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
+| Dashboard: battery "—" | `tail …/ws/log/3d/battery.log`: `No module named 'unitree_go'` was fixed (the battery manager now sources `/opt/go2-unitree-msgs`); `no battery data` = the relay does not forward `/lf/lowstate` |
 | Topics listed, but panels say "topic does not exist" or wait forever; `rtabmap.log` repeats `Did not receive data` | `go2-3d` is on the wrong DDS domain. `docker logs go2-3d \| grep 'DDS domain'` must show the session's domain (64) and `file:///tmp/go2-wifi-cyclonedds.xml`, not `domain 0`. Restart `wifi_3d_nav.sh` |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |

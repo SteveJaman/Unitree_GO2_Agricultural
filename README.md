@@ -42,7 +42,9 @@ Windows. The terminal prints the address.
 - the upstream stack and its lab fixes;
 - passwordless SSH to the robot;
 - the arm calibration;
-- Ollama for the VLM.
+- Ollama for the VLM;
+- bigger UDP receive buffers on the VM (one `sysctl` file), or camera
+  frames and LiDAR clouds get dropped.
 
 All of it is in **[docs/setup.md](docs/setup.md)**.
 
@@ -60,8 +62,10 @@ Other entry points:
 - **Auto-Explore:** a frontier explorer maps an area by itself; START / STOP
   from the dashboard or RViz.
 - **3D web dashboard:** a full-screen live 3D map in the browser (solid,
-  shadowed, camera-coloured), the robot, route and camera. Tap the floor to go
-  there. After a run, export a solid presentation mesh.
+  shadowed, camera-coloured), Unitree's Go2 model with live leg joints, the
+  route and camera. Tap the floor to go there. A performance mode keeps it
+  usable on a VM without 3D acceleration. After a run, export a solid
+  presentation mesh.
 - **Camera obstacles:** `--camera-obstacles` turns monocular depth, scaled by
   the LiDAR, into Nav2 obstacles (glass, table legs). `--fusion` colours the
   map from the calibrated camera.

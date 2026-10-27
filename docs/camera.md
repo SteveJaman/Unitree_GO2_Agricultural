@@ -19,7 +19,14 @@ go2_camera_jpeg_cli ─► go2_camera_wifi.py ──Wi-Fi──► go2_camera_re
    0.3 MB/s, stamped with the Jetson clock like the LiDAR.
 2. **On the laptop:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py)
    decodes it to `/camera/image_raw` and, once the camera is calibrated, also
-   publishes `/camera/camera_info`.
+   publishes `/camera/camera_info`. Images are stamped
+   `front_camera_optical` (z forward, x right, y down, the pinhole
+   convention of `camera_info`, YOLO and RTAB-Map). The URDF's `front_camera`
+   link is x forward; `wifi_3d_nav.sh` adds the rotation between the two.
+
+Each frame is ~50 UDP packets over Wi-Fi. With the Ubuntu default socket
+buffers the laptop drops most frames: raise them once
+([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)).
 
 `wifi_nav.sh` (and so `wifi_3d_nav.sh`) does both automatically unless you pass
 `--no-camera`. It copies the robot files to `~/go2-agri-camera/` on the robot

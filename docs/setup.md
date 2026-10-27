@@ -41,6 +41,17 @@ After the navigation setup above (needs internet):
 curl -fsSL https://ollama.com/install.sh | sh   # Ollama, for the VLM
 ```
 
+Raise the VM's UDP receive buffers once. The Ubuntu default (208 KB) is too
+small for DDS over Wi-Fi: a camera frame is ~50 UDP packets and one dropped
+packet loses the frame, so the camera arrives at a fraction of its 5 fps and
+RTAB-Map's camera mode gets no data. `wifi_nav.sh` warns when they are too
+small.
+
+```bash
+printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=8388608\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf
+sudo sysctl --system
+```
+
 That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
 `go2-3d` image (RTAB-Map, YOLO, web dashboard; ~3–4 GB) and pulls
 `llava:7b` (~4.7 GB). It also starts `ollama serve` when it isn't running.

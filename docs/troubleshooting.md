@@ -25,6 +25,7 @@ Sections are self-contained. Search for the error message you see.
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
 | Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [gazebo/README.md](../gazebo/README.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](../scripts/tools/test_explore.sh) |
+| Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | VM UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
 | Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
@@ -520,6 +521,27 @@ Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
 3. Is the RViz display set to **Reliability Policy: Reliable**? A Best Effort
    display drops most of the large raw frames (older layouts had Best Effort;
    `wifi_nav.sh` updates them on the next start).
+
+### Camera at ~0.2 fps, "Camera unavailable" in the dashboard, empty 3D map
+
+The robot log says `50 frames in 10 s`, but `camera_relay.log` counts 100
+frames every few minutes. The laptop drops the frames: check
+
+```bash
+grep -A1 '^Udp:' /proc/net/snmp      # RcvbufErrors growing = socket buffers overflow
+sysctl net.core.rmem_max             # 212992 = the Ubuntu default, too small
+```
+
+A 73 KB frame is ~50 UDP packets; one lost packet loses the frame. The same
+overflow starves RTAB-Map in camera mode (`Did not receive data`), so the map
+stays empty and YOLO and the VLM get no images. Raise the buffers once (see
+[setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)), then restart
+the session:
+
+```bash
+printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=8388608\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf
+sudo sysctl --system
+```
 
 ### Camera feed stutters or lags
 

@@ -144,6 +144,9 @@ The pipeline that produces the dense 3D tour.
 | 4.25 | Room-aware behaviour (explore one room, VLM checks per room) | ⏳ |
 | 4.26 | Autonomous survey: explore → segment → visit + categorise each room (YOLO evidence, VLM fallback) → report → dock, no user input (`--survey`) | ✅ [`twin/survey_manager.py`](../twin/survey_manager.py) written, simulated, ⏳ verify on robot |
 | 4.27 | Home map in RTAB-Map localization mode; room divide; cleaning-style room sequence | ⏳ |
+| 4.28 | Dashboard on a VM without 3D acceleration: performance mode, map decoding in a Web Worker, shadows once a second | ✅ ~3.4× frame rate in software WebGL (synthetic map), ⏳ verify in the lab browser |
+| 4.29 | Unitree Go2 model in the dashboard with leg joints from `/joint_states` | ✅ rendered and animated against synthetic joint data, ⏳ verify on robot |
+| 4.30 | Camera reliability over Wi-Fi: optical frame for YOLO/RTAB-Map, wait for the late robot camera, UDP buffer check | ✅ written (2026-10-27); ⏳ re-test after raising the VM's UDP buffers |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.
