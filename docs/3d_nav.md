@@ -377,8 +377,10 @@ curl -fsSL https://ollama.com/install.sh | sh    # on the VM
 ollama pull llava:7b                             # ~4.7 GB
 ```
 
-llava:7b on the VM's CPU takes tens of seconds per answer. A Windows host with
-a GPU is much faster:
+llava:7b on the VM's CPU is too slow to use: measured 2026-10-27, one camera
+frame takes ~2 min (plus ~5 min to load the model when the VM swaps), longer
+than the node's 120 s timeout, so no decision is ever published. A Windows
+host with a GPU answers in seconds:
 
 1. Install Ollama on Windows.
 2. Set `OLLAMA_HOST=0.0.0.0` there.
@@ -817,7 +819,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
 | Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
 | `initial pose NOT published` in `auto_localize.log` | The robot was more than 0.5 m from the origin at start: start the session with the dog at the dock |
-| `Ollama not reachable` in `vlm.log` | Start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
+| `Ollama not reachable` in `vlm.log` | `… timed out`: llava:7b on the VM's CPU needs ~2 min per frame, over the 120 s timeout; use a GPU host (`TWIN_VLM_URL`). Otherwise start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
 | `no battery data` in `battery.log` | The relay does not forward `/lf/lowstate`; check in `go2sh`: `ros2 topic hz /lf/lowstate` |
 | Low battery but the dog doesn't go home | `battery.log` shows `dock goal sent`? Then check Nav2 (`/plan`); the dock is `TWIN_DOCK` in `lidar3d_map` |
 | `--resume`: old and new map not joined | Needs a recognised place: `camera` mode, start at the old start point |

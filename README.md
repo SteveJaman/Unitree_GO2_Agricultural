@@ -80,7 +80,9 @@ Other entry points:
   rooms, visits and names each from what YOLO and the VLM see, saves a
   report and docks, with no user input.
 - **Arm control:** the D1-T over DDS/JSON (fold, joints, lift, sweep,
-  calibration), kept off the Go2 network.
+  calibration), wired to the workstation or plugged into the Go2 and
+  controlled over Wi-Fi (`--arm-wifi`). Teach & Playback: guide the arm by
+  hand to frame plants, then replay the scan sweep.
 - **Full mobility:** `--omni` lets Nav2 walk the dog backwards and sideways;
   stuck recovery backs it out of dead ends in every session.
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.

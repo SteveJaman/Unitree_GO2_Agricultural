@@ -225,6 +225,8 @@ is captured for later plant-analysis research.
 | 8.8 | Per-joint offset calibration ([`calibrate_arm.py`](../scripts/tools/calibrate_arm.py)), `lift` / `sweep` tests | ✅ written; ⏳ hardware |
 | 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ calibrated on the mount |
 | 8.10 | `wifi_nav.sh --arm`: dog + arm from one command, DDS isolated | ✅ written; ⏳ hardware |
+| 8.11 | Teach & Playback for plant scanning ([`teach_arm.py`](../scripts/tools/teach_arm.py), [`play_arm.py`](../scripts/tools/play_arm.py)): compliance mode, saved poses, replayed sweep | ✅ written, tested against a fake arm; ⏳ hardware |
+| 8.12 | Arm plugged into the Go2, controlled over Wi-Fi ([`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py), `--robot`, `--arm-wifi`) | ✅ written, bridge built on the robot, tested against a mock arm; ⏳ hardware |
 
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
 `rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1
