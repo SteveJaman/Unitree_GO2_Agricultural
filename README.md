@@ -137,7 +137,8 @@ This repo adds:
 - **AI:** YOLO11s obstacles in the costmap, VLM scene reasoning, battery dock,
   auto-localization, named locations.
 - **D1-T arm control:** chained DDS commands, fold / lift / sweep, offset
-  calibration.
+  calibration, Teach & Playback for plant scans, and control over Wi-Fi with
+  the arm plugged into the Go2 (robot-side TCP bridge).
 - **Orchestration:**
   - one command each for 2D, 3D, arm and simulation;
   - DHCP-proof networking that keeps the arm and dog networks isolated;

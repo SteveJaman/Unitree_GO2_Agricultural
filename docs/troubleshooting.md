@@ -409,9 +409,11 @@ Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
 [d1arm.md](d1arm.md).
 
 The arm is wired to the VM's `enp0s8` (VM `192.168.123.99`, arm `.100`, DDS
-domain 0, multicast discovery), **not** to the Go2. The arm scripts run with
-the VM's `python3` and the pip `cyclonedds` package. Don't source ROS in that
-shell.
+domain 0, multicast discovery), or plugged into the Go2 and reached over
+Wi-Fi through the robot's bridge (`--robot <ip>` / `--arm-wifi`, see
+[d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
+in its troubleshooting table). Wired, the arm scripts run with the VM's
+`python3` and the pip `cyclonedds` package; don't source ROS in that shell.
 
 ### Arm does not respond to commands
 
@@ -466,6 +468,19 @@ Navigation continues without the arm. The banner shows `D1 arm: disabled (...)`.
   Give `enp0s8` its `192.168.123.99` address.
 - `arm start failed`: read `~/files/go2-nav2-wifi/ws/log/arm.log`. A
   `preflight failed` there means the address or ping check failed.
+
+### Arm moves by itself between commands
+
+Seen 2026-10-27: after a command ended, the arm swung or folded with no move
+sent. Cause: enable-all (`funcode 5`, mode 80000) sent to an arm that is
+**already enabled** drives it back to its last multi-joint (`funcode 2`)
+target. An early version of the Wi-Fi bridge re-sent it on every disconnect.
+
+- Update: the bridge now stiffens only a compliant (teach-mode) arm, and
+  `fold` skips enable when the arm already is. Re-copy the bridge to the robot
+  (`wifi_nav.sh --arm-wifi` does it) and restart it.
+- Never put `enable` into a command chain while the arm is already enabled:
+  check with `start_arm.sh state` (`enable=1`) first.
 
 ### Arm moves but reports wrong joint angles
 

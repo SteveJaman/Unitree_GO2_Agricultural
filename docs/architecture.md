@@ -77,6 +77,17 @@ rt/arm_Feedback     ── joint angles, acks ──►   (host python3 + pip cy
                                   start_arm.sh fold ◄── wifi_nav.sh --arm
 ```
 
+Or plugged into the Go2, over Wi-Fi (`--arm-wifi`, `start_arm.sh --robot <ip>`):
+
+```text
+D1-T arm ──RJ45──► Go2 eth0 (192.168.123.x), DDS domain 0, multicast
+                        │
+              arm_bridge_wifi.py on the Jetson (rclpy, Unitree CycloneDDS)
+                        │ TCP 18100 over Wi-Fi, JSON lines, laptop only
+                        ▼
+              D1Arm on the VM (same scripts: control, fold, teach, play)
+```
+
 Key facts:
 
 - **SLAM runs on the Jetson.** The VM never runs `slam_toolbox`. The global
@@ -91,7 +102,11 @@ Key facts:
   The arm control script wraps the raw interface.
 - **Arm and dog DDS never mix.** The Go2 runs on `enp0s3` (domain 64), and the
   arm on `enp0s8` (domain 0) with its own CycloneDDS config. The scripts check
-  that the two interfaces are different and on separate subnets.
+  that the two interfaces are different and on separate subnets. Over Wi-Fi
+  the arm's DDS stays on the Go2's internal network; only TCP crosses Wi-Fi.
+- **Never re-enable an enabled arm.** Enable-all sent to an already enabled
+  D1 drives it back to its last multi-joint target (found 2026-10-27); see
+  [d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2).
 
 ---
 

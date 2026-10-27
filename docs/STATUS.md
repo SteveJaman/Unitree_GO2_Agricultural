@@ -269,10 +269,10 @@ relay is unconfirmed.
 | 7 | STOP button halts dog | click | stop within 1 s |
 | 8 | Full autonomous run | watch | `IDLE → EXPLORING → RETURNING → DONE` |
 | 9 | Camera reaches container | `ros2 topic hz /camera/image_raw` | ~10–30 Hz |
-| 10 | Arm reachable | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` | all PASS |
-| 11 | Arm responds to `joint` | `start_arm.sh enable sleep 2 joint 0 20 sleep 3 release` | joint 0 moves 20° |
+| 10 | Arm reachable | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` (on the Go2: `start_arm.sh --robot <ip> state`) | all PASS — ✅ over Wi-Fi 2026-10-27 |
+| 11 | Arm responds to `joint` | `start_arm.sh enable sleep 2 joint 0 20 sleep 3 release` | joint 0 moves 20° — ✅ over Wi-Fi 2026-10-27 (−0.8° → +20.0°) |
 | 12 | Joint offsets small | `start_arm.sh --calibrate --test-deg 10 --yes` | offsets within a degree or two |
-| 13 | Fold calibration | `start_arm.sh read`, paste, `start_arm.sh fold` | arm folds onto mount, goes limp |
+| 13 | Fold calibration | `start_arm.sh read`, paste, `start_arm.sh fold` | arm folds onto mount, goes limp — ✅ over Wi-Fi 2026-10-27 |
 | 14 | Robot discovery | `./scripts/runtime/wifi_nav.sh --check` | banner shows `[discovered]` robot IP |
 | 15 | Go2 Jetson MAC prefix | `ip link` on the Jetson | starts `02:00:00` (else set `GO2_MAC_PREFIX`) |
 | 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
@@ -420,7 +420,8 @@ matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 
 ```bash
 # 1. Power on the dog, stand it up
-# 2. Power on the D1 arm if using it (24V DC, RJ45 to the VM's enp0s8)
+# 2. Power on the D1 arm if using it (24V DC, RJ45 to the VM's enp0s8;
+#    or plug it into the Go2 and use --arm-wifi / start_arm.sh --robot <ip>)
 sudo ip addr add 192.168.123.99/24 dev enp0s8  # after each VM reboot
 ./scripts/runtime/start_arm.sh --check
 

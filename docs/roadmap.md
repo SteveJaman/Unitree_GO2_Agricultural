@@ -219,14 +219,14 @@ is captured for later plant-analysis research.
 | 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — preflight, `fold`, `read`, `--calibrate`, command chains from the VM | ✅ written |
 | 8.3 | Python DDS bindings on the VM | ✅ pip `cyclonedds` on the host (no SDK2, no container needed) |
 | 8.4 | Arm reachable from the VM (`enp0s8` `192.168.123.99` → arm `.100`, multicast) | ✅ verified config; check with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
-| 8.5 | Arm responds to `joint` command | ⏳ hardware |
+| 8.5 | Arm responds to `joint` command | ✅ verified over Wi-Fi (2026-10-27: joint 0 −0.8° → +20.0°) |
 | 8.6 | Arm responds to `joints` command | ⏳ hardware |
-| 8.7 | Joint feedback readable (`feedback`) | ⏳ hardware |
+| 8.7 | Joint feedback readable (`feedback`) | ✅ verified over Wi-Fi (2026-10-27) |
 | 8.8 | Per-joint offset calibration ([`calibrate_arm.py`](../scripts/tools/calibrate_arm.py)), `lift` / `sweep` tests | ✅ written; ⏳ hardware |
 | 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ calibrated on the mount |
 | 8.10 | `wifi_nav.sh --arm`: dog + arm from one command, DDS isolated | ✅ written; ⏳ hardware |
 | 8.11 | Teach & Playback for plant scanning ([`teach_arm.py`](../scripts/tools/teach_arm.py), [`play_arm.py`](../scripts/tools/play_arm.py)): compliance mode, saved poses, replayed sweep | ✅ written, tested against a fake arm; ⏳ hardware |
-| 8.12 | Arm plugged into the Go2, controlled over Wi-Fi ([`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py), `--robot`, `--arm-wifi`) | ✅ written, bridge built on the robot, tested against a mock arm; ⏳ hardware |
+| 8.12 | Arm plugged into the Go2, controlled over Wi-Fi ([`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py), `--robot`, `--arm-wifi`) | ✅ verified on the robot (2026-10-27): state, `joint`, `home`, `fold` over Wi-Fi; found and fixed re-enable driving the arm to its last target; `power 0` open |
 
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
 `rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1

@@ -155,9 +155,15 @@ The usual way is `./scripts/runtime/wifi_nav.sh --arm`. It checks that
 launches, logging to `go2-nav2-wifi/ws/log/arm.log`. If the arm isn't ready,
 navigation still starts and the arm is skipped with a warning.
 
-The fold: power on and enable the motors, send one funcode=2 multi-joint move
-to `FOLDED_ANGLES`, wait 5 s, then **release the motors and power off**. After
-that the arm is limp and rests on its mount.
+The fold: power on and enable the motors (skipped when they already are), send
+one funcode=2 multi-joint move to `FOLDED_ANGLES`, wait until the pose is
+reached (±3°, up to 30 s), then **release the motors and power off**. After
+that the arm is limp and rests on its mount; if the pose is not reached it
+stays holding instead.
+
+With the arm plugged into the Go2 instead of `enp0s8`, use
+`./scripts/runtime/wifi_nav.sh --arm-wifi`: same fold, over Wi-Fi through the
+robot's bridge ([d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2)).
 
 To run the arm on its own:
 

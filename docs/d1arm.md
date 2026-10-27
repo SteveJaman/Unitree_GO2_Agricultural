@@ -51,7 +51,8 @@ there for the wired link: `pip3 install cyclonedds` (not needed over Wi-Fi). Don
 ## Hardware
 
 - **Power:** 24V DC via the DC 5.5-2.1 barrel jack (~1 min boot)
-- **Communication:** RJ45 to the VM's `enp0s8`. Arm at `192.168.123.100`, VM at
+- **Communication:** RJ45 to the VM's `enp0s8`, or to the Go2's Ethernet port
+  ([over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2)). Arm at `192.168.123.100`, VM at
   `192.168.123.99` (`sudo ip addr add 192.168.123.99/24 dev enp0s8`). DDS
   discovery is multicast. It is kept separate from the Go2's Wi-Fi DDS
 - **Debug:** USB-C (serial debug only)
@@ -340,7 +341,7 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 |---|---|---|
 | 1. Direct control | Prove the arm responds to JSON commands | Written: chain control, fold, lift/sweep, offset calibration |
 | 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
-| 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Written (2026-10-27), tested against a mock arm; ⏳ first run on the robot |
+| 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Verified on the robot (2026-10-27): state, `joint`, `home`, `fold` over Wi-Fi; `power 0` open |
 | 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
 | 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
 | 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |
