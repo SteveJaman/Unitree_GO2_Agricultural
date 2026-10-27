@@ -35,7 +35,7 @@ import math
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from sensor_msgs_py.point_cloud2 import create_cloud_xyz32
@@ -82,6 +82,12 @@ def image_bgr(msg):
         return np.repeat(img[:, :, None], 3, axis=2)
     return None
 
+
+# Raw camera frames (~1.5 MB, ~1100 UDP packets) are read reliable: a best-effort
+# reader loses the whole frame when one packet is dropped (go2_camera_relay.py
+# publishes them reliable for that reason).
+IMAGE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                       history=HistoryPolicy.KEEP_LAST, depth=1)
 
 class YoloObstacles(Node):
     def __init__(self):
@@ -136,8 +142,8 @@ class YoloObstacles(Node):
         self.obs_pub = self.create_publisher(PointCloud2, '/yolo/obstacles', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/yolo/markers', 10)
         self.objects_pub = self.create_publisher(String, '/yolo/objects', 10)
-        self.img_pub = self.create_publisher(Image, '/yolo/image', qos_profile_sensor_data)
-        self.create_subscription(Image, gp('image_topic'), self.on_image, qos_profile_sensor_data)
+        self.img_pub = self.create_publisher(Image, '/yolo/image', IMAGE_QOS)
+        self.create_subscription(Image, gp('image_topic'), self.on_image, IMAGE_QOS)
         self.create_subscription(CameraInfo, gp('camera_info_topic'), self.on_info,
                                  qos_profile_sensor_data)
         self.create_subscription(PointCloud2, gp('cloud_topic'), self.on_cloud,

@@ -27,7 +27,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | `--resume` after a battery swap | **Implemented (pending physical test)** |
 | Dashboard performance mode (software renderer), Go2 model with live leg joints | **Implemented (pending physical test)**: measured against synthetic data in software WebGL (2026-10-27) |
 | Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
-| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Blocked by the VM's UDP buffers (2026-10-27)**: frames arrive at ~0.2 fps; raise them ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) and re-test |
+| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
 | D1 arm over Wi-Fi | Not started (later) |
 
 Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
@@ -332,6 +332,15 @@ The robot sends 5 fps; the VM's UDP sockets overflow (Ubuntu default
 dashboard "Camera unavailable", RTAB-Map camera mode starved (empty map),
 YOLO and the VLM idle. Fix: [setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup);
 `wifi_nav.sh` now warns.
+
+### Relay on the wrong DDS; best-effort readers — fixed (2026-10-27)
+
+The robot camera reached the laptop at 5 fps, but the relay ran on the
+container default FastDDS and never discovered it; now it uses the
+session's CycloneDDS config. The 3D twin's camera readers were best-effort,
+so every ~1.5 MB raw frame was lost with the small UDP buffers; YOLO, the
+VLM, `go2_camera_info.py` and the image compressor now read reliable. The
+robot publisher is started with `setsid` (it died with the SSH session).
 
 ### Camera found too late; wrong camera frame — fixed (2026-10-27)
 

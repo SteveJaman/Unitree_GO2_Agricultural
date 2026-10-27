@@ -18,9 +18,15 @@ import math
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 
+
+# Raw camera frames (~1.5 MB, ~1100 UDP packets) are read reliable: a best-effort
+# reader loses the whole frame when one packet is dropped (go2_camera_relay.py
+# publishes them reliable for that reason).
+IMAGE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                       history=HistoryPolicy.KEEP_LAST, depth=1)
 
 class CameraInfoPublisher(Node):
     def __init__(self):
@@ -41,7 +47,7 @@ class CameraInfoPublisher(Node):
         self.template = None
 
         self.pub = self.create_publisher(CameraInfo, info_topic, qos_profile_sensor_data)
-        self.create_subscription(Image, image_topic, self.on_image, qos_profile_sensor_data)
+        self.create_subscription(Image, image_topic, self.on_image, IMAGE_QOS)
         src = 'fx/fy/cx/cy' if self.fixed[0] > 0 else f'hfov {math.degrees(self.hfov):.1f} deg'
         self.get_logger().info(f'camera info: {image_topic} -> {info_topic} ({src})')
 

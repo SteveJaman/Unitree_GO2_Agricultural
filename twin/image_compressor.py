@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
 
 
@@ -32,6 +32,12 @@ def image_bgr(msg):
         return np.repeat(img[:, :, None], 3, axis=2)
     return None
 
+
+# Raw camera frames (~1.5 MB, ~1100 UDP packets) are read reliable: a best-effort
+# reader loses the whole frame when one packet is dropped (go2_camera_relay.py
+# publishes them reliable for that reason).
+IMAGE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                       history=HistoryPolicy.KEEP_LAST, depth=1)
 
 class ImageCompressor(Node):
     def __init__(self):
@@ -48,7 +54,7 @@ class ImageCompressor(Node):
             src, _, dst = pair.partition(':')
             s = {'src': src, 'pub': self.create_publisher(CompressedImage, dst, 2), 'msg': None}
             self.create_subscription(Image, src, lambda m, s=s: s.__setitem__('msg', m),
-                                     qos_profile_sensor_data)
+                                     IMAGE_QOS)
             self.streams.append(s)
             self.get_logger().info(f'{src} -> {dst} (JPEG)')
         self.create_timer(1.0 / max(0.1, float(self.get_parameter('rate_hz').value)), self.tick)

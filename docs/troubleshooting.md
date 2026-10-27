@@ -522,6 +522,16 @@ Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
    display drops most of the large raw frames (older layouts had Best Effort;
    `wifi_nav.sh` updates them on the next start).
 
+### Robot sends frames, relay publishes none
+
+`/tmp/go2_camera_wifi.log` on the robot says `50 frames in 10 s`, but
+`camera_relay.log` never reaches `published 100 frames`. The relay was on the
+container's default DDS (FastDDS) and never discovered the robot over Wi-Fi.
+`wifi_nav.sh` now starts it with the session's CycloneDDS config (robot as
+a peer); update and restart the session. Also check the robot publisher is
+still running (`pgrep -f go2_camera_wifi.py` on the robot): it is started
+with `setsid`, because with `nohup` alone it died with the SSH session.
+
 ### Camera at ~0.2 fps, "Camera unavailable" in the dashboard, empty 3D map
 
 The robot log says `50 frames in 10 s`, but `camera_relay.log` counts 100

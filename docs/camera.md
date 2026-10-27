@@ -28,6 +28,17 @@ Each frame is ~50 UDP packets over Wi-Fi. With the Ubuntu default socket
 buffers the laptop drops most frames: raise them once
 ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)).
 
+Two details keep the feed reliable:
+
+- **The relay uses the session's CycloneDDS config** (`/tmp/go2-wifi-cyclonedds.xml`,
+  the robot as a unicast peer). On the container default (FastDDS,
+  multicast discovery) it found the robot camera rarely or never over Wi-Fi.
+- **Raw frames are read reliable.** A raw 960x540 frame is ~1.5 MB (~1100 UDP
+  packets) on the laptop; a best-effort reader loses the whole frame when
+  one packet drops. YOLO, the VLM, `go2_camera_info.py` and the dashboard's
+  image compressor subscribe reliable, and `/yolo/image` is published
+  reliable.
+
 `wifi_nav.sh` (and so `wifi_3d_nav.sh`) does both automatically unless you pass
 `--no-camera`. It copies the robot files to `~/go2-agri-camera/` on the robot
 on every start. This is needed because in 3D mode go2-nav2-wifi's `mapping.sh`

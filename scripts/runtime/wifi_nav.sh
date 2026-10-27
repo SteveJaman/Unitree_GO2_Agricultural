@@ -870,6 +870,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             # Images are stamped front_camera_optical (z forward, x right, y
             # down), the pinhole convention of camera_info, YOLO and RTAB-Map;
             # front_camera is the URDF link (x forward). go2-3d adds the TF.
+            # setsid: nohup alone died with the SSH session about a minute later.
             # In 3D mode mapping.sh starts the robot relay without the camera
             # (GO2_RELAY_CAMERA=0), so the robot sends JPEG frames itself:
             # scripts/robot/go2_camera_wifi.sh -> /go2/front_camera/compressed.
@@ -880,14 +881,17 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                     "${NAV2_WIFI_DIR}/ws/scripts/robot-source-unitree-ros.sh" \
                     "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}:go2-agri-camera/" 2>/dev/null; then
                 robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
-                    "GO2_HOST_IP=${GO2_HOST_IP} GO2_RELAY_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} GO2_CAM_WIDTH=${CAMERA_WIDTH} GO2_CAM_FPS=${CAMERA_FPS} nohup bash ~/go2-agri-camera/go2_camera_wifi.sh > /tmp/go2_camera_wifi.log 2>&1 < /dev/null &" \
+                    "GO2_HOST_IP=${GO2_HOST_IP} GO2_RELAY_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} GO2_CAM_WIDTH=${CAMERA_WIDTH} GO2_CAM_FPS=${CAMERA_FPS} setsid nohup bash ~/go2-agri-camera/go2_camera_wifi.sh > /tmp/go2_camera_wifi.log 2>&1 < /dev/null &" \
                     2>/dev/null || echo "[camera] WARN: could not start the robot camera publisher"
             else
                 echo "[camera] WARN: could not copy the camera publisher to the robot"
             fi
+            # The relay joins the session's CycloneDDS config (the robot as a
+            # unicast peer). With the container default (FastDDS, multicast
+            # discovery only) it found the robot camera rarely or never over Wi-Fi.
             echo "[camera] Starting camera relay..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera_optical ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; [ -f /tmp/go2-wifi-cyclonedds.xml ] && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera_optical ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${EXPLORE}" = "true" ]; then

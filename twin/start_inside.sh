@@ -223,7 +223,7 @@ if [ "$TWIN_MODE" = auto ] || [ "$TWIN_MODE" = camera ]; then
         [ "$TWIN_MODE" = auto ] && TWIN_MODE=camera
     elif [ "$TWIN_MODE" = camera ]; then
         echo "[go2-3d] WARN: no frame on ${TWIN_RGB_TOPIC} yet; RTAB-Map waits for it (no map until then)"
-        CAMERA_FRAME="${TWIN_CAMERA_FRAME:-camera_link}"
+        CAMERA_FRAME="${TWIN_CAMERA_FRAME:-front_camera_optical}"
     else
         echo "[go2-3d] no camera frames on ${TWIN_RGB_TOPIC}: LiDAR-only map, YOLO off"
         TWIN_MODE=lidar

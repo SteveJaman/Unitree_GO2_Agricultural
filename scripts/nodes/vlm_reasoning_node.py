@@ -46,7 +46,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
@@ -90,6 +90,12 @@ def decide(text):
         return 'UNKNOWN'
     return min(hits)[1]
 
+
+# Raw camera frames (~1.5 MB, ~1100 UDP packets) are read reliable: a best-effort
+# reader loses the whole frame when one packet is dropped (go2_camera_relay.py
+# publishes them reliable for that reason).
+IMAGE_QOS = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                       history=HistoryPolicy.KEEP_LAST, depth=1)
 
 class VlmReasoning(Node):
     def __init__(self):
@@ -135,7 +141,7 @@ class VlmReasoning(Node):
         self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
         self.room_pub = self.create_publisher(String, '/vlm_room_suggestion', 10)
         self.create_subscription(String, '/vlm_room_request', self.on_room_request, 10)
-        self.create_subscription(Image, gp('image_topic'), self.on_image, qos_profile_sensor_data)
+        self.create_subscription(Image, gp('image_topic'), self.on_image, IMAGE_QOS)
         self.create_timer(float(gp('period')), self.tick)
         self.get_logger().info(f'VLM {self.model} at {self.url} every >= {gp("period")} s '
                                f'on {gp("image_topic")}')
