@@ -575,6 +575,21 @@ if [ "${FLOOR_FILTER}" = "true" ]; then
     fi
 fi
 
+# DDS over Wi-Fi: a 73 KB camera frame or a LiDAR cloud is ~50 UDP packets,
+# and losing one loses the whole sample. With the Ubuntu default (208 KB)
+# the sockets overflow and the camera arrives at ~0.2 of its 5 fps.
+RMEM_MIN=8388608
+rmem_max="$(cat /proc/sys/net/core/rmem_max 2>/dev/null || echo 0)"
+rmem_default="$(cat /proc/sys/net/core/rmem_default 2>/dev/null || echo 0)"
+if [ "${rmem_max}" -ge "${RMEM_MIN}" ] && [ "${rmem_default}" -ge "${RMEM_MIN}" ]; then
+    echo "[checks] UDP receive buffers ($(( rmem_max / 1048576 )) MB) ............. OK"
+else
+    echo "[checks] UDP receive buffers ................... TOO SMALL (rmem_max ${rmem_max}, rmem_default ${rmem_default})"
+    echo "         Camera frames and LiDAR clouds get dropped. Fix once (then restart the session):"
+    echo "           printf 'net.core.rmem_max=16777216\\nnet.core.rmem_default=8388608\\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf"
+    echo "           sudo sysctl --system"
+fi
+
 if [ "${CAMERA}" = "true" ]; then
     if [ -f "${CAMERA_RELAY_SCRIPT}" ]; then
         echo "[checks] camera relay script present .............. OK"
