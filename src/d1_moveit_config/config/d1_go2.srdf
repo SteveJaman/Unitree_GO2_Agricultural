@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<robot name="d1_go2">
+  <group name="arm">
+    <chain base_link="base_link" tip_link="tool0"/>
+  </group>
+  <group name="gripper">
+    <joint name="Joint_L"/>
+    <joint name="Joint_R"/>
+  </group>
+
+  <!-- Upper arm vertical, forearm forward (all joints at zero). -->
+  <group_state name="home" group="arm">
+    <joint name="Joint1" value="0"/><joint name="Joint2" value="0"/>
+    <joint name="Joint3" value="0"/><joint name="Joint4" value="0"/>
+    <joint name="Joint5" value="0"/><joint name="Joint6" value="0"/>
+  </group_state>
+  <group_state name="open" group="gripper">
+    <joint name="Joint_L" value="0.033"/><joint name="Joint_R" value="0.033"/>
+  </group_state>
+  <group_state name="closed" group="gripper">
+    <joint name="Joint_L" value="0"/><joint name="Joint_R" value="0"/>
+  </group_state>
+
+  <end_effector name="gripper" parent_link="Empty_Link6" group="gripper" parent_group="arm"/>
+
+  <!-- Pairs that never need collision checking. Adjacent links, plus pairs
+       found never/always in contact by sampling (see docs/d1arm.md). -->
+  <disable_collisions link1="go2_trunk" link2="go2_legs" reason="Adjacent"/>
+  <disable_collisions link1="go2_trunk" link2="base_link" reason="Adjacent"/>
+  <disable_collisions link1="go2_legs" link2="base_link" reason="Never"/>
+  <disable_collisions link1="base_link" link2="Empty_Link1" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link1" link2="Empty_Link2" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link2" link2="Empty_Link3" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link3" link2="Empty_Link4" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link4" link2="Empty_Link5" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link5" link2="Empty_Link6" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link6" link2="Empty_Link_L" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link6" link2="Empty_Link_R" reason="Adjacent"/>
+  <disable_collisions link1="Empty_Link_L" link2="Empty_Link_R" reason="Never"/>
+</robot>
