@@ -12,7 +12,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 
 | Script | Purpose |
 |---|---|
-| [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm |
+| [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm (`--arm-wifi`: arm plugged into the Go2) |
 | [`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
 | [`wifi_mapping.sh`](../scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`start_rtabmap.sh`](../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
@@ -25,6 +25,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 |---|---|
 | [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py) | Three-phase explorer: blind lead-in → Yamauchi frontier → visited-cell coverage → return. Optional spin-360 capture for tours |
 | [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) | Robot JPEG frames (`/go2/front_camera/compressed`) → `/camera/image_raw` (bgr8) + `/camera/camera_info` |
+| [`scripts/robot/arm_bridge_wifi.sh`](../scripts/robot/arm_bridge_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh --arm-wifi`): D1 arm plugged into the Go2 ↔ laptop over TCP; `--build` once |
 | [`scripts/robot/go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](../scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py) | Every session: on an aborted leg (e.g. facing a wall), step back (and aside with `--omni`) into free space and retry the goal |

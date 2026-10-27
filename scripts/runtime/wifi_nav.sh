@@ -35,13 +35,14 @@ FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
-ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # go2_camera_wifi.{sh,py}
+ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # scripts/robot: go2_camera_wifi.*, arm_bridge_wifi.* (run on the robot)
 CAMERA_CALIB="${CAMERA_CALIB:-$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )/config/camera/front_camera.yaml}"
 CAMERA_WIDTH="${CAMERA_WIDTH:-960}"   # robot-side JPEG width (1920 native); the calibration must match
 CAMERA_FPS="${CAMERA_FPS:-5}"
 ARM_START_SCRIPT="${SCRIPT_DIR}/start_arm.sh"
 SIM_RUN="$( cd "${SCRIPT_DIR}/../../gazebo" &> /dev/null && pwd )/run_sim.sh"
 ARM_LOG="${NAV2_WIFI_DIR}/ws/log/arm.log"
+ARM_BRIDGE_PORT="${ARM_BRIDGE_PORT:-18100}"
 
 NUMPY_PIN="${NUMPY_PIN:-numpy<1.25}"
 
@@ -72,6 +73,7 @@ OMNI="false"
 RECOVERY="true"
 START_RELAY="true"
 ARM="false"
+ARM_LINK="wired"      # --arm-wifi: the arm plugged into the Go2, through its Wi-Fi bridge
 SIM="false"
 SIM_STARTED="false"
 SIM_OWNER="wifi-nav-sim-$$"
@@ -96,6 +98,7 @@ while [ $# -gt 0 ]; do
         --setup-ssh)    ACTION="setup-ssh" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
+        --arm-wifi)     ARM="true"; ARM_LINK="wifi" ;;
         --omni)         OMNI="true" ;;
         --no-recovery)  RECOVERY="false" ;;
         --sim)          SIM="true" ;;
@@ -245,6 +248,45 @@ stop_robot_relay() {
         return 0
     fi
     remote_kill_relays 3 >/dev/null 2>&1 || true
+}
+
+# --arm-wifi: the D1 arm plugged into the Go2's Ethernet port. Copy
+# scripts/robot/arm_bridge_wifi.* to ~/go2-agri-arm and start it detached
+# (setsid: it outlives this SSH session); it serves the laptop over TCP.
+# The one-message package it needs is built once by hand (--build), never here.
+ARM_ROBOT_DIR="go2-agri-arm"
+start_arm_bridge() {
+    local robot="${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
+    robot_ssh -T -n -o ConnectTimeout=5 "${robot}" \
+        "pkill -TERM -f 'arm_bridge_[w]ifi' 2>/dev/null; mkdir -p ~/${ARM_ROBOT_DIR}" 2>/dev/null \
+        || { echo "[arm] cannot reach ${robot} over SSH"; return 1; }
+    scp -q -r "${GO2_SSH_OPTS[@]}" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.sh" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.py" \
+        "${ROBOT_CAMERA_DIR}/unitree_arm" "${robot}:${ARM_ROBOT_DIR}/" 2>/dev/null \
+        || { echo "[arm] could not copy the arm bridge to the robot"; return 1; }
+    if ! robot_ssh -T -n -o ConnectTimeout=5 "${robot}" "test -f ~/${ARM_ROBOT_DIR}/ws/install/setup.bash" 2>/dev/null; then
+        echo "[arm] The arm bridge is not built on the robot yet. Once, on the robot:"
+        echo "        bash ~/${ARM_ROBOT_DIR}/arm_bridge_wifi.sh --build"
+        return 1
+    fi
+    robot_ssh -T -n -o ConnectTimeout=5 "${robot}" \
+        "GO2_HOST_IP=${GO2_HOST_IP} ARM_BRIDGE_PORT=${ARM_BRIDGE_PORT} setsid nohup bash ~/${ARM_ROBOT_DIR}/arm_bridge_wifi.sh > /tmp/arm_bridge_wifi.log 2>&1 < /dev/null &" \
+        2>/dev/null || { echo "[arm] could not start the arm bridge"; return 1; }
+    for _ in $(seq 1 20); do
+        if (exec 3<>"/dev/tcp/${GO2_ROBOT_IP}/${ARM_BRIDGE_PORT}") 2>/dev/null; then
+            echo "[arm] Bridge up: ${GO2_ROBOT_IP}:${ARM_BRIDGE_PORT} (robot log /tmp/arm_bridge_wifi.log)"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[arm] Bridge did not open port ${ARM_BRIDGE_PORT}; on the robot: tail /tmp/arm_bridge_wifi.log"
+    return 1
+}
+
+# SIGTERM, not -9: the bridge locks a held arm before it exits.
+stop_arm_bridge() {
+    [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ] && [ -n "${GO2_ROBOT_IP}" ] || return 0
+    robot_ssh -T -n -o ConnectTimeout=3 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "pkill -TERM -f 'arm_bridge_[w]ifi'" >/dev/null 2>&1 || true
 }
 
 do_clean() {
@@ -469,6 +511,8 @@ fi
 ARM_STATUS="off"
 if [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ] && [ "${SIM}" = "true" ]; then
     ARM_STATUS="on (simulated D1 on ${ARM_IFACE}; checked after the simulator starts)"
+elif [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ] && [ "${ARM_LINK}" = "wifi" ]; then
+    ARM_STATUS="on (plugged into the Go2, over Wi-Fi: arm_bridge_wifi on the robot, TCP ${ARM_BRIDGE_PORT})"
 elif [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ]; then
     if [ ! -f "${ARM_START_SCRIPT}" ]; then
         echo "[arm] WARN: ${ARM_START_SCRIPT} missing — arm disabled"
@@ -619,7 +663,9 @@ if [ "${ACTION}" = "check" ]; then
     else
         echo "[checks] container ${CONTAINER_NAME} ................. MISSING (created on run)"
     fi
-    if [ "${ARM}" = "true" ]; then
+    if [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ]; then
+        echo "[checks] arm link ......................... Go2 bridge over Wi-Fi (TCP ${ARM_BRIDGE_PORT})"
+    elif [ "${ARM}" = "true" ]; then
         echo "[checks] arm interface ${ARM_IFACE} ${ARM_HOST_CIDR} ....... OK"
         if grep -qxF 'FOLDED_ANGLES = [0.0, -90.0, 90.0, 0.0, 0.0, 0.0, 0.0]' \
                <(tr -d '\r' < "${NODES_DIR}/d1_arm_calibration.py"); then
@@ -750,6 +796,7 @@ cleanup() {
         kill_recovery_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
+    stop_arm_bridge
     stop_robot_relay
     if [ "${OMNI}" = "true" ]; then
         python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" --disable "${NAV2_WIFI_DIR}" || true
@@ -864,7 +911,23 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
     echo
 fi
 
-if [ "${ARM}" = "true" ]; then
+if [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ] && [ "${SIM}" = "true" ]; then
+    echo "[arm] WARN: --arm-wifi needs the real robot; the simulator uses --arm"
+    ARM="false"
+elif [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ]; then
+    mkdir -p "$(dirname "${ARM_LOG}")"
+    echo "[arm] Arm over Wi-Fi: bridge on the robot, then fold in the background (log: ${ARM_LOG})"
+    (
+        if start_arm_bridge && env ARM_ROBOT="${GO2_ROBOT_IP}" ARM_BRIDGE_PORT="${ARM_BRIDGE_PORT}" \
+                bash "${ARM_START_SCRIPT}" fold > "${ARM_LOG}" 2>&1; then
+            echo "[arm] Arm folded and released (over Wi-Fi)."
+        else
+            echo "[arm] WARNING: arm over Wi-Fi failed — navigation continues. Last lines of ${ARM_LOG}:"
+            tail -5 "${ARM_LOG}" 2>/dev/null | sed 's/^/    /'
+        fi
+    ) &
+    ARM_PID=$!
+elif [ "${ARM}" = "true" ]; then
     mkdir -p "$(dirname "${ARM_LOG}")"
     echo "[arm] Folding the D1 arm in the background (log: ${ARM_LOG})"
     (

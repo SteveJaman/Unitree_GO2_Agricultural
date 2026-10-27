@@ -64,7 +64,9 @@ Unitree_GO2_Agricultural/
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   │   └── direct_test_movement.py   # small safe arm movement test
 │   ├── robot/                        # run ON the robot (copied by wifi_nav.sh)
-│   │   └── go2_camera_wifi.{sh,py}   # front camera JPEG -> Wi-Fi DDS
+│   │   ├── go2_camera_wifi.{sh,py}   # front camera JPEG -> Wi-Fi DDS
+│   │   ├── arm_bridge_wifi.{sh,py}   # D1 arm on the Go2 <-> laptop over TCP
+│   │   └── unitree_arm/              # ArmString msg package the bridge is built with
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh

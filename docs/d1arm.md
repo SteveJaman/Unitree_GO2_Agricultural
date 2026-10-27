@@ -5,6 +5,8 @@ container). Protocol source: Unitree "D1 Mechanical Arm Services Interface" doc,
 cross-checked against working open-source drivers (see References).
 
 **Verified config:** interface `enp0s8`, DDS domain 0, **multicast** discovery.
+Or plug the arm into the Go2 and control it over Wi-Fi: see
+[Arm over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2).
 Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 
 ## Files
@@ -19,12 +21,15 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
+| `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
+| `scripts/robot/unitree_arm/` | One-message ROS 2 package (`ArmString`) the bridge is built with on the robot |
 
 `./scripts/runtime/wifi_nav.sh --arm` runs `start_arm.sh fold` in the
-background, alongside navigation.
+background, alongside navigation; `--arm-wifi` does the same with the arm
+plugged into the Go2.
 
 The scripts run with the host's `python3` and need the `cyclonedds` package
-there: `pip3 install cyclonedds`. Don't source ROS in that shell: ROS's
+there for the wired link: `pip3 install cyclonedds` (not needed over Wi-Fi). Don't source ROS in that shell: ROS's
 `libddsc` can clash with the pip package.
 
 ## Protocol summary (verified against the doc and working drivers)
@@ -72,6 +77,62 @@ the arm doesn't reply to ping, cold-boot the VM (power off, not reboot).
 
 Overrides: `ARM_IFACE` (default `enp0s8`), `ARM_IP` (`192.168.123.100`),
 `ARM_HOST_IP` (`192.168.123.99`), `ARM_DOMAIN` (`0`).
+
+## Arm over Wi-Fi (plugged into the Go2)
+
+The arm's address, `192.168.123.100`, is on the Go2's internal network (the
+Jetson is `192.168.123.18`). Plug the arm's RJ45 into the Go2's Ethernet port
+and the laptop controls it over Wi-Fi, like the dog, with no cable to the
+workstation:
+
+```text
+D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi, TCP 18100──► laptop D1Arm
+```
+
+- **Bridge (robot):** [`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py)
+  talks to the arm with the robot's ROS 2 Foxy (`rclpy`, message
+  `unitree_arm/ArmString` = DDS `unitree_arm::msg::dds_::ArmString_`) on
+  `eth0`, multicast, as on the workstation. It serves the laptop one JSON
+  message per line over TCP: arm commands in, every `rt/arm_Feedback` message
+  out.
+- **Why TCP:** arm traffic is small JSON at 10 Hz. TCP needs no DDS discovery
+  over Wi-Fi and loses nothing (see the camera's Wi-Fi DDS problems in
+  [troubleshooting](troubleshooting.md#camera)).
+- **Laptop:** `D1Arm` (`d1_arm_control.py`) takes `--robot <Go2 Wi-Fi IP>` or
+  `ARM_ROBOT`. Every arm script follows it unchanged: the control CLI, `fold`,
+  `read`, offset calibration, `teach_arm.py`, `play_arm.py`. `cyclonedds` is
+  not needed on the laptop for this.
+- **Safety:** the laptop pings every second. If it disconnects, is silent for
+  3 s (`ARM_BRIDGE_TIMEOUT`), or the bridge is stopped while the motors hold
+  the arm, the bridge locks it where it is (mode 80000): a Wi-Fi drop never
+  drops the camera. A released arm (mode 0) is left alone. Only the laptop
+  (`GO2_HOST_IP`) may connect, and only arm commands are forwarded.
+
+**One-time build on the robot** (uses its ROS Foxy; nothing else is
+installed). `wifi_nav.sh --arm-wifi` copies the files to `~/go2-agri-arm` and
+prints this command if the build is missing:
+
+```bash
+ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'
+```
+
+**Every session:**
+
+```bash
+./scripts/runtime/wifi_nav.sh --arm-wifi                  # nav + bridge + fold over Wi-Fi
+./scripts/runtime/start_arm.sh --robot <robot-ip> state   # any arm command, over Wi-Fi
+ARM_ROBOT=<robot-ip> python3 scripts/tools/teach_arm.py   # teach / play the same way
+```
+
+Without `wifi_nav.sh`, start the bridge on the robot yourself:
+`GO2_HOST_IP=<laptop Wi-Fi IP> bash ~/go2-agri-arm/arm_bridge_wifi.sh` (log:
+`/tmp/arm_bridge_wifi.log` when started by `wifi_nav.sh`).
+
+**Power:** the arm needs 24 V DC. Check that the Go2 EDU's power output can
+supply it, or keep the arm on its own supply.
+
+Overrides: `ARM_BRIDGE_PORT` (18100), `ARM_BRIDGE_TIMEOUT` (3 s),
+`ARM_BRIDGE_IFACE` (`eth0`), `ARM_DOMAIN` (0).
 
 ## Run
 
@@ -255,6 +316,9 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 | `joint N limit ±L°` | target outside the limit | use a smaller angle |
 | `free(): invalid pointer` crash | ROS's CycloneDDS mixed with the pip one | run without sourcing ROS |
 | `wifi_nav.sh --arm` skipped the arm | see `go2-nav2-wifi/ws/log/arm.log` | run `start_arm.sh --check` |
+| `--arm-wifi`: "not built on the robot yet" | the one-time build is missing | `ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'` |
+| `--robot`: "bridge not reachable" | bridge not running, or another laptop IP | on the robot: `tail /tmp/arm_bridge_wifi.log`; it accepts only `GO2_HOST_IP` |
+| `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |
 
 ## Arm roadmap
 
@@ -262,6 +326,7 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 |---|---|---|
 | 1. Direct control | Prove the arm responds to JSON commands | Written: chain control, fold, lift/sweep, offset calibration |
 | 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
+| 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Written (2026-10-27), tested against a mock arm; ⏳ first run on the robot |
 | 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
 | 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
 | 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |

@@ -53,6 +53,7 @@ Other entry points:
 | Command | Use |
 |---|---|
 | `./scripts/runtime/wifi_nav.sh --arm` | 2D navigation + explorer in RViz, D1 arm folded |
+| `./scripts/runtime/wifi_nav.sh --arm-wifi` | Same, with the arm plugged into the Go2 and controlled over Wi-Fi |
 | `./scripts/runtime/wifi_3d_nav.sh --resume` | Restart after a battery swap; continue the last map |
 | `./scripts/runtime/wifi_nav.sh --sim --arm` | Same stack against the Gazebo simulation |
 | `./scripts/runtime/wifi_3d_nav.sh --view` | Show saved 3D scans without the robot |
