@@ -63,4 +63,6 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh` (unless `--no-ai`) (`--undo` restores) |
 | [`apply-lab-nav-fixes.sh`](../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](../scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
+| [`teach_arm.py`](../scripts/tools/teach_arm.py) | D1 arm plant scanning: compliance mode (stiffness 5000), save hand-guided poses to `config/arm_waypoints.json` ([d1arm.md](d1arm.md#plant-scanning-teach--playback)) |
+| [`play_arm.py`](../scripts/tools/play_arm.py) | D1 arm plant scanning: replay the saved poses, hold each for the camera |
 | [`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |

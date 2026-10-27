@@ -15,6 +15,8 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | `scripts/nodes/d1_arm_control.py` | Chain-style CLI + `D1Arm` class: `state`, `enable`, `release`, `home`, `power`, `joint`, `joints`, `sleep`, `feedback`, `status`, `motors`, `lift`, `sweep` |
 | `scripts/nodes/d1_arm_calibration.py` | `--read` the folded pose, `--move` fold (power on → enable → move → release → power off) |
 | `scripts/tools/calibrate_arm.py` | Measures per-joint offset (commanded vs reported angle) with small ± test moves |
+| `scripts/tools/teach_arm.py` | Plant scanning: guide the arm by hand in compliance mode, save scan poses to `config/arm_waypoints.json` |
+| `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 
@@ -129,6 +131,7 @@ Every command is `{"seq":N,"address":1,"funcode":F,"data":{...}}`, where
 | Single joint | `1` | `{"id":J,"angle":DEG,"delay_ms":0}` | Move joint J (6 = gripper) |
 | All joints | `2` | `{"mode":1,"angle0":…,"angle6":…}` | Move all 7 at once |
 | Enable all | `5` | `{"mode":80000}` | Motors on, fully locked |
+| Compliance | `5` | `{"mode":5000}` | Motors on, low stiffness: holds its weight, yields to a hand (teach) |
 | Release | `5` | `{"mode":0}` | Motors off (limp, drag-teach) |
 | Home | `7` | *(none)* | Return all joints to zero |
 
@@ -149,6 +152,59 @@ The scripts reject anything beyond them.
 | `--pct` / `--joints` | `90` / `all` | `sweep` range (% of limit) and joints |
 | `--yes` | off | Skip the confirmation prompt for `lift` / `sweep` |
 | `--peer` | *(none)* | Unicast discovery. **Don't use**: this firmware needs multicast |
+
+## Plant Scanning (Teach & Playback)
+
+Kinesthetic teaching for plant data collection: guide the arm by hand until
+the end camera frames a plant, save the pose, and let the arm replay the
+whole sweep later. Fully released (`mode 0`) the arm drops under the
+camera's weight, so teaching uses **compliance mode** (`funcode 5`,
+`{"mode": 5000}`): the motors hold the arm up but yield to a push.
+
+**1. Teach** (one hand on the arm, the other on the keyboard):
+
+```bash
+python3 scripts/tools/teach_arm.py          # add poses to the existing sweep
+python3 scripts/tools/teach_arm.py --new    # start a new sweep
+```
+
+1. The arm powers on and goes compliant: *"Arm is compliant. You can now
+   move it by hand."*
+2. Move it until the camera frames the plant, then press **Enter**. The six
+   joint angles (telemetry address 2, funcode 1) are appended to
+   `config/arm_waypoints.json`, and the file is written after every pose.
+   Poses beyond the joint limits, or saved without telemetry, are refused.
+3. Repeat for every scan angle, in the order you want them visited.
+4. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
+   Ctrl+D lock it too, so it never drops.
+
+If the arm sags under the camera, raise `--stiffness` (e.g. 8000); if it is
+hard to push, lower it.
+
+**2. Play back:**
+
+```bash
+python3 scripts/tools/play_arm.py --dry-run  # check the file and print the poses
+python3 scripts/tools/play_arm.py            # run the sweep
+```
+
+Every waypoint is checked against the joint limits before anything moves.
+Then the arm powers on, locks, homes (`funcode 7`) and visits each pose
+with a smooth trajectory (`funcode 2`, `mode 1`). It waits until the pose is
+reached (within `--tolerance`, 3°), prints *"Waypoint N reached. [Camera
+should capture photo here]"* and holds `--dwell` seconds (3). At the end it
+homes again and **stays locked**; `--release` releases it at home (support
+it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
+locks the arm where it stopped.
+
+`config/arm_waypoints.json` is user data (git-ignored):
+
+```json
+{"waypoints": [{"angles": [10.5, -32.0, 45.1, 0.0, 20.0, 0.0], "saved": "2026-10-27T17:05:12"}]}
+```
+
+Both scripts take the usual `--iface`, `--ip`, `--domain`,
+`--skip-preflight` and `--file` (another waypoint file, e.g. one per crop).
 
 ## Offset calibration
 
