@@ -10,7 +10,7 @@ const prettyScan = (f) => {
 /** Top-left: brand, map style, and a settings popover (layers, quality). */
 export default function MapMenu({
   view, setView, meshes, meshFile, setMeshFile, voxelSize, setVoxelSize,
-  textured, setTextured, shadows, setShadows, layers, setLayers, stats,
+  textured, setTextured, shadows, setShadows, layers, setLayers, stats, quality, setQuality,
 }) {
   const [open, setOpen] = useState(false);
   const toggle = (key) => setLayers((l) => ({ ...l, [key]: !l[key] }));
@@ -46,6 +46,7 @@ export default function MapMenu({
               </select>
             </label>
           )}
+          <Toggle label="Performance mode" on={quality === 'lite'} set={() => setQuality(quality === 'lite' ? 'high' : 'lite')} />
           <Toggle label="Real colours" on={textured} set={() => setTextured(!textured)} />
           <Toggle label="Shadows" on={shadows} set={() => setShadows(!shadows)} />
           <div className="menu-sep" />

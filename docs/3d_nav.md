@@ -593,14 +593,25 @@ exact address. The VM IP is DHCP, so it changes.
 
 The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
-`lidar3d_map`), `?base=` (robot frame, default `base_link`).
+`lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.
+
+**Performance mode.** A VM without 3D acceleration (VirtualBox: `glxinfo -B`
+says `Accelerated: no`) draws everything on the CPU. When the browser reports
+such a renderer (llvmpipe, SwiftShader, `LLVM`), the dashboard starts in
+performance mode: 1× resolution, no antialiasing, a 25k-cube map budget,
+cheaper lighting, shadows off and solid instead of blurred panels. On a
+synthetic 320k-point map in software WebGL that is about 3.4× the frame
+rate. Switch it in ⚙ settings (**Performance mode**; remembered per
+browser) or force it with `?quality=`. In every mode the map is decoded
+and voxelized in a Web Worker (no stall when the map updates every 2 s)
+and shadows are redrawn once a second, not every frame.
 
 The 3D map fills the whole screen (dark theme). The controls float over it
 as frosted-glass panels, and no topic names or frame IDs are shown:
 
 | Where | What | Behind it |
 |---|---|---|
-| **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
+| **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: performance mode, real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
 | **Top centre** | **AI vision**: a toast for 5 s when the VLM reports *Path blocked* or *Hydroponic station spotted*, then a small badge | `/vlm_decision` |
 | **Top right** | Robot link · speed · **battery icon** (amber below 30 %, red and blinking below 15 %, *Docking* / *Docked* while the battery manager acts) | `/battery_state`, `/battery_manager/status`, `/cmd_vel` |
 | **Bottom left** | **Auto Explore** toggle (shows *Mapping the area*, *Heading home*, …) · **Return to Dock** · **Tap to go** · **Follow** · **Clear** | `/explore/resume`, `/explore/status`, `/goal_pose`, `/clicked_point` |
@@ -608,7 +619,12 @@ as frosted-glass panels, and no topic names or frame IDs are shown:
 
 **In the scene:**
 
-- **The robot:** a Go2 stand-in with a red navigation arrow. Its pose is
+- **The robot:** Unitree's official Go2 model (`go2_description`, BSD)
+  with a red navigation arrow. Its 12 leg joints follow `/joint_states`
+  (`go2_joint_state_bridge`, from `/lf/lowstate`), smoothed between
+  messages; without joint data it holds the standing pose. The meshes are
+  decimated to ~23k triangles (`twin/webapp/public/go2/`, made by
+  [`build_go2_model.py`](../scripts/tools/build_go2_model.py)). Its pose is
   smoothed (exponential lerp/slerp of the TF pose, about 100 ms), so it glides
   instead of stepping; jumps over 2 m snap.
 - **The goal:** the waypoint pin (glowing red orb on a beam, pulsing ring)

@@ -58,6 +58,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
 | [`nav2_camera_source.py`](../scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`) |
 | [`nav2_omni.py`](../scripts/tools/nav2_omni.py) | Switches go2-nav2-wifi between forward-only RPP and MPPI Omni ([`config/nav2/go2_omni.yaml`](../config/nav2/go2_omni.yaml); run by `wifi_nav.sh`) |
+| [`build_go2_model.py`](../scripts/tools/build_go2_model.py) | Unitree's `go2_description` URDF + meshes → decimated `twin/webapp/public/go2/` (PLY + `go2.json`) for the dashboard's animated Go2; run once in the `go2-3d` image (command in the file) |
 | [`export_tour.py`](../scripts/tools/export_tour.py) | Open3D Poisson mesh from an RTAB-Map PLY (normals, distance trim, decimation); run by `wifi_3d_nav.sh --export --mesh` |
 | [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh` (unless `--no-ai`) (`--undo` restores) |
 | [`apply-lab-nav-fixes.sh`](../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md)) |
