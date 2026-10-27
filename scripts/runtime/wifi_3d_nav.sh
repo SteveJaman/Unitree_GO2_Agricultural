@@ -367,7 +367,7 @@ start_battery_manager() {
     kill_battery_manager
     docker cp "${NODES_DIR}/battery_manager.py" "${CONTAINER_NAME}:/tmp/battery_manager.py" >/dev/null 2>&1 || return 1
     docker exec -u root "$@" "${CONTAINER_NAME}" bash -c \
-        "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; exec python3 -u /tmp/battery_manager.py --ros-args -p auto_dock:=$( [ "${TWIN_BATTERY}" = 1 ] && echo true || echo false ) -p low_soc:=$(float "${TWIN_BATTERY_LOW}") -p resume_soc:=$(float "${TWIN_BATTERY_RESUME}") -p dock_x:=$(float "${dock_x:-0}") -p dock_y:=$(float "${dock_y:-0}") -p dock_yaw:=$(float "${dock_yaw:-0}") -p map_frame:=${TWIN_MAP_FRAME} -p robot_base_frame:=${TWIN_BASE_FRAME}" \
+        "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; exec python3 -u /tmp/battery_manager.py --ros-args -p auto_dock:=$( [ "${TWIN_BATTERY}" = 1 ] && echo true || echo false ) -p low_soc:=$(float "${TWIN_BATTERY_LOW}") -p resume_soc:=$(float "${TWIN_BATTERY_RESUME}") -p dock_x:=$(float "${dock_x:-0}") -p dock_y:=$(float "${dock_y:-0}") -p dock_yaw:=$(float "${dock_yaw:-0}") -p map_frame:=${TWIN_MAP_FRAME} -p robot_base_frame:=${TWIN_BASE_FRAME}" \
         > "${TWIN_LOG_DIR}/battery.log" 2>&1 &
     sleep 4
     docker exec "${CONTAINER_NAME}" pgrep -f battery_manager.py >/dev/null 2>&1
