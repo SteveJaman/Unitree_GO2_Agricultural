@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-10-22T17:02:25",
+  "test_deg": 10.0,
+  "joints": [
+    {
+      "joint": 0,
+      "name": "base",
+      "baseline": 0.6000000238418579,
+      "at_plus": 10.0,
+      "offset_plus": 0.0,
+      "at_minus": -9.899999618530273,
+      "offset_minus": 0.1,
+      "back_to_zero": 0.0,
+      "offset_mean": 0.05
+    },
+    {
+      "joint": 1,
+      "name": "shoulder",
+      "baseline": -0.30000001192092896,
+      "at_plus": 10.399999618530273,
+      "offset_plus": 0.4,
+      "at_minus": -9.699999809265137,
+      "offset_minus": 0.3,
+      "back_to_zero": 0.4000000059604645,
+      "offset_mean": 0.35
+    },
+    {
+      "joint": 2,
+      "name": "elbow",
+      "baseline": 0.4000000059604645,
+      "at_plus": 10.399999618530273,
+      "offset_plus": 0.4,
+      "at_minus": -9.600000381469727,
+      "offset_minus": 0.4,
+      "back_to_zero": 0.4000000059604645,
+      "offset_mean": 0.4
+    },
+    {
+      "joint": 3,
+      "name": "wrist_roll",
+      "baseline": 0.10000000149011612,
+      "at_plus": 9.800000190734863,
+      "offset_plus": -0.2,
+      "at_minus": -9.699999809265137,
+      "offset_minus": 0.3,
+      "back_to_zero": 0.10000000149011612,
+      "offset_mean": 0.05
+    },
+    {
+      "joint": 4,
+      "name": "wrist_pitch",
+      "baseline": 0.5,
+      "at_plus": 10.300000190734863,
+      "offset_plus": 0.3,
+      "at_minus": -9.399999618530273,
+      "offset_minus": 0.6,
+      "back_to_zero": 0.30000001192092896,
+      "offset_mean": 0.45
+    },
+    {
+      "joint": 5,
+      "name": "wrist_yaw",
+      "baseline": 0.0,
+      "at_plus": 9.899999618530273,
+      "offset_plus": -0.1,
+      "at_minus": -9.899999618530273,
+      "offset_minus": 0.1,
+      "back_to_zero": 0.0,
+      "offset_mean": 0.0
+    }
+  ]
+}
