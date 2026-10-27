@@ -6,6 +6,7 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { useTopic } from './RosProvider.jsx';
 import { TfTree, toMatrix } from './ros/tf.js';
 import { QUALITY } from './ros/quality.js';
+import { fetchConfigJson } from './ros/config.js';
 import Go2Model from './Go2Model.jsx';
 
 // ROS is z-up, three.js is y-up: everything ROS lives in this rotated group.
@@ -92,8 +93,7 @@ function Scene({
   useEffect(() => {
     if (!layers.labels) return undefined;
     let alive = true;
-    const load = () => fetch(`${assets}config/semantic_locations.json`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : {}))
+    const load = () => fetchConfigJson(assets, 'semantic_locations.json')
       .then((d) => alive && setPlaces(Object.entries(d || {}).map(([label, e]) => ({ label, ...e }))))
       .catch(() => {});
     load();

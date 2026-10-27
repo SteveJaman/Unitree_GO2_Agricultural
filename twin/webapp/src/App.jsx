@@ -4,6 +4,7 @@ import RoomsPanel from './RoomsPanel.jsx';
 import RoomNameModal from './RoomNameModal.jsx';
 import { normalizeRooms, roomName } from './ros/rooms.js';
 import { initialQuality, saveQuality } from './ros/quality.js';
+import { fetchConfigJson } from './ros/config.js';
 import Scene from './Scene.jsx';
 import StatusBar from './StatusBar.jsx';
 import CameraFeed from './CameraFeed.jsx';
@@ -112,8 +113,7 @@ function Dashboard() {
   // Offline (--view, or before the room node answers): the saved room map.
   useEffect(() => {
     let alive = true;
-    const load = () => !liveRooms.current && fetch(`${ASSETS}config/semantic_rooms.json`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
+    const load = () => !liveRooms.current && fetchConfigJson(ASSETS, 'semantic_rooms.json')
       .then((d) => alive && d && !liveRooms.current && setRooms(normalizeRooms(d)))
       .catch(() => {});
     load();
