@@ -261,7 +261,8 @@ start_arm_bridge() {
         "pkill -TERM -f 'arm_bridge_[w]ifi' 2>/dev/null; mkdir -p ~/${ARM_ROBOT_DIR}" 2>/dev/null \
         || { echo "[arm] cannot reach ${robot} over SSH"; return 1; }
     scp -q -r "${GO2_SSH_OPTS[@]}" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.sh" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.py" \
-        "${ROBOT_CAMERA_DIR}/unitree_arm" "${robot}:${ARM_ROBOT_DIR}/" 2>/dev/null \
+        "${ROBOT_CAMERA_DIR}/unitree_arm" "${NAV2_WIFI_DIR}/ws/scripts/robot-source-unitree-ros.sh" \
+        "${robot}:${ARM_ROBOT_DIR}/" 2>/dev/null \
         || { echo "[arm] could not copy the arm bridge to the robot"; return 1; }
     if ! robot_ssh -T -n -o ConnectTimeout=5 "${robot}" "test -f ~/${ARM_ROBOT_DIR}/ws/install/setup.bash" 2>/dev/null; then
         echo "[arm] The arm bridge is not built on the robot yet. Once, on the robot:"

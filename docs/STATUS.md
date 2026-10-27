@@ -29,7 +29,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
 | Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
 | D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
-| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Implemented (pending physical test)**: bridge built on the robot; tested against a mock arm (2026-10-27) |
+| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Read verified on the robot (2026-10-27)**: real arm state and angles through the bridge; motion not yet tested |
 | VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
 
 Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
@@ -337,11 +337,11 @@ request times out (`Ollama not reachable … timed out` in `vlm.log`), so
 fine (0.2–0.8 s per frame). Fix: Ollama on a GPU host (`TWIN_VLM_URL`, see
 [3d_nav.md](3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
 
-### D1 arm not answering (2026-10-27)
+### D1 arm not answering — resolved (2026-10-27)
 
-Neither the workstation (`enp0s8`: 0 packets received) nor the Go2 (`eth0`)
-reaches `192.168.123.100`: check the arm's 24 V power and its cable before
-testing Teach & Playback or `--arm-wifi`.
+Earlier neither the workstation nor the Go2 reached `192.168.123.100`. With
+the arm plugged into the Go2 and powered, it answers (ping 0.65 ms) and
+reports state and angles over Wi-Fi through the bridge.
 
 ### Camera at ~0.2 fps on the VM — fix known, needs `sudo` (2026-10-27)
 

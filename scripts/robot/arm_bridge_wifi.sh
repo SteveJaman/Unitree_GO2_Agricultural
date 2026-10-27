@@ -8,6 +8,9 @@
 #   bash ~/go2-agri-arm/arm_bridge_wifi.sh --build   # once: build unitree_arm (ArmString)
 #   GO2_HOST_IP=<laptop Wi-Fi IP> bash ~/go2-agri-arm/arm_bridge_wifi.sh
 #
+# Needs robot-source-unitree-ros.sh (go2-nav2-wifi; copied alongside by
+# wifi_nav.sh) for Unitree's CycloneDDS.
+#
 # --build compiles the one-message ROS 2 package unitree_arm in
 # ~/go2-agri-arm/ws with the robot's ROS Foxy (colcon); nothing else is
 # installed. Copied to the robot and started by wifi_nav.sh --arm-wifi.
@@ -38,6 +41,12 @@ fi
 
 [ -f "${WS}/install/setup.bash" ] \
     || { echo "unitree_arm not built: run once: bash ${DIR}/arm_bridge_wifi.sh --build" >&2; exit 1; }
+# Unitree's CycloneDDS, like every ROS node on the Go2: rclpy with Foxy's
+# stock rmw_cyclonedds_cpp segfaults creating a node on this robot.
+for env in "${DIR}/robot-source-unitree-ros.sh" "${HOME}/robot-source-unitree-ros.sh"; do
+    # shellcheck disable=SC1090
+    [ -f "${env}" ] && { source "${env}" >/dev/null; break; }
+done
 # shellcheck disable=SC1091
 source "${WS}/install/setup.bash"
 

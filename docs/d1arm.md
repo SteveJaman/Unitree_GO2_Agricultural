@@ -92,7 +92,9 @@ D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi
 - **Bridge (robot):** [`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py)
   talks to the arm with the robot's ROS 2 Foxy (`rclpy`, message
   `unitree_arm/ArmString` = DDS `unitree_arm::msg::dds_::ArmString_`) on
-  `eth0`, multicast, as on the workstation. It serves the laptop one JSON
+  `eth0`, multicast, as on the workstation. It loads Unitree's CycloneDDS
+  (`robot-source-unitree-ros.sh`, copied alongside): `rclpy` with Foxy's
+  stock CycloneDDS segfaults creating a node on the Go2. It serves the laptop one JSON
   message per line over TCP: arm commands in, every `rt/arm_Feedback` message
   out.
 - **Why TCP:** arm traffic is small JSON at 10 Hz. TCP needs no DDS discovery
@@ -318,6 +320,7 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 | `wifi_nav.sh --arm` skipped the arm | see `go2-nav2-wifi/ws/log/arm.log` | run `start_arm.sh --check` |
 | `--arm-wifi`: "not built on the robot yet" | the one-time build is missing | `ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'` |
 | `--robot`: "bridge not reachable" | bridge not running, or another laptop IP | on the robot: `tail /tmp/arm_bridge_wifi.log`; it accepts only `GO2_HOST_IP` |
+| Bridge exits at once, `exit 139` / segfault | Foxy's stock CycloneDDS instead of Unitree's | `robot-source-unitree-ros.sh` must sit next to the bridge in `~/go2-agri-arm` (`wifi_nav.sh --arm-wifi` copies it) |
 | `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |
 
 ## Arm roadmap
