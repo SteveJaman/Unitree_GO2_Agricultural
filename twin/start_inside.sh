@@ -30,6 +30,9 @@
 #   camera  Go2 camera + LiDAR: the cloud is projected into the image as a depth
 #           image (rtabmap_util pointcloud_to_depthimage), so RTAB-Map gets
 #           RGB-D and the map is coloured
+#   fusion  like camera, but from the lens calibration (TWIN_CAMERA_INFO):
+#           go2_fusion_camera.py undistorts the image and projects the LiDAR
+#           into it; go2_lidar_overlay.py draws the check image
 #   rgbd    RealSense colour + depth + LiDAR
 #
 # Odometry comes from TF (lidar3d_map -> base_link, Point-LIO + go2_odom_tf),
@@ -40,13 +43,16 @@
 #
 # Environment (set by wifi_3d_nav.sh; ROS_DOMAIN_ID / RMW / CYCLONEDDS_URI
 # are copied from the running wifi_nav.sh session):
-#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=auto|lidar|camera|rgbd
+#   TWIN_DB=/data/rtabmap.db   TWIN_MODE=auto|lidar|camera|fusion|rgbd
+#   TWIN_CAMERA_INFO=/camera_cfg/camera.yaml   (fusion / camera obstacles: lens calibration)
+#   TWIN_CAMERA_OBSTACLES=1    camera obstacles for Nav2 (go2_camera_obstacles.py)
 #   TWIN_ROSBRIDGE=1  TWIN_ROSBRIDGE_PORT=9090   TWIN_WEB=1  TWIN_WEB_PORT=3000
 #   TWIN_FOXGLOVE=0   TWIN_FOXGLOVE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC=/camera/image_raw (rgbd: /camera/color/image_raw)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode, RealSense defaults)
-#   TWIN_CAMERA_WAIT=60         s to wait for the first camera frame (auto)
+#   TWIN_CAMERA_WAIT=180        s to wait for the first camera frame (auto); the
+#                               robot camera starts a minute or more after the session
 #   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"   x y z yaw pitch roll of
 #                               the optical frame in base_link (Go2 URDF
 #                               front_camera_joint); "none" = do not publish
@@ -79,7 +85,7 @@ else
 fi
 TWIN_DEPTH_TOPIC="${TWIN_DEPTH_TOPIC:-/camera/depth/image_rect_raw}"
 TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
-TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-180}"
 TWIN_CAMERA_TF="${TWIN_CAMERA_TF:-0.327 0 0.043 -1.5708 0 -1.5708}"
 TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
 TWIN_YOLO="${TWIN_YOLO:-0}"
@@ -100,6 +106,8 @@ TWIN_ROOM_MIN_AREA="${TWIN_ROOM_MIN_AREA:-1.5}"
 read -r DOCK_X DOCK_Y DOCK_YAW <<< "${TWIN_DOCK:-0 0 0}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
+TWIN_CAMERA_INFO="${TWIN_CAMERA_INFO:-}"
+TWIN_CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES:-0}"
 GO2_CAMINFO_TOPIC=/camera/camera_info      # published by go2_camera_info.py
 LIDAR_DEPTH_TOPIC=/camera/lidar_depth      # published by pointcloud_to_depthimage
 LOGS=/logs
@@ -134,6 +142,9 @@ stop_all() {
 trap 'stop_all; exit 0' TERM INT
 
 echo "[go2-3d] DDS domain ${ROS_DOMAIN_ID:-0}, ${RMW_IMPLEMENTATION:-default RMW}, ${CYCLONEDDS_URI:-no CYCLONEDDS_URI}"
+
+# True if TF parent -> child resolves within 5 s.
+tf_exists() { timeout 5 "$(exe tf2_ros tf2_echo)" "$1" "$2" 2>/dev/null | grep -q Translation; }
 
 # True if something already listens on a local TCP port.
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -212,7 +223,7 @@ if [ "$TWIN_MODE" = auto ] || [ "$TWIN_MODE" = camera ]; then
         [ "$TWIN_MODE" = auto ] && TWIN_MODE=camera
     elif [ "$TWIN_MODE" = camera ]; then
         echo "[go2-3d] WARN: no frame on ${TWIN_RGB_TOPIC} yet; RTAB-Map waits for it (no map until then)"
-        CAMERA_FRAME="${TWIN_CAMERA_FRAME:-camera_link}"
+        CAMERA_FRAME="${TWIN_CAMERA_FRAME:-front_camera_optical}"
     else
         echo "[go2-3d] no camera frames on ${TWIN_RGB_TOPIC}: LiDAR-only map, YOLO off"
         TWIN_MODE=lidar
@@ -221,10 +232,17 @@ if [ "$TWIN_MODE" = auto ] || [ "$TWIN_MODE" = camera ]; then
 fi
 
 if [ "$TWIN_MODE" = camera ]; then
+    # Never re-publish a frame the session owns: the URDF's front_camera is
+    # x forward, and a second parent for it would break the whole TF tree.
     if [ "$TWIN_CAMERA_TF" = none ]; then
         echo "[go2-3d] camera TF: not published (TWIN_CAMERA_TF=none)"
-    elif timeout 5 "$(exe tf2_ros tf2_echo)" "$TWIN_BASE_FRAME" "$CAMERA_FRAME" 2>/dev/null | grep -q Translation; then
+    elif tf_exists "$TWIN_BASE_FRAME" "$CAMERA_FRAME"; then
         echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} already published by the session"
+    elif [ "$CAMERA_FRAME" = front_camera_optical ] && tf_exists "$TWIN_BASE_FRAME" front_camera; then
+        # The relay's optical frame under the URDF camera link: rotation only.
+        echo "[go2-3d] camera TF: front_camera (URDF) -> front_camera_optical"
+        start camera_tf "$(exe tf2_ros static_transform_publisher)" \
+            --yaw -1.5708 --roll -1.5708 --frame-id front_camera --child-frame-id front_camera_optical
     else
         read -r cx cy cz cyaw cpitch croll <<< "$TWIN_CAMERA_TF"
         echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} = ${TWIN_CAMERA_TF} (x y z yaw pitch roll)"
@@ -232,9 +250,16 @@ if [ "$TWIN_MODE" = camera ]; then
             --x "$cx" --y "$cy" --z "$cz" --yaw "$cyaw" --pitch "$cpitch" --roll "$croll" \
             --frame-id "$TWIN_BASE_FRAME" --child-frame-id "$CAMERA_FRAME"
     fi
-    start camera_info python3 -u /nodes/go2_camera_info.py --ros-args \
-        -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC" \
-        -p hfov_deg:="$(float "$TWIN_CAMERA_HFOV_DEG")"
+    # A calibrated relay (go2_camera_relay.py camera_info_file) already
+    # publishes the real intrinsics there; approximate ones only without it.
+    if timeout 5 ros2 topic echo --once --no-arr --qos-reliability best_effort \
+            "$GO2_CAMINFO_TOPIC" sensor_msgs/msg/CameraInfo >/dev/null 2>&1; then
+        echo "[go2-3d] camera info: ${GO2_CAMINFO_TOPIC} already published (calibrated relay)"
+    else
+        start camera_info python3 -u /nodes/go2_camera_info.py --ros-args \
+            -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC" \
+            -p hfov_deg:="$(float "$TWIN_CAMERA_HFOV_DEG")"
+    fi
     if [ "$TWIN_ROSBRIDGE" = 1 ]; then
         start image_compressor python3 -u /twin/image_compressor.py --ros-args \
             -p "pairs:=[\"${TWIN_RGB_TOPIC}:/twin/camera/compressed\", \"/yolo/image:/twin/yolo/compressed\"]"
@@ -246,6 +271,25 @@ if [ "$TWIN_MODE" = camera ]; then
         -p approx:=true -p wait_for_transform:=0.2 -p qos:=2 \
         -r cloud:="$TWIN_CLOUD_TOPIC" -r camera_info:="$GO2_CAMINFO_TOPIC" \
         -r image:="$LIDAR_DEPTH_TOPIC" -r image_raw:="${LIDAR_DEPTH_TOPIC}_raw"
+fi
+
+if [ "$TWIN_MODE" = fusion ]; then
+    # Calibrated front camera + LiDAR: go2_fusion_camera.py publishes the
+    # undistorted image, its camera_info and a LiDAR depth image projected into
+    # that camera, all with one stamp (/twin/rgb/*, /twin/depth/image); the
+    # camera TF comes from the session's URDF (front_camera).
+    [ -f "$TWIN_CAMERA_INFO" ] || { echo "[go2-3d] ERROR: fusion needs TWIN_CAMERA_INFO (got '${TWIN_CAMERA_INFO}')" >&2; stop_all; exit 1; }
+    start fusion_camera python3 -u /nodes/go2_fusion_camera.py --ros-args \
+        -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC"
+    # Live fusion check: LiDAR points drawn on the camera image.
+    start overlay python3 -u /nodes/go2_lidar_overlay.py --ros-args \
+        -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC"
+    if [ "$TWIN_ROSBRIDGE" = 1 ]; then
+        start image_compressor python3 -u /twin/image_compressor.py --ros-args \
+            -p "pairs:=[\"${TWIN_RGB_TOPIC}:/twin/camera/compressed\", \"/yolo/image:/twin/yolo/compressed\"]"
+    fi
 fi
 
 # --- RTAB-Map ---------------------------------------------------------------
@@ -282,6 +326,7 @@ ROS_ARGS=(
 )
 case "$TWIN_MODE" in
     camera) RGB="$TWIN_RGB_TOPIC"; DEPTH="$LIDAR_DEPTH_TOPIC"; INFO="$GO2_CAMINFO_TOPIC" ;;
+    fusion) RGB=/twin/rgb/image;   DEPTH=/twin/depth/image;   INFO=/twin/rgb/camera_info ;;
     rgbd)   RGB="$TWIN_RGB_TOPIC"; DEPTH="$TWIN_DEPTH_TOPIC"; INFO="$TWIN_CAMINFO_TOPIC" ;;
     lidar)  ;;
     *) echo "[go2-3d] ERROR: unknown TWIN_MODE=${TWIN_MODE}" >&2; stop_all; exit 1 ;;
@@ -289,6 +334,16 @@ esac
 if [ "$TWIN_MODE" = lidar ]; then
     RTAB_PARAMS+=(--Grid/Sensor 0)
     ROS_ARGS+=(-p subscribe_rgb:=false -p subscribe_depth:=false)
+elif [ "$TWIN_MODE" = fusion ]; then
+    # go2_fusion_camera.py publishes image, camera_info and LiDAR depth with
+    # one stamp on a reliable QoS. LiDAR depth is sparse: keep every depth
+    # pixel (default decimation is 4).
+    RTAB_PARAMS+=(--Grid/Sensor 2 --Grid/DepthDecimation 1)
+    ROS_ARGS+=(
+        -p subscribe_rgb:=true -p subscribe_depth:=true -p approx_sync:=true
+        -p qos_image:=0 -p qos_camera_info:=0
+        -r rgb/image:="$RGB" -r depth/image:="$DEPTH" -r rgb/camera_info:="$INFO"
+    )
 else
     RTAB_PARAMS+=(--Grid/Sensor 2)
     ROS_ARGS+=(
@@ -305,10 +360,10 @@ start rtabmap "$(exe rtabmap_slam rtabmap)" "${RTAB_PARAMS[@]}" --ros-args "${RO
 RTAB_PID="${PIDS[-1]}"
 
 # --- YOLO -------------------------------------------------------------------
-if [ "$TWIN_YOLO" = 1 ] && [ "$TWIN_MODE" = camera ]; then
+if [ "$TWIN_YOLO" = 1 ] && { [ "$TWIN_MODE" = camera ] || [ "$TWIN_MODE" = fusion ]; }; then
     if python3 -c 'import ultralytics' 2>/dev/null; then
         YOLO_ARGS=(
-            -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_topic:="$GO2_CAMINFO_TOPIC"
+            -p image_topic:="$RGB" -p camera_info_topic:="$INFO"
             -p cloud_topic:="$TWIN_CLOUD_TOPIC" -p model:="$TWIN_YOLO_MODEL"
             -p rate_hz:="$(float "$TWIN_YOLO_RATE")"
             -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
@@ -319,11 +374,11 @@ if [ "$TWIN_YOLO" = 1 ] && [ "$TWIN_MODE" = camera ]; then
         echo "[go2-3d] WARN: ultralytics not in the image (rebuild: wifi_3d_nav.sh --build); YOLO off"
     fi
 elif [ "$TWIN_YOLO" = 1 ]; then
-    echo "[go2-3d] YOLO off (needs the Go2 camera: TWIN_MODE=camera)"
+    echo "[go2-3d] YOLO off (needs the Go2 camera: TWIN_MODE=camera or fusion)"
 fi
 
 # --- VLM (Ollama) -----------------------------------------------------------
-if [ "$TWIN_VLM" = 1 ] && [ "$TWIN_MODE" = camera ]; then
+if [ "$TWIN_VLM" = 1 ] && { [ "$TWIN_MODE" = camera ] || [ "$TWIN_MODE" = fusion ]; }; then
     start vlm python3 -u /nodes/vlm_reasoning_node.py --ros-args \
         -p image_topic:="$TWIN_RGB_TOPIC" -p url:="$TWIN_VLM_URL" \
         -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")" \
@@ -332,7 +387,16 @@ if [ "$TWIN_VLM" = 1 ] && [ "$TWIN_MODE" = camera ]; then
         -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" -p dock_yaw:="$(float "$DOCK_YAW")" \
         -p map_frame:="$TWIN_MAP_FRAME"
 elif [ "$TWIN_VLM" = 1 ]; then
-    echo "[go2-3d] VLM off (needs the Go2 camera: TWIN_MODE=camera)"
+    echo "[go2-3d] VLM off (needs the Go2 camera: TWIN_MODE=camera or fusion)"
+fi
+
+if [ "$TWIN_CAMERA_OBSTACLES" = 1 ]; then
+    # Depth Anything V2-Small scaled by the LiDAR -> /camera/obstacle_points,
+    # a marking source in the Nav2 costmaps (scripts/tools/nav2_camera_source.py).
+    [ -f "$TWIN_CAMERA_INFO" ] || { echo "[go2-3d] ERROR: camera obstacles need TWIN_CAMERA_INFO" >&2; stop_all; exit 1; }
+    start camera_obstacles python3 -u /nodes/go2_camera_obstacles.py --ros-args \
+        -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
+        -p cloud_topic:="$TWIN_CLOUD_TOPIC" -p map_frame:="$TWIN_MAP_FRAME"
 fi
 
 sleep 3

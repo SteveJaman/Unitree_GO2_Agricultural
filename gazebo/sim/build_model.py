@@ -37,15 +37,14 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-# T_sensor_base (xyz, quaternion xyzw): the lidar mount the laptop's go2_odom_tf
-# uses to turn /lidar3d/odom into base_link. It MUST equal sensor_from_base in
-# go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml, or the laptop recovers
-# a shifted, tilted body pose. run_sim.sh reads that file and passes it in
-# SIM_SENSOR_FROM_BASE; this constant (the 2026-09-09 measured calibration) is
-# only the fallback.
-SENSOR_FROM_BASE = [-0.14056185097700238, 0.24211459251444103, -0.08014714132241024,
-                    0.8713242364998213, -0.47301693680109264, 0.11500275477832939,
-                    0.06183379966256489]
+# T_sensor_base (xyz, quaternion xyzw). The laptop's go2_odom_tf turns the lidar
+# pose into base_link with go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml,
+# so the sim reads the same file (--sensor-yaml); a mismatch tilts the body in
+# RViz and skews Nav2's heading. Fallback when the file is missing: the official
+# Go2 URDF lidar mount (radar_joint rpy 0 2.8782 0, inverted), which is what
+# scripts/tools/apply-lab-nav-fixes.sh writes into that file.
+SENSOR_FROM_BASE = [0.267276, 0.0, -0.120571, 0.0, -0.991341, 0.0, 0.131316]
+SENSOR_YAML_KEY = re.compile(r"^\s*sensor_from_base\s*:\s*\[([^\]]*)\]", re.MULTILINE)
 
 # Standing pose (rad). Gives a trunk height of ~0.29 m with Go2 leg lengths.
 STAND = {"hip": 0.0, "thigh": 0.9, "calf": -1.8}
@@ -255,6 +254,20 @@ def gz(robot, xml_text):
     robot.append(ET.fromstring(xml_text))
 
 
+def load_sensor_from_base(path):
+    """sensor_from_base from a go2_odom_tf params file; the built-in default if absent."""
+    if not path or not os.path.isfile(path):
+        print(f"WARN: {path or 'no --sensor-yaml'} not found; using the official Go2 URDF lidar mount",
+              file=sys.stderr)
+        return list(SENSOR_FROM_BASE), "default (Go2 URDF)"
+    with open(path) as f:
+        m = SENSOR_YAML_KEY.search(f.read())   # first uncommented value
+    vals = [float(v) for v in m.group(1).split(",")] if m else []
+    if len(vals) != 7:
+        sys.exit(f"{path}: expected 'sensor_from_base: [x, y, z, qx, qy, qz, qw]'")
+    return vals, path
+
+
 def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE,
           camera=True, lidar_hz=5.0):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
@@ -385,25 +398,32 @@ def main():
                     help="1 = render the front camera; 0 saves CPU (default env SIM_CAMERA)")
     ap.add_argument("--sensor-from-base", default=os.environ.get("SIM_SENSOR_FROM_BASE", ""),
                     help="lidar mount 'x y z qx qy qz qw' from the laptop's lidar3d_robot_viz.yaml "
-                         "(default: built-in 2026-09-09 calibration)")
+                         "(default: --sensor-yaml)")
+    ap.add_argument("--sensor-yaml", default=os.environ.get("SIM_SENSOR_YAML", os.path.expanduser(
+                        "~/files/go2-nav2-wifi/go2_nav2/config/lidar3d_robot_viz.yaml")),
+                    help="go2_odom_tf params file to take sensor_from_base from, so the sim's lidar "
+                         "mount matches the laptop stack (default: the go2-nav2-wifi checkout)")
     a = ap.parse_args()
     mount = floats(a.mount, 6)
-    sensor_from_base = floats(a.sensor_from_base.replace(",", " "), 7) if a.sensor_from_base.strip() \
-        else SENSOR_FROM_BASE
-    if math.sqrt(sum(v * v for v in sensor_from_base[3:])) < 0.5:
-        sys.exit(f"--sensor-from-base: quaternion is not unit length: {sensor_from_base[3:]}")
     mesh_root = a.mesh_root or os.path.dirname(os.path.abspath(a.go2))
     mesh_root = mesh_root.replace("\\", "/").rstrip("/")
     for p in (a.go2, a.d1):
         if not os.path.isdir(p):
             sys.exit(f"missing model directory: {p} (run gazebo/setup_gazebo.sh)")
+    if a.sensor_from_base.strip():
+        sensor_from_base = floats(a.sensor_from_base.replace(",", " "), 7)
+        source = "SIM_SENSOR_FROM_BASE"
+    else:
+        sensor_from_base, source = load_sensor_from_base(a.sensor_yaml)
+    if math.sqrt(sum(v * v for v in sensor_from_base[3:])) < 0.5:
+        sys.exit(f"sensor_from_base: quaternion is not unit length: {sensor_from_base[3:]}")
     urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base,
                          camera=a.camera == "1", lidar_hz=a.lidar_hz)
     print(f"wrote {urdf}")
+    print(f"sensor_from_base from {source}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "
           f"D1 joints: {len(params['d1_joints'])}")
-    print(f"sensor_from_base={params['sensor_from_base']}"
-          f" ({'SIM_SENSOR_FROM_BASE' if a.sensor_from_base.strip() else 'built-in default'})")
+    print(f"sensor_from_base={params['sensor_from_base']}")
 
 
 if __name__ == "__main__":

@@ -39,6 +39,11 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 
+/* Performance mode: a blurred panel over the 3D view is re-blurred every
+   frame, which a CPU renderer cannot afford. Solid panels instead. */
+.app.lite * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.app.lite .glass { background: var(--glass-strong); box-shadow: none; }
+
 /* ---------------------------------------------------------- top left */
 .mapmenu { position: absolute; top: var(--gap); left: var(--gap); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 10px 16px; font-size: 15px; letter-spacing: .01em; }

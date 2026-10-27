@@ -35,7 +35,7 @@ go2_odom_tf ─► TF lidar3d_map → base_link ──────────�
 camera relay ─► /camera/image_raw ──────────────────► go2_camera_info ─► /camera/camera_info
                                                       pointcloud_to_depthimage ─► /camera/lidar_depth
                                                         (LiDAR projected into the image → RTAB-Map RGB-D)
-                                                      static TF base_link → camera_link
+                                                      static TF front_camera → front_camera_optical
                                                       yolo_node (YOLO11s) ─► /yolo/detections, /yolo/image,
 Nav2 costmap ◄── /yolo/obstacles (auto with --ai) ◄──     /yolo/markers, /yolo/obstacles     (--ai)
                                                       vlm_reasoning_node ─► Ollama ─► /vlm_decision (--ai)
@@ -71,7 +71,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
     watches. A raw 720p frame through rosbridge would be ~2.7 MB.
   - **Foxglove** stays available as an alternative (`--foxglove`).
 - **The camera is optional, detected at start.** In the default `auto` mode,
-  `go2-3d` waits up to `TWIN_CAMERA_WAIT` (60 s) for a frame on
+  `go2-3d` waits up to `TWIN_CAMERA_WAIT` (180 s; the robot camera starts a minute or more after the session) for a frame on
   `/camera/image_raw`.
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
     loop closures), and YOLO and the VLM start (unless `--no-ai`).
@@ -88,7 +88,7 @@ publishes no `camera_info`. `go2-3d` fills the gaps:
 
 | Piece | What it does |
 |---|---|
-| Static TF `base_link → camera_link` | The camera's optical frame (z forward, x right, y down) at the official Go2 URDF `front_camera_joint`, (0.327, 0, 0.043) m. `TWIN_CAMERA_TF="x y z yaw pitch roll"`; skipped if the session already publishes that frame; `none` disables it |
+| Static TF `front_camera → front_camera_optical` | The relay stamps images `front_camera_optical` (z forward, x right, y down). Its parent is the URDF's x-forward `front_camera` link (0.327, 0, 0.043) m, so only the rotation is added; `front_camera` itself is never re-published. Without that URDF link, `base_link → front_camera_optical` from `TWIN_CAMERA_TF="x y z yaw pitch roll"`; `none` disables it |
 | [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py) | `/camera/camera_info` with every frame. Pinhole intrinsics from `TWIN_CAMERA_HFOV_DEG` (120° default, 68.75° with `--sim`) |
 | `pointcloud_to_depthimage` (rtabmap_util) | Projects `/lidar3d/registered` into the camera → sparse depth image `/camera/lidar_depth` |
 | RTAB-Map `camera` mode | RGB + LiDAR depth + scan cloud. `/rtabmap/cloud_map` is coloured; the LiDAR still does the registration |
@@ -97,7 +97,10 @@ publishes no `camera_info`. `go2-3d` fills the gaps:
 calibration.** If colours land on the wrong surfaces, or YOLO boxes sit in the
 wrong place, calibrate the camera (`camera_calibration`). Then set the real
 field of view, or fx/fy/cx/cy on `go2_camera_info.py`, and the real mount in
-`TWIN_CAMERA_TF`. This is roadmap item 3.4.
+`TWIN_CAMERA_TF`. This is roadmap item 3.4. With a calibration
+(`./scripts/tools/calibrate_camera.sh`), the relay publishes the real
+`/camera/camera_info` and `go2_camera_info.py` is skipped; `--fusion` also
+undistorts the image ([below](#camera--lidar-fusion---fusion)).
 
 **YOLO11s** ([`twin/yolo_node.py`](../twin/yolo_node.py), started by `--ai`)
 runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
@@ -156,6 +159,59 @@ Limits:
 - **Range:** at 2 Hz, only objects within `max_range` (6 m) are injected.
 - **False positives** block the path too. Watch `/yolo/markers` on the first runs.
 
+## Camera + LiDAR fusion (`--fusion`)
+
+```bash
+./scripts/runtime/wifi_3d_nav.sh --fusion                 # real dog (needs a calibration)
+SIM_RENDER_ENGINE=ogre ./scripts/runtime/wifi_3d_nav.sh --sim --no-explore --fusion
+```
+
+The front camera has no depth of its own, so the LiDAR supplies it:
+
+```text
+/camera/image_raw ──► go2_fusion_camera ──► /twin/rgb/image        (undistorted, front_camera_optical)
+/lidar3d/registered ─►  (projects the  ──► /twin/rgb/camera_info
+TF, calibration ─────►   LiDAR into    ──► /twin/depth/image      (16UC1 mm, same stamp)
+                         the camera)              │
+                                                  ▼
+                               RTAB-Map RGB-D + scan ──► /rtabmap/cloud_map (x y z rgb)
+```
+
+- **Calibration:** `--fusion` needs the lens calibration
+  `config/camera/front_camera.yaml`
+  ([how to make it](camera_lidar_fusion.md#1-intrinsic-calibration-once-per-camera-and-resolution)).
+  `--sim` uses the exact Gazebo one. Override with `TWIN_CAMERA_INFO_FILE`.
+- **Coloured map:** the 3D map is coloured where the camera saw it; LiDAR-only
+  parts (behind and beside the dog) stay white. It fills in as the dog moves,
+  because RTAB-Map adds a node every 5 cm or 0.05 rad, not while standing still.
+- **Live check:** `/camera/lidar_overlay` (the [overlay](camera_lidar_fusion.md#2-overlay-check))
+  runs automatically.
+- **Logs:** `fusion_camera.log` reports RGB-D frames and LiDAR depth pixels
+  per frame every 10 s; `overlay.log` the overlay.
+
+![Fused map in simulation after 2.3 m along the crop row](images/fusion_map_sim.png)
+
+*Top-down view of `/rtabmap/cloud_map` in `--sim --fusion` after driving
+2.3 m: tan path, brown bed edges and green tree rows from the camera;
+white is LiDAR-only.*
+
+### In RViz
+
+`wifi_nav.sh` adds three displays to the session's RViz layouts
+(`lidar3d_planning.rviz`, `lidar3d_navigation.rviz` in go2-nav2-wifi), once,
+via [`scripts/tools/rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py):
+
+| Display | Topic | Shows |
+|---|---|---|
+| Front camera | `/camera/image_raw` | Live camera (any mode) |
+| LiDAR on camera | `/camera/lidar_overlay` | LiDAR points on the image (`--fusion`, or `lidar_overlay.sh`) |
+| 3D map (RTAB-Map) | `/rtabmap/cloud_map` | The 3D map, in camera colour with `--fusion` (Color Transformer RGB8) |
+
+The image displays open as panels; drag them where you want and save the
+layout. The 3D map display is Transient Local, so it shows the last map even
+while the dog stands still. Both image displays are Reliable, matching the
+camera relay and Gazebo.
+
 ---
 
 ## One-time setup
@@ -207,6 +263,9 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
 | `--save-location` | In a second terminal: label points clicked in the dashboard, saved to `config/semantic_locations.json` |
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
+| `--fusion` | **Calibrated camera + LiDAR fusion** instead of `--camera`: the image is undistorted with the lens calibration, so colours line up; also publishes `/camera/lidar_overlay`. YOLO and the VLM run on it too. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
+| `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
+| `--omni` | Full Go2 mobility: walk backwards, sidestep, stuck recovery. See [omni_nav.md](omni_nav.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--foxglove` | Also start foxglove_bridge on `:8765`, see [Alternative visualization](#alternative-visualization-foxglove) |
@@ -318,8 +377,10 @@ curl -fsSL https://ollama.com/install.sh | sh    # on the VM
 ollama pull llava:7b                             # ~4.7 GB
 ```
 
-llava:7b on the VM's CPU takes tens of seconds per answer. A Windows host with
-a GPU is much faster:
+llava:7b on the VM's CPU is too slow to use: measured 2026-10-27, one camera
+frame takes ~2 min (plus ~5 min to load the model when the VM swaps), longer
+than the node's 120 s timeout, so no decision is ever published. A Windows
+host with a GPU answers in seconds:
 
 1. Install Ollama on Windows.
 2. Set `OLLAMA_HOST=0.0.0.0` there.
@@ -534,14 +595,25 @@ exact address. The VM IP is DHCP, so it changes.
 
 The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
-`lidar3d_map`), `?base=` (robot frame, default `base_link`).
+`lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.
+
+**Performance mode.** A VM without 3D acceleration (VirtualBox: `glxinfo -B`
+says `Accelerated: no`) draws everything on the CPU. When the browser reports
+such a renderer (llvmpipe, SwiftShader, `LLVM`), the dashboard starts in
+performance mode: 1× resolution, no antialiasing, a 25k-cube map budget,
+cheaper lighting, shadows off and solid instead of blurred panels. On a
+synthetic 320k-point map in software WebGL that is about 3.4× the frame
+rate. Switch it in ⚙ settings (**Performance mode**; remembered per
+browser) or force it with `?quality=`. In every mode the map is decoded
+and voxelized in a Web Worker (no stall when the map updates every 2 s)
+and shadows are redrawn once a second, not every frame.
 
 The 3D map fills the whole screen (dark theme). The controls float over it
 as frosted-glass panels, and no topic names or frame IDs are shown:
 
 | Where | What | Behind it |
 |---|---|---|
-| **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
+| **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: performance mode, real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
 | **Top centre** | **AI vision**: a toast for 5 s when the VLM reports *Path blocked* or *Hydroponic station spotted*, then a small badge | `/vlm_decision` |
 | **Top right** | Robot link · speed · **battery icon** (amber below 30 %, red and blinking below 15 %, *Docking* / *Docked* while the battery manager acts) | `/battery_state`, `/battery_manager/status`, `/cmd_vel` |
 | **Bottom left** | **Auto Explore** toggle (shows *Mapping the area*, *Heading home*, …) · **Return to Dock** · **Tap to go** · **Follow** · **Clear** | `/explore/resume`, `/explore/status`, `/goal_pose`, `/clicked_point` |
@@ -549,7 +621,12 @@ as frosted-glass panels, and no topic names or frame IDs are shown:
 
 **In the scene:**
 
-- **The robot:** a Go2 stand-in with a red navigation arrow. Its pose is
+- **The robot:** Unitree's official Go2 model (`go2_description`, BSD)
+  with a red navigation arrow. Its 12 leg joints follow `/joint_states`
+  (`go2_joint_state_bridge`, from `/lf/lowstate`), smoothed between
+  messages; without joint data it holds the standing pose. The meshes are
+  decimated to ~23k triangles (`twin/webapp/public/go2/`, made by
+  [`build_go2_model.py`](../scripts/tools/build_go2_model.py)). Its pose is
   smoothed (exponential lerp/slerp of the TF pose, about 100 ms), so it glides
   instead of stepping; jumps over 2 m snap.
 - **The goal:** the waypoint pin (glowing red orb on a beam, pulsing ring)
@@ -688,7 +765,7 @@ camera images. The database also opens in
 | `TWIN_RTAB_ARGS` | — | Extra RTAB-Map parameters, e.g. `"--Grid/CellSize 0.1 --Grid/RangeMax 8"` (lighter on the VM) |
 | `TWIN_WEB_PORT` / `TWIN_ROSBRIDGE_PORT` / `TWIN_FOXGLOVE_PORT` | `3000` / `9090` / `8765` | Dashboard, rosbridge, foxglove_bridge ports |
 | `TWIN_RGB_TOPIC` | `/camera/image_raw` (`--rgbd`: `/camera/color/image_raw`) | Camera image |
-| `TWIN_CAMERA_WAIT` | `60` | Seconds to wait for the first camera frame (`auto`) |
+| `TWIN_CAMERA_WAIT` | `180` | Seconds to wait for the first camera frame (`auto`; ends at the first frame; `--no-camera` skips it) |
 | `TWIN_CAMERA_TF` | `0.327 0 0.043 -1.5708 0 -1.5708` | `base_link → camera` optical frame: x y z yaw pitch roll; `none` = don't publish |
 | `TWIN_CAMERA_FRAME` | from the image header | Child frame for that TF |
 | `TWIN_CAMERA_HFOV_DEG` | `120` (`--sim`: `68.75`) | Horizontal field of view for the approximate intrinsics |
@@ -724,27 +801,31 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
 | Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
 | Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
-| Dashboard: camera "no frames" | Camera mode only (see READY `RTAB-Map : camera`); `tail …/ws/log/3d/image_compressor.log` |
+| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the VM's UDP buffers are too small: [troubleshooting](troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
+| Map stays empty in camera mode; `rtabmap.log` repeats `Did not receive data` | RTAB-Map waits for camera + LiDAR depth together; the camera is too slow or missing. Same UDP buffer fix; `--lidar-only` maps without the camera |
 | No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
 | Merge refused | The two rooms don't touch; merge through the room between them first |
 | Auto Survey button greyed out | `survey_manager` isn't running: `tail …/ws/log/3d/survey.log` (`TWIN_SURVEY=0`?) |
 | Survey stuck in `EXPLORING` | The explorer never reports `DONE` (an unreachable frontier keeps it busy). It moves on after 30 min; check `/explore/status` |
 | Rooms only get numbers | No objects inside the room and no VLM answer: needs the camera, YOLO and the VLM (not `--no-ai`). `survey_report.json` shows the objects found per room |
-| Dashboard: battery "—" | `tail …/ws/log/3d/battery.log` (needs `/lf/lowstate` from the relay) |
+| Dashboard: battery "—" | `tail …/ws/log/3d/battery.log`: `No module named 'unitree_go'` was fixed (the battery manager now sources `/opt/go2-unitree-msgs`); `no battery data` = the relay does not forward `/lf/lowstate` |
+| Topics listed, but panels say "topic does not exist" or wait forever; `rtabmap.log` repeats `Did not receive data` | `go2-3d` is on the wrong DDS domain. `docker logs go2-3d \| grep 'DDS domain'` must show the session's domain (64) and `file:///tmp/go2-wifi-cyclonedds.xml`, not `domain 0`. Restart `wifi_3d_nav.sh` |
 | `/rtabmap/cloud_map` empty | `tail ~/files/go2-nav2-wifi/ws/log/3d/rtabmap.log`. Look for TF errors (`lidar3d_map → base_link` must resolve) or no data on `/lidar3d/registered` |
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
 | `no camera frames … LiDAR-only map, YOLO off` | The camera relay isn't publishing. `tail /tmp/camera_relay.log` in `go2-lidar3d`; see [camera.md](camera.md) |
 | Map colours land on the wrong surfaces | Camera intrinsics / `TWIN_CAMERA_TF` are off: calibrate (see [Camera fusion and YOLO](#camera-fusion-and-yolo)) |
-| `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → camera_link` must resolve |
+| `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → front_camera_optical` must resolve |
 | YOLO boxes in `/yolo/image` but no `/yolo/markers` | Box bottom above the horizon and no LiDAR points inside it, or farther than 6 m. `tail …/ws/log/3d/yolo.log` |
 | Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
 | Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
 | `initial pose NOT published` in `auto_localize.log` | The robot was more than 0.5 m from the origin at start: start the session with the dog at the dock |
-| `Ollama not reachable` in `vlm.log` | Start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
+| `Ollama not reachable` in `vlm.log` | `… timed out`: llava:7b on the VM's CPU needs ~2 min per frame, over the 120 s timeout; use a GPU host (`TWIN_VLM_URL`). Otherwise start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
 | `no battery data` in `battery.log` | The relay does not forward `/lf/lowstate`; check in `go2sh`: `ros2 topic hz /lf/lowstate` |
 | Low battery but the dog doesn't go home | `battery.log` shows `dock goal sent`? Then check Nav2 (`/plan`); the dock is `TWIN_DOCK` in `lidar3d_map` |
 | `--resume`: old and new map not joined | Needs a recognised place: `camera` mode, start at the old start point |
 | VM CPU pegged | `--no-yolo` / `--no-vlm`, or `TWIN_YOLO_RATE=1`; `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
+| `--fusion`: map stays white | `tail …/ws/log/3d/fusion_camera.log`: LiDAR depth px/frame must be > 0. Needs TF `front_camera` from the session URDF and the calibration at the camera's current width |
+| Foxglove 3D panel says *"Error creating WebGL context"* | No GPU acceleration in the VM, see [WebGL / Hardware Acceleration Error](#webgl--hardware-acceleration-error) |
 | Map not saved after a crash | A leftover `go2-3d` is stopped (and saved) at the start of the next run, or run `--stop` |
 
 `go2-3d` keeps its own log after it stops: `docker logs go2-3d`.
@@ -784,12 +865,126 @@ WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
 - **Pose goals:** **Publish → Pose** on `/goal_pose` sends a goal without
   snapping; **Publish → Pose estimate** publishes `/initialpose`.
 
+If the 3D panel shows *"Error creating WebGL context"*, see
+[WebGL / Hardware Acceleration Error](#webgl--hardware-acceleration-error).
+
+### Import the layout
+
+[`config/foxglove_layout.json`](../config/foxglove_layout.json) contains a
+3D panel and an Image panel side by side:
+
+| Panel | Pre-configured |
+|---|---|
+| 3D | Display frame `lidar3d_map`; `/rtabmap/cloud_map` (coloured by `z`), `/tf`, `/plan`, `/clicked_goal_markers` on; `/lidar3d/registered` and `/global_costmap/costmap` listed but off; **Publish → Point** on `/clicked_point` |
+| Image | `/camera/image_raw` |
+
+To import it:
+
+1. Copy the file to the machine running Foxglove (for Windows, e.g. through the
+   VirtualBox shared folder, or `scp` it from the VM).
+2. In Foxglove, open the **Layouts** menu (top-left, next to the layout name)
+   or the **Layouts** sidebar.
+3. Choose **Import from file…** and select `foxglove_layout.json`.
+4. Connect as above. The panels fill as soon as the topics arrive.
+
+The layout is stored in Foxglove after import. To share a change with the team,
+use **Layouts → Export…** and commit the file over
+`config/foxglove_layout.json`.
+
+### WebGL / Hardware Acceleration Error
+
+Symptom: Foxglove connects to `ws://localhost:8765` and the **Topics** list is
+complete (`/rtabmap/cloud_map`, `/clicked_goal_markers`,
+`/global_costmap/costmap`, …), but the 3D panel shows:
+
+> Error creating WebGL context. Hardware Acceleration is not enabled. App
+> performance may be severely degraded.
+
+**This is not a bug in the repository.** The backend is working: the topics
+reaching Foxglove prove that RTAB-Map, the bridge and DDS are all fine. Foxglove's 3D
+panel renders with WebGL, and WebGL needs an OpenGL-capable GPU. A VirtualBox
+VM has none by default, so the browser or Foxglove app inside the VM cannot
+create a WebGL context. The **Image panel renders with WebGL too** and fails the
+same way. Panels that don't draw graphics keep working: Plot, Raw Messages,
+Diagnostics and the topic list. Use them to confirm the data is arriving.
+
+#### Fix: enable 3D acceleration in VirtualBox
+
+1. **Shut down** the VM completely (not *Save State*). These settings are
+   greyed out while it runs.
+2. VirtualBox Manager → select the VM → **Settings → Display → Screen**:
+   - **Video Memory:** `128 MB` (drag the slider to the maximum)
+   - **Graphics Controller:** `VMSVGA` (the recommended one for Linux guests)
+   - Tick **Enable 3D Acceleration**
+3. Start the VM and install the guest drivers:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y virtualbox-guest-utils virtualbox-guest-x11
+   sudo reboot
+   ```
+
+   Alternatively, use **Devices → Insert Guest Additions CD image…** and run
+   `sudo /media/$USER/VBox_GAs_*/VBoxLinuxAdditions.run`. Use one method, not
+   both. The Guest Additions version should match the VirtualBox version on
+   the host.
+4. Check that OpenGL now goes through the host GPU:
+
+   ```bash
+   sudo apt install -y mesa-utils
+   glxinfo -B | grep -E 'renderer|direct rendering'
+   ```
+
+   - `OpenGL renderer string: SVGA3D …`: accelerated, good.
+   - `llvmpipe` or `softpipe`: still software rendering. Recheck steps 2–3
+     and update the host GPU driver.
+5. In the VM's browser, make sure **Settings → System → Use graphics
+   acceleration when available** is on, then open `chrome://gpu` (Chrome or
+   Chromium) and check that *WebGL* says *Hardware accelerated*. Firefox shows
+   the same information on `about:support` under *Graphics*.
+6. Reload Foxglove.
+
+#### If WebGL still fails
+
+VirtualBox 3D support depends on the host GPU and driver, and some setups
+never get a working WebGL context. Use one of these instead.
+
+1. **Run Foxglove natively on the Windows host (recommended).** Install
+   the Foxglove desktop app on Windows ([download](https://foxglove.dev/download)),
+   where it uses the real GPU. Connect to `ws://<VM IP>:8765` (the IP in the
+   READY block) instead of `localhost`, and import
+   [`config/foxglove_layout.json`](../config/foxglove_layout.json). This needs the VM on
+   **bridged** networking. On NAT, add a port-forwarding rule for TCP `8765`
+   (VM Settings → Network → Advanced → Port Forwarding) and connect to
+   `ws://localhost:8765` on Windows. This also takes the rendering load off
+   the VM's CPU.
+2. **Use RViz for the 3D view.** RViz already opens with every
+   `wifi_3d_nav.sh` session and works with software OpenGL:
+   - Fixed Frame `lidar3d_map`.
+   - **Add → By topic → `/rtabmap/cloud_map` → PointCloud2**. Colour
+     Transformer `AxisColor`, axis `Z` gives the same height map.
+   - Add `/plan` (Path) and `/clicked_goal_markers` (MarkerArray) the same way.
+   - Click-to-go still works: RViz's **Publish Point** tool publishes on
+     `/clicked_point`, which `go2_click_to_goal` already listens to.
+   - The dense map is heavy for a CPU renderer. Use **Style** `Points` with
+     a small **Size**, untick `/lidar3d/registered`, or coarsen the map with
+     `TWIN_RTAB_ARGS="--Grid/CellSize 0.1"`.
+3. **Software WebGL in Chrome (last resort, slow).** Start Chrome in the VM
+   with `google-chrome --enable-unsafe-swiftshader --ignore-gpu-blocklist`.
+   WebGL then runs on the CPU via SwiftShader. Expect a low frame rate with
+   `/rtabmap/cloud_map` visible, so use it only to check that the panel
+   works.
+
 ---
 
 ## Not done yet
 
-- **Camera calibration.** The intrinsics and mount are approximations until
-  roadmap item 3.4 is done.
+- **Camera calibration.** Without `config/camera/front_camera.yaml` the
+  intrinsics and mount are approximations (roadmap item 3.4); calibrate with
+  `calibrate_camera.sh` and use `--fusion`.
+- **Dense colour.** Camera modes colour only where LiDAR points project into
+  the image, so the colour is as sparse as the scan. A RealSense (`--rgbd`)
+  gives dense depth.
 - **Doors and glass.** These need a custom-trained YOLO model; COCO has neither class.
 - **YOLO on the Jetson.** Inference runs on the VM's CPU at 2 Hz; the Jetson GPU
   would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).

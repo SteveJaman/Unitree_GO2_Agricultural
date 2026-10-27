@@ -21,6 +21,9 @@ Unitree_GO2_Agricultural/
 ├── .pre-commit-config.yaml           # ruff, shellcheck, clang-format, markdownlint
 ├── config/
 │   ├── README.md
+│   ├── camera/                       # front_camera.yaml (calibration), sim_front_camera.yaml
+│   ├── nav2/go2_omni.yaml            # --omni: MPPI Omni + omni lattice settings
+│   ├── foxglove_layout.json          # Foxglove layout (3D twin + camera), --foxglove
 │   ├── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
 │   └── semantic_locations.json       # named points from --save-location (created on first save)
 ├── docs/
@@ -31,6 +34,8 @@ Unitree_GO2_Agricultural/
 │   ├── scripts.md                    # scripts reference
 │   ├── d1arm.md                      # D1 arm runbook
 │   ├── camera.md                     # live camera setup
+│   ├── camera_lidar_fusion.md        # camera calibration + LiDAR overlay check, --fusion
+│   ├── omni_nav.md                   # --omni: full Go2 mobility, stuck recovery
 │   ├── tour.md                       # waypoint mode setup
 │   ├── troubleshooting.md            # problems, fixes, collision tuning
 │   ├── LAB-NAV-FIXES.md              # lab fixes for upstream go2-nav2-wifi
@@ -58,6 +63,10 @@ Unitree_GO2_Agricultural/
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)
 │   │   ├── d1_arm_calibration.py     # D1-T folded-pose calibration
 │   │   └── direct_test_movement.py   # small safe arm movement test
+│   ├── robot/                        # run ON the robot (copied by wifi_nav.sh)
+│   │   ├── go2_camera_wifi.{sh,py}   # front camera JPEG -> Wi-Fi DDS
+│   │   ├── arm_bridge_wifi.{sh,py}   # D1 arm on the Go2 <-> laptop over TCP
+│   │   └── unitree_arm/              # ArmString msg package the bridge is built with
 │   └── tools/                        # diagnostics and tests
 │       ├── auto_walk.sh
 │       ├── test_goal_cli.sh
@@ -86,6 +95,10 @@ Unitree_GO2_Agricultural/
 │   ├── room_segmentation_node.py     # costmap -> rooms, names/merges -> config/semantic_rooms.json
 │   ├── survey_manager.py             # autonomous survey: explore, rooms, visit + name each, report, dock
 │   └── webapp/                       # web dashboard: React + three.js (Vite), full-screen map + glass UI, :3000
+│       ├── src/Go2Model.jsx          # Unitree Go2 model, leg joints from /joint_states
+│       ├── src/ros/cloudWorker.js    # point cloud decoding + voxels in a Web Worker
+│       ├── src/ros/quality.js        # performance mode (software renderer detection)
+│       └── public/go2/               # decimated go2_description meshes (build_go2_model.py)
 ├── src/
 │   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
 └── cmu-legacy/                       # archived CMU-stack code, not used

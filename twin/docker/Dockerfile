@@ -54,6 +54,19 @@ WORKDIR /opt/yolo
 RUN YOLO_CONFIG_DIR=/tmp/yolo-build python3 -c 'import numpy as np; from ultralytics import YOLO; m = YOLO("yolo11s.pt"); m.predict(np.zeros((64, 64, 3), np.uint8), verbose=False)[0].plot(); print("yolo11s OK,", len(m.names), "classes")' \
     && test -s /opt/yolo/yolo11s.pt && chmod a+r /opt/yolo/yolo11s.pt && rm -rf /tmp/yolo-build
 
+# Camera obstacles (wifi_3d_nav.sh --camera-obstacles): ONNX Runtime (CPU) and
+# Depth Anything V2-Small (Apache-2.0), pinned by revision and checksum.
+# --no-deps keeps the numpy < 2 installed above (ROS Humble's Python needs 1.x).
+ARG DEPTH_MODEL_URL=https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx/model.onnx
+ARG DEPTH_MODEL_SHA256=afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip curl ca-certificates \
+    && pip3 install --no-cache-dir --no-deps onnxruntime==1.23.2 \
+    && mkdir -p /opt/depth \
+    && curl -fsSL -o /opt/depth/depth_anything_v2_small.onnx "${DEPTH_MODEL_URL}" \
+    && echo "${DEPTH_MODEL_SHA256}  /opt/depth/depth_anything_v2_small.onnx" | sha256sum -c - \
+    && python3 -c "import onnxruntime" \
+    && rm -rf /var/lib/apt/lists/*
+
 # Served on port 3000 by start_inside.sh (python3 -m http.server).
 COPY --from=webapp /webapp/dist /opt/webapp
 

@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Grid, Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { useTopic } from './RosProvider.jsx';
 import { TfTree, toMatrix } from './ros/tf.js';
-import { decodeCloud, voxelize } from './ros/pointcloud.js';
+import { QUALITY } from './ros/quality.js';
+import { fetchConfigJson } from './ros/config.js';
+import Go2Model from './Go2Model.jsx';
 
 // ROS is z-up, three.js is y-up: everything ROS lives in this rotated group.
 const ROS_TO_THREE = [-Math.PI / 2, 0, 0];
@@ -28,10 +30,15 @@ const LABEL_Z = [500, 0];
  * "HYDROPONIC" sightings, the dock and the named locations of
  * config/semantic_locations.json. Subscriptions are made here, outside
  * <Canvas>, so they do not depend on React context crossing into the
- * three.js renderer.
+ * three.js renderer. Point clouds are decoded and voxelized in a Web Worker
+ * (ros/cloudWorker.js); `quality` picks the render settings (ros/quality.js).
+ * Memoized: the dashboard re-renders for every status change, the 3D scene
+ * only when its own props change.
  */
-export default function Scene({
-  fixedFrame, baseFrame, layers, view, meshUrl, textured, shadows, voxelSize,
+export default memo(Scene);
+
+function Scene({
+  fixedFrame, baseFrame, layers, view, meshUrl, textured, shadows, voxelSize, quality = 'high',
   assets, clickToGo, follow, waypoint, onPick, onGoal, onStats,
   rooms, roomsInteractive, selectedRooms = [], onRoomClick,
 }) {
@@ -45,14 +52,22 @@ export default function Scene({
 
   useTopic('/tf', 'tf2_msgs/msg/TFMessage', (m) => tf.add(m), { queueLength: 50 });
   useTopic('/tf_static', 'tf2_msgs/msg/TFMessage', (m) => tf.add(m), { queueLength: 50 });
-  useTopic('/rtabmap/cloud_map', 'sensor_msgs/msg/PointCloud2', (m) => {
-    const c = decodeCloud(m, 600000);
-    if (c) setCloud(c);
-  }, { throttle: 2000, compression: 'cbor', enabled: layers.map && view !== 'mesh' });
-  useTopic('/lidar3d/registered', 'sensor_msgs/msg/PointCloud2', (m) => {
-    const c = decodeCloud(m, 60000);
-    if (c) setScan(c);
-  }, { throttle: 500, compression: 'cbor', enabled: layers.scan });
+  // Leg angles (go2_joint_state_bridge, from /lf/lowstate): a ref, not state,
+  // so 20 Hz joint data moves the model without re-rendering React.
+  const joints = useRef(new Map());
+  useTopic('/joint_states', 'sensor_msgs/msg/JointState', (m) => {
+    (m.name || []).forEach((n, i) => joints.current.set(n, m.position[i]));
+  }, { throttle: 50 });
+  const q = QUALITY[quality] || QUALITY.high;
+  const voxelOpts = useMemo(() => (view === 'solid'
+    ? { size: voxelSize === 'auto' ? 0.06 : Number(voxelSize), budget: q.voxelBudget } : null),
+  [view, voxelSize, q.voxelBudget]);
+  const [voxels, setVoxels] = useState(null);
+  const decode = useCloudWorker({ setCloud, setScan, setVoxels }, voxelOpts);
+  useTopic('/rtabmap/cloud_map', 'sensor_msgs/msg/PointCloud2', (m) => decode('map', m, 600000),
+    { throttle: 2000, compression: 'cbor', enabled: layers.map && view !== 'mesh' });
+  useTopic('/lidar3d/registered', 'sensor_msgs/msg/PointCloud2', (m) => decode('scan', m, 60000),
+    { throttle: 500, compression: 'cbor', enabled: layers.scan });
   useTopic('/plan', 'nav_msgs/msg/Path', setPlan, { throttle: 300 });
   // The goal Nav2 actually got (click-to-go snaps clicks to free floor).
   useTopic('/goal_pose', 'geometry_msgs/msg/PoseStamped', (m) => onGoal?.(m));
@@ -78,18 +93,13 @@ export default function Scene({
   useEffect(() => {
     if (!layers.labels) return undefined;
     let alive = true;
-    const load = () => fetch(`${assets}config/semantic_locations.json`, { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : {}))
+    const load = () => fetchConfigJson(assets, 'semantic_locations.json')
       .then((d) => alive && setPlaces(Object.entries(d || {}).map(([label, e]) => ({ label, ...e }))))
       .catch(() => {});
     load();
     const id = setInterval(load, 10000);
     return () => { alive = false; clearInterval(id); };
   }, [assets, layers.labels]);
-
-  const voxels = useMemo(() => (cloud && view === 'solid'
-    ? voxelize(cloud, voxelSize === 'auto' ? 0.06 : Number(voxelSize), 80000) : null),
-  [cloud, view, voxelSize]);
 
   const [meshInfo, setMeshInfo] = useState(null);
   const stats = useRef(onStats);
@@ -108,17 +118,18 @@ export default function Scene({
 
   return (
     <Canvas shadows={shadows} camera={{ position: [-7, 10, 9], fov: 45, near: 0.05, far: 1000 }}
-            dpr={[1, 2]} gl={{ antialias: true }} style={{ cursor: clickToGo ? 'crosshair' : 'grab' }}>
+            dpr={q.dpr} gl={{ antialias: q.antialias }} style={{ cursor: clickToGo ? 'crosshair' : 'grab' }}>
       <color attach="background" args={['#05070b']} />
       <fog attach="fog" args={['#05070b', 35, 110]} />
       <hemisphereLight args={['#e8f0f8', '#1e2733', 0.75]} />
       <ambientLight intensity={0.2} />
       <directionalLight position={[12, 22, 8]} intensity={1.6} castShadow={shadows}
-                        shadow-mapSize={[2048, 2048]} shadow-bias={-0.0005} shadow-normalBias={0.02}
+                        shadow-mapSize={[q.shadowMapSize, q.shadowMapSize]} shadow-bias={-0.0005} shadow-normalBias={0.02}
                         shadow-camera-left={-30} shadow-camera-right={30}
                         shadow-camera-top={30} shadow-camera-bottom={-30}
                         shadow-camera-near={1} shadow-camera-far={80} />
       <directionalLight position={[-10, 8, -12]} intensity={0.35} />
+      {shadows && <SlowShadows />}
       {/* Under the scanned floor (ROS z is three.js y), never drawn through it. */}
       <Grid infiniteGrid cellSize={1} sectionSize={5} cellColor="#121a24" sectionColor="#1d2b3b"
             fadeDistance={70} position={[0, (floorZ ?? 0) - 0.02, 0]} />
@@ -127,7 +138,7 @@ export default function Scene({
       <group rotation={ROS_TO_THREE}>
         {layers.map && view === 'solid' && voxels && voxels.count > 0 && (
           <InFrame tf={tf} fixed={fixedFrame} frame={voxels.frame}>
-            <Voxels voxels={voxels} textured={textured} />
+            <Voxels voxels={voxels} textured={textured} lambert={q.material === 'lambert'} />
             {shadows && <ShadowFloor z={floorZ} />}
           </InFrame>
         )}
@@ -159,7 +170,7 @@ export default function Scene({
         {layers.labels && places.filter((p) => (!p.frame || p.frame === fixedFrame) && !/^dock$/i.test(p.label)).map((p) => (
           <Pin key={`place-${p.label}`} x={p.x} y={p.y} z={floorZ ?? p.z ?? 0} label={p.label.replace(/_/g, ' ')} kind="place" />
         ))}
-        <Robot tf={tf} fixed={fixedFrame} base={baseFrame} follow={follow} shadows={shadows} />
+        <Robot tf={tf} fixed={fixedFrame} base={baseFrame} follow={follow} joints={joints} lambert={q.material === 'lambert'} />
         <ClickPlane enabled={clickToGo} onPick={onPick} />
       </group>
     </Canvas>
@@ -185,10 +196,13 @@ function InFrame({ tf, fixed, frame, fallbackIdentity = false, children }) {
 }
 
 /** Voxel cubes: one InstancedMesh, light blue/grey or camera colours. */
-function Voxels({ voxels, textured }) {
+function Voxels({ voxels, textured, lambert }) {
   const ref = useRef();
   const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
-  const material = useMemo(() => new THREE.MeshStandardMaterial({ color: SURFACE, roughness: 0.85, metalness: 0.05 }), []);
+  // Lambert (lite): no PBR terms per pixel, much cheaper on a CPU renderer.
+  const material = useMemo(() => (lambert
+    ? new THREE.MeshLambertMaterial({ color: SURFACE })
+    : new THREE.MeshStandardMaterial({ color: SURFACE, roughness: 0.85, metalness: 0.05 })), [lambert]);
   useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
 
   useEffect(() => {
@@ -208,7 +222,7 @@ function Voxels({ voxels, textured }) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [voxels, textured]);
+  }, [voxels, textured, material]);
 
   return <instancedMesh ref={ref} args={[geometry, material, voxels.count]} castShadow receiveShadow />;
 }
@@ -385,12 +399,15 @@ function Dock() {
 }
 
 /**
- * Go2-sized stand-in (0.70 x 0.31 x 0.40 m) with a red navigation arrow.
+ * The official Go2 model with live leg joints (Go2Model), a red navigation
+ * arrow and a footprint disc; a Go2-sized box stand-in while the model loads
+ * or if its files are missing. It casts no shadow (shadows are redrawn once
+ * a second); the blue disc below it marks its footprint instead.
  * Smoothed: TF updates arrive at ~10-20 Hz, so the pose glides toward the
  * newest one (exponential lerp / slerp) instead of jumping; jumps > 2 m
  * (relocalization) snap.
  */
-function Robot({ tf, fixed, base, follow, shadows }) {
+function Robot({ tf, fixed, base, follow, joints, lambert }) {
   const ref = useRef();
   const s = useMemo(() => ({
     pos: new THREE.Vector3(), quat: new THREE.Quaternion(), tpos: new THREE.Vector3(),
@@ -422,23 +439,9 @@ function Robot({ tf, fixed, base, follow, shadows }) {
       state.camera.position.add(delta);
     }
   });
-  const legs = [[0.25, 0.12], [0.25, -0.12], [-0.25, 0.12], [-0.25, -0.12]];
   return (
     <group ref={ref} matrixAutoUpdate={false} visible={false}>
-      <mesh castShadow={shadows}>
-        <boxGeometry args={[0.7, 0.31, 0.18]} />
-        <meshStandardMaterial color="#e5e7eb" metalness={0.2} roughness={0.5} />
-      </mesh>
-      <mesh position={[0.38, 0, 0.03]}>
-        <boxGeometry args={[0.1, 0.22, 0.12]} />
-        <meshStandardMaterial color="#111827" />
-      </mesh>
-      {legs.map(([x, y]) => (
-        <mesh key={`${x},${y}`} position={[x, y, -0.2]} rotation={[Math.PI / 2, 0, 0]} castShadow={shadows}>
-          <cylinderGeometry args={[0.03, 0.03, 0.26, 8]} />
-          <meshStandardMaterial color="#6b7280" />
-        </mesh>
-      ))}
+      <Go2Model joints={joints} lambert={lambert} fallback={<StandIn />} />
       {/* Red navigation arrow above the body, pointing along +x (heading). */}
       <group position={[0, 0, 0.4]}>
         <mesh position={[-0.05, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
@@ -454,6 +457,29 @@ function Robot({ tf, fixed, base, follow, shadows }) {
         <circleGeometry args={[0.55, 48]} />
         <meshBasicMaterial color="#38bdf8" transparent opacity={0.15} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
+    </group>
+  );
+}
+
+/** Go2-sized box (0.70 x 0.31 x 0.40 m), used when the model cannot load. */
+function StandIn() {
+  const legs = [[0.25, 0.12], [0.25, -0.12], [-0.25, 0.12], [-0.25, -0.12]];
+  return (
+    <group>
+      <mesh>
+        <boxGeometry args={[0.7, 0.31, 0.18]} />
+        <meshStandardMaterial color="#e5e7eb" metalness={0.2} roughness={0.5} />
+      </mesh>
+      <mesh position={[0.38, 0, 0.03]}>
+        <boxGeometry args={[0.1, 0.22, 0.12]} />
+        <meshStandardMaterial color="#111827" />
+      </mesh>
+      {legs.map(([x, y]) => (
+        <mesh key={`${x},${y}`} position={[x, y, -0.2]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.03, 0.03, 0.26, 8]} />
+          <meshStandardMaterial color="#6b7280" />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -524,6 +550,71 @@ function ClickPlane({ enabled, onPick }) {
       <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
   );
+}
+
+/**
+ * Shadows redrawn once a second instead of every frame. The shadow pass
+ * draws the whole map a second time; the map changes every 2 s at most.
+ */
+function SlowShadows({ period = 1 }) {
+  const gl = useThree((s) => s.gl);
+  const last = useRef(-Infinity);
+  useEffect(() => {
+    gl.shadowMap.autoUpdate = false;
+    gl.shadowMap.needsUpdate = true;
+    return () => { gl.shadowMap.autoUpdate = true; };
+  }, [gl]);
+  useFrame(({ clock }) => {
+    if (clock.elapsedTime - last.current < period) return;
+    last.current = clock.elapsedTime;
+    gl.shadowMap.needsUpdate = true;
+  });
+  return null;
+}
+
+/**
+ * Point cloud decoding in ros/cloudWorker.js. Returns decode(kind, msg, maxPoints).
+ * A map message that arrives while the worker is busy waits; a newer one
+ * replaces it, so the worker never falls behind. Changing the voxel options
+ * re-filters the last map without a new message.
+ */
+function useCloudWorker({ setCloud, setScan, setVoxels }, voxelOpts) {
+  const w = useRef(null);
+  const busy = useRef({ map: false, scan: false });
+  const pending = useRef({ map: null, scan: null });
+  const opts = useRef(voxelOpts);
+  opts.current = voxelOpts;
+
+  const send = (kind, msg, maxPoints) => {
+    if (!w.current) return;
+    if (busy.current[kind]) { pending.current[kind] = [msg, maxPoints]; return; }
+    busy.current[kind] = true;
+    w.current.postMessage({ op: 'cloud', kind, msg, maxPoints, voxel: kind === 'map' ? opts.current : null });
+  };
+
+  useEffect(() => {
+    const worker = new Worker(new URL('./ros/cloudWorker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = ({ data }) => {
+      const { kind } = data;
+      if ('cloud' in data) {
+        busy.current[kind] = false;
+        if (data.cloud) (kind === 'map' ? setCloud : setScan)(data.cloud);
+      }
+      if (kind === 'map' && 'voxels' in data) setVoxels(data.voxels);
+      const next = pending.current[kind];
+      if (next && !busy.current[kind]) { pending.current[kind] = null; send(kind, ...next); }
+    };
+    w.current = worker;
+    return () => { worker.terminate(); w.current = null; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // New voxel size or view: re-filter the map the worker already has.
+  useEffect(() => {
+    if (!voxelOpts) setVoxels(null);
+    w.current?.postMessage({ op: 'voxel', voxel: voxelOpts });
+  }, [voxelOpts, setVoxels]);
+
+  return send;
 }
 
 /** Frames per second, reported once a second. */

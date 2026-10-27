@@ -25,11 +25,13 @@ Sections are self-contained. Search for the error message you see.
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
 | Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [gazebo/README.md](../gazebo/README.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](../scripts/tools/test_explore.sh) |
-| Camera not showing in RViz | QoS mismatch | Set Image display **Reliability** to `Best Effort` — see [docs/camera.md](camera.md) |
+| Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | VM UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
+| Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
+| Foxglove 3D panel: `Error creating WebGL context` | VirtualBox has no GPU acceleration (not a code error) | Enable 3D Acceleration + 128 MB video memory, install `virtualbox-guest-utils`, or use Foxglove on Windows / RViz. See [3d_nav.md](3d_nav.md#webgl--hardware-acceleration-error) |
 
 ---
 
@@ -513,48 +515,77 @@ Full camera setup: [camera.md](camera.md). Relay code:
 
 ### Relay crashes on start
 
-Missing dependencies inside the container.
+Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
+
+- `No module named 'cv_bridge'`: an old copy of the relay. The current one
+  fills the Image itself and needs only `python3-opencv`.
+- `No module named 'unitree_go'`: the Unitree messages in
+  `/opt/go2-unitree-msgs` weren't sourced. `wifi_nav.sh` sources them now.
+- `No module named 'cv2'`:
+
+  ```bash
+  docker exec -u root go2-lidar3d apt-get update
+  docker exec -u root go2-lidar3d apt-get install -y python3-opencv
+  ```
+
+### RViz camera display says "No Image"
+
+1. Is the robot sending frames?
+
+   ```bash
+   ssh unitree@<robot-ip> tail -3 /tmp/go2_camera_wifi.log
+   ```
+
+   - `NN frames in 10 s` with NN > 0: the robot side is fine, go to step 2.
+   - `0 frames in 10 s`: the camera backend gets no video. Check
+     `~/bin/go2_camera_jpeg_cli` exists (go2-nav2-wifi
+     `robot-build-camera-cli.sh`). Run it alone for a few seconds; it should
+     print binary JPEG data.
+   - No log: `wifi_nav.sh` couldn't copy or start it. See the `[camera]` lines
+     in its output.
+2. Is the laptop relay decoding? `docker exec go2-lidar3d tail /tmp/camera_relay.log`
+   should show `published N frames`.
+3. Is the RViz display set to **Reliability Policy: Reliable**? A Best Effort
+   display drops most of the large raw frames (older layouts had Best Effort;
+   `wifi_nav.sh` updates them on the next start).
+
+### Robot sends frames, relay publishes none
+
+`/tmp/go2_camera_wifi.log` on the robot says `50 frames in 10 s`, but
+`camera_relay.log` never reaches `published 100 frames`. The relay was on the
+container's default DDS (FastDDS) and never discovered the robot over Wi-Fi.
+`wifi_nav.sh` now starts it with the session's CycloneDDS config (robot as
+a peer); update and restart the session. Also check the robot publisher is
+still running (`pgrep -f go2_camera_wifi.py` on the robot): it is started
+with `setsid`, because with `nohup` alone it died with the SSH session.
+
+### Camera at ~0.2 fps, "Camera unavailable" in the dashboard, empty 3D map
+
+The robot log says `50 frames in 10 s`, but `camera_relay.log` counts 100
+frames every few minutes. The laptop drops the frames: check
 
 ```bash
-docker exec -u root go2-lidar3d apt-get update
-docker exec -u root go2-lidar3d apt-get install -y \
-    ros-humble-cv-bridge python3-opencv
+grep -A1 '^Udp:' /proc/net/snmp      # RcvbufErrors growing = socket buffers overflow
+sysctl net.core.rmem_max             # 212992 = the Ubuntu default, too small
 ```
 
-### RViz Image display is empty
-
-QoS mismatch. The relay publishes with `BEST_EFFORT`; RViz defaults to
-`RELIABLE`. In the Image display properties, set **Reliability Policy** to
-`Best Effort`. This is the single most common cause.
-
-### `frame not JPEG-decodable` in `camera_relay.log`
-
-Firmware ships raw H.264 instead of JPEG. Try lowering the resolution:
+A 73 KB frame is ~50 UDP packets; one lost packet loses the frame. The same
+overflow starves RTAB-Map in camera mode (`Did not receive data`), so the map
+stays empty and YOLO and the VLM get no images. Raise the buffers once (see
+[setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)), then restart
+the session:
 
 ```bash
-# In wifi_nav.sh, change -p resolution:=720p to -p resolution:=360p
+printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=8388608\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf
+sudo sysctl --system
 ```
-
-Or install `python3-opencv` with H.264 support (see relay crashes above).
 
 ### Camera feed stutters or lags
 
-Wi-Fi bandwidth. The relay publishes raw frames on `/camera/image_raw`
-(~27 MB/s at 720p30). Options:
-
-1. Lower resolution (`-p resolution:=360p`)
-2. Move to compressed transport — see [camera.md](camera.md)
-3. Close the RViz point cloud display while viewing the camera (RViz
-   renders on the CPU)
-
-### Camera unavailable warning on Jetson
-
-```text
-WARN: camera unavailable; install its backend or use GO2_RELAY_CAMERA=0
-```
-
-Not a blocker for exploration. Either install the backend or run the relay
-with `GO2_RELAY_CAMERA=0` to silence it.
+The robot sends 960x540 JPEG at 5 fps (~0.3 MB/s). On a weak Wi-Fi link,
+lower it, e.g. `CAMERA_WIDTH=640 CAMERA_FPS=3 ./scripts/runtime/wifi_nav.sh`
+(recalibrate at the new width). Closing heavy RViz point cloud displays also
+helps, because RViz renders on the CPU.
 
 ---
 
@@ -615,7 +646,8 @@ Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
 connecting, empty
 `/rtabmap/cloud_map`, clicks ignored, camera not detected, wrong map colours,
 YOLO obstacles ignored by Nav2, Ollama unreachable, no battery data, `--resume`
-maps not joined, CPU load, unsaved map): see
+maps not joined, CPU load, unsaved map, Foxglove
+*"Error creating WebGL context"* in a VirtualBox VM): see
 [3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
 `click_to_goal.log`, `yolo.log`, `vlm.log`, `battery.log`, `camera_info.log`,

@@ -16,12 +16,15 @@ export function toMatrix(translation, rotation) {
  * Minimal TF tree from /tf and /tf_static (no tf2_web_republisher needed).
  * Keeps the newest transform per child frame; lookup(fixed, frame) returns
  * the Matrix4 that maps `frame` coordinates into `fixed`, or null when the
- * two frames are not connected (yet).
+ * two frames are not connected (yet). Lookups are cached until the next
+ * add(): every object in the scene asks every frame, TF changes at ~20 Hz.
+ * The returned matrix is shared: read it, do not modify it.
  */
 export class TfTree {
   constructor() {
     this.parent = new Map();
     this.transform = new Map();
+    this.cache = new Map();
   }
 
   add(msg) {
@@ -30,6 +33,7 @@ export class TfTree {
       this.parent.set(child, strip(t.header.frame_id));
       this.transform.set(child, toMatrix(t.transform.translation, t.transform.rotation));
     }
+    this.cache.clear();
   }
 
   has(frame) {
@@ -52,11 +56,17 @@ export class TfTree {
   lookup(fixed, frame) {
     fixed = strip(fixed);
     frame = strip(frame);
-    if (fixed === frame) return new Matrix4();
-    const a = this.toRoot(frame);
-    const b = this.toRoot(fixed);
-    if (a.root !== b.root) return null;
-    return b.matrix.invert().multiply(a.matrix);
+    const key = `${fixed}\n${frame}`;
+    if (this.cache.has(key)) return this.cache.get(key);
+    let m = null;
+    if (fixed === frame) m = new Matrix4();
+    else {
+      const a = this.toRoot(frame);
+      const b = this.toRoot(fixed);
+      if (a.root === b.root) m = b.matrix.invert().multiply(a.matrix);
+    }
+    this.cache.set(key, m);
+    return m;
   }
 
   frames() {

@@ -91,11 +91,10 @@ planner routes the way it does.
 
 1. Add **Image** → OK
 2. **Topic**: `/camera/image_raw`
-3. **Reliability Policy**: `Best Effort`
+3. **Reliability Policy**: `Reliable`
 
-The `Best Effort` setting is required. The relay publishes with
-`BEST_EFFORT` QoS; RViz defaults to `RELIABLE`. The mismatch silently
-drops every frame.
+The relay publishes reliably. A Best Effort display loses most of the large
+raw frames.
 
 See [camera.md](camera.md) for the full camera setup.
 

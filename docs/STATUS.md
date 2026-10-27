@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-23
+Last updated: 2026-10-27
 
 ---
 
@@ -25,7 +25,12 @@ Foxglove is the optional alternative (`--foxglove`).
 | Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
 | YOLO obstacles in the Nav2 costmap (patched automatically with `--ai`) | **Implemented (pending physical test)** |
 | `--resume` after a battery swap | **Implemented (pending physical test)** |
-| D1 arm over Wi-Fi | Not started (later) |
+| Dashboard performance mode (software renderer), Go2 model with live leg joints | **Implemented (pending physical test)**: measured against synthetic data in software WebGL (2026-10-27) |
+| Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
+| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
+| D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
+| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Read verified on the robot (2026-10-27)**: real arm state and angles through the bridge; motion not yet tested |
+| VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
 
 Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
 and the [Next session plan](#next-session-plan).
@@ -90,8 +95,9 @@ Code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
 
 ### Camera — code complete, untested
 
-[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) bridges `/frontvideostream` (custom Unitree msg) →
-`/camera/image_raw` (standard `sensor_msgs/Image`). Launches automatically
+The robot sends JPEG frames over Wi-Fi ([`go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh));
+[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) decodes them to
+`/camera/image_raw` (frame `front_camera_optical`). Launches automatically
 via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 
 ### DHCP networking — code complete, untested on robot (2026-10-18)
@@ -162,7 +168,7 @@ robot, click-to-go, `--export`.
 
 - **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
   LiDAR-only), `go2-3d` adds:
-  - the `base_link → camera_link` optical TF (Go2 URDF mount);
+  - the `front_camera → front_camera_optical` TF (Go2 URDF mount);
   - [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py), approximate
     intrinsics;
   - LiDAR projected into the image as depth, so RTAB-Map runs RGB-D.
@@ -320,6 +326,46 @@ relay is unconfirmed.
 ## Known issues
 
 Full list of fixes: [troubleshooting.md](troubleshooting.md).
+
+### VLM never answers on the VM (2026-10-27)
+
+Measured with the node's own prompt on a camera-sized frame: llava:7b loads
+in ~5 min (the 10.9 GB VM swaps) and reads one image in ~2 min (627 tokens at
+~5 tokens/s), longer than `vlm_reasoning_node.py`'s 120 s timeout. Every
+request times out (`Ollama not reachable … timed out` in `vlm.log`), so
+`/vlm_decision` stays silent and BLOCKED → dock can never trigger. YOLO is
+fine (0.2–0.8 s per frame). Fix: Ollama on a GPU host (`TWIN_VLM_URL`, see
+[3d_nav.md](3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
+
+### D1 arm not answering — resolved (2026-10-27)
+
+Earlier neither the workstation nor the Go2 reached `192.168.123.100`. With
+the arm plugged into the Go2 and powered, it answers (ping 0.65 ms) and
+reports state and angles over Wi-Fi through the bridge.
+
+### Camera at ~0.2 fps on the VM — fix known, needs `sudo` (2026-10-27)
+
+The robot sends 5 fps; the VM's UDP sockets overflow (Ubuntu default
+`rmem_max` 208 KB, `RcvbufErrors` growing) and drop most frames. Effects:
+dashboard "Camera unavailable", RTAB-Map camera mode starved (empty map),
+YOLO and the VLM idle. Fix: [setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup);
+`wifi_nav.sh` now warns.
+
+### Relay on the wrong DDS; best-effort readers — fixed (2026-10-27)
+
+The robot camera reached the laptop at 5 fps, but the relay ran on the
+container default FastDDS and never discovered it; now it uses the
+session's CycloneDDS config. The 3D twin's camera readers were best-effort,
+so every ~1.5 MB raw frame was lost with the small UDP buffers; YOLO, the
+VLM, `go2_camera_info.py` and the image compressor now read reliable. The
+robot publisher is started with `setsid` (it died with the SSH session).
+
+### Camera found too late; wrong camera frame — fixed (2026-10-27)
+
+`go2-3d` gave up on the camera after 60 s while the robot camera starts a
+minute or more after the session (now 180 s). Images were stamped with the
+URDF's x-forward `front_camera`, which camera mode treated as optical, so
+YOLO placed objects in the wrong axes (now `front_camera_optical`).
 
 ### Port 17999 conflict — now auto-handled
 

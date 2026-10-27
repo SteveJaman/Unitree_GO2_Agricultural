@@ -150,6 +150,10 @@ DEFAULTS = {
     'unstick_distance':      0.3,
     'unstick_speed':         0.1,
     'unstick_timeout_s':     6.0,
+    # > 0 when go2_stuck_recovery.py runs (wifi_nav.sh sets it): after a
+    # controller abort, keep the goal this long for its step-back and retry
+    # instead of blacklisting the frontier at once. 0 = abandon at once.
+    'recovery_wait_s':       0.0,
 
     # Wall clearance. Distances are to lethal costmap cells (real obstacles).
     # Robot footprint in base_link, same as go2_nav2/config/go2_footprint.yaml.
@@ -362,6 +366,7 @@ class FrontierExplorer(Node):
         self.unstick_distance = float(p('unstick_distance'))
         self.unstick_speed = float(p('unstick_speed'))
         self.unstick_timeout = float(p('unstick_timeout_s'))
+        self.recovery_wait = float(p('recovery_wait_s'))
 
         self.fp_front = float(p('footprint_front'))
         self.fp_back = float(p('footprint_back'))
@@ -414,6 +419,9 @@ class FrontierExplorer(Node):
         self.nav_seen_ids = set()
         self.leg_baseline_ids = set()
         self.leg_planner_seen = False
+        # Set after a controller abort while go2_stuck_recovery handles it
+        self.recovery_deadline = None
+        self.recoveries = 0
 
         # Stuck handling: no new goal before this time
         self.next_goal_time = 0.0
@@ -511,6 +519,10 @@ class FrontierExplorer(Node):
                 continue
             if kind == 'planner':
                 self.leg_planner_seen = True
+                if self.recovery_deadline is not None:
+                    self.recovery_deadline = None
+                    self.recoveries += 1
+                    self.get_logger().info('Stuck recovery re-sent the goal')
             elif not self.leg_planner_seen:
                 # Controller goal of an older leg that was still planning
                 self.leg_baseline_ids.add(gid)
@@ -521,6 +533,7 @@ class FrontierExplorer(Node):
                 # Planning done; wait for follow_path
                 self.leg_baseline_ids.add(gid)
                 continue
+            self.leg_baseline_ids.add(gid)
             self.on_leg_done(kind, st.status)
             return
 
@@ -542,6 +555,16 @@ class FrontierExplorer(Node):
                 self.start_spin()
             return
         name = 'ABORTED' if status == GoalStatus.STATUS_ABORTED else 'CANCELED'
+        if (kind == 'controller' and status == GoalStatus.STATUS_ABORTED
+                and self.recovery_wait > 0):
+            # go2_stuck_recovery steps the dog back (or aside) and re-sends
+            # this goal: keep it and watch for the new leg.
+            self.recovery_deadline = time.time() + self.recovery_wait
+            self.leg_planner_seen = False
+            self.get_logger().warn(
+                f'Nav2 controller ABORTED for ({x:.2f}, {y:.2f}), {dist:.2f} m '
+                f'away — waiting {self.recovery_wait:.0f}s for stuck recovery')
+            return
         cost = self.cost_at(pose) if pose is not None else None
         stuck = (kind == 'planner' and cost is not None
                  and cost >= self.stuck_cost)
@@ -980,6 +1003,13 @@ class FrontierExplorer(Node):
             return
         now = time.time()
 
+        if self.recovery_deadline is not None:
+            if now > self.recovery_deadline:
+                self.abandon_goal('stuck recovery did not retry')
+            else:
+                self.active_goal_last_progress_time = now
+            return
+
         dist = math.hypot(pose[0] - self.active_goal_xy[0],
                           pose[1] - self.active_goal_xy[1])
         if dist < self.goal_xy_tol:
@@ -1126,6 +1156,7 @@ class FrontierExplorer(Node):
         self.active_goal_xy = None
         self.active_goal_tag = None
         self.active_goal_last_progress_xy = None
+        self.recovery_deadline = None
 
     # ------------------------------------------------------------------
     # Spin-on-goal capture
@@ -1376,6 +1407,7 @@ class FrontierExplorer(Node):
             f'succeeded={self.goals_succeeded} '
             f'failed={self.goals_failed} '
             f'replans={self.replans} '
+            f'recoveries={self.recoveries} '
             f'blind_attempts={self.blind_attempts}')
         self.status_pub.publish(msg)
 

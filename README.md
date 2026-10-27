@@ -42,7 +42,9 @@ Windows. The terminal prints the address.
 - the upstream stack and its lab fixes;
 - passwordless SSH to the robot;
 - the arm calibration;
-- Ollama for the VLM.
+- Ollama for the VLM;
+- bigger UDP receive buffers on the VM (one `sysctl` file), or camera
+  frames and LiDAR clouds get dropped.
 
 All of it is in **[docs/setup.md](docs/setup.md)**.
 
@@ -51,6 +53,7 @@ Other entry points:
 | Command | Use |
 |---|---|
 | `./scripts/runtime/wifi_nav.sh --arm` | 2D navigation + explorer in RViz, D1 arm folded |
+| `./scripts/runtime/wifi_nav.sh --arm-wifi` | Same, with the arm plugged into the Go2 and controlled over Wi-Fi |
 | `./scripts/runtime/wifi_3d_nav.sh --resume` | Restart after a battery swap; continue the last map |
 | `./scripts/runtime/wifi_nav.sh --sim --arm` | Same stack against the Gazebo simulation |
 | `./scripts/runtime/wifi_3d_nav.sh --view` | Show saved 3D scans without the robot |
@@ -60,8 +63,13 @@ Other entry points:
 - **Auto-Explore:** a frontier explorer maps an area by itself; START / STOP
   from the dashboard or RViz.
 - **3D web dashboard:** a full-screen live 3D map in the browser (solid,
-  shadowed, camera-coloured), the robot, route and camera. Tap the floor to go
-  there. After a run, export a solid presentation mesh.
+  shadowed, camera-coloured), Unitree's Go2 model with live leg joints, the
+  route and camera. Tap the floor to go there. A performance mode keeps it
+  usable on a VM without 3D acceleration. After a run, export a solid
+  presentation mesh.
+- **Camera obstacles:** `--camera-obstacles` turns monocular depth, scaled by
+  the LiDAR, into Nav2 obstacles (glass, table legs). `--fusion` colours the
+  map from the calibrated camera.
 - **YOLO / VLM AI:** YOLO11s obstacles feed the Nav2 costmap. A local
   `llava:7b` (Ollama) reads the camera and pauses + docks on a blocked path.
 - **Battery dock and auto-localization:** below 15 % the dog returns to the
@@ -72,7 +80,11 @@ Other entry points:
   rooms, visits and names each from what YOLO and the VLM see, saves a
   report and docks, with no user input.
 - **Arm control:** the D1-T over DDS/JSON (fold, joints, lift, sweep,
-  calibration), kept off the Go2 network.
+  calibration), wired to the workstation or plugged into the Go2 and
+  controlled over Wi-Fi (`--arm-wifi`). Teach & Playback: guide the arm by
+  hand to frame plants, then replay the scan sweep.
+- **Full mobility:** `--omni` lets Nav2 walk the dog backwards and sideways;
+  stuck recovery backs it out of dead ends in every session.
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
 
 ## Documentation
@@ -87,6 +99,8 @@ Other entry points:
 | [Scripts](docs/scripts.md) | Every runtime script, ROS node and tool |
 | [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |
 | [Camera](docs/camera.md) | Go2 camera relay, RViz display, who uses the feed |
+| [Camera + LiDAR fusion](docs/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
+| [Omni navigation](docs/omni_nav.md) | `--omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
 | [Waypoint tour](docs/tour.md) | RViz waypoint mode |
 | [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes, collision tuning, diagnostics |
 | [Lab nav fixes](docs/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |
@@ -95,7 +109,7 @@ Other entry points:
 | [Roadmap](docs/roadmap.md) | Milestones and what is next |
 | [Simulation](gazebo/README.md) | Gazebo setup, what is simulated, limits, the rooms world |
 | [Unity sim](docs/simulation.md) | Test the explorer + Nav2 in the CMU Unity sim (no robot) |
-| [Config](config/README.md) | RViz layout, saved named locations and rooms |
+| [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations and rooms |
 
 ## System Requirements
 
@@ -129,7 +143,7 @@ This repo adds:
 - **Orchestration:**
   - one command each for 2D, 3D, arm and simulation;
   - DHCP-proof networking that keeps the arm and dog networks isolated;
-  - camera relay, floor filter, diagnostics and tuning scripts.
+  - live camera over Wi-Fi (+ calibration), floor filter, diagnostics and tuning scripts.
 - **Gazebo simulation** of the Go2 + D1 from the official Unitree models.
 
 ## License

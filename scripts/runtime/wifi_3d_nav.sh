@@ -45,6 +45,10 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --save-location # (2nd terminal) label clicked points
 #   ./scripts/runtime/wifi_3d_nav.sh --lidar-only    # no camera fusion (no YOLO/VLM)
 #   ./scripts/runtime/wifi_3d_nav.sh --camera        # require the Go2 camera
+#   ./scripts/runtime/wifi_3d_nav.sh --fusion        # calibrated camera instead: undistorted,
+#                                                    #   coloured map, /camera/lidar_overlay check
+#   ./scripts/runtime/wifi_3d_nav.sh --camera-obstacles  # + camera depth (LiDAR-scaled)
+#                                                    #   as Nav2 obstacles: glass, legs
 #   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # RealSense colour/depth instead
 #   ./scripts/runtime/wifi_3d_nav.sh --foxglove      # also foxglove_bridge :8765 (alternative viewer)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-web        # rosbridge only, no dashboard server
@@ -59,10 +63,12 @@
 # Environment:
 #   TWIN_WEB_PORT=3000  TWIN_ROSBRIDGE_PORT=9090  TWIN_FOXGLOVE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
-#   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=60 (s, camera auto-detect)
+#   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=180 (s, camera auto-detect)
 #   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"  base_link -> camera optical
 #                                      frame (x y z yaw pitch roll; "none" = skip)
 #   TWIN_CAMERA_HFOV_DEG=120 (68.75 with --sim)        approximate intrinsics
+#   TWIN_CAMERA_INFO_FILE=config/camera/front_camera.yaml       (--fusion, --camera-obstacles; with
+#                            --sim: config/camera/sim_front_camera.yaml)
 #   TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2  TWIN_YOLO_CLASSES=chair,...|all
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
@@ -77,6 +83,8 @@
 #   TWIN_MESH_TRIANGLES=300000  TWIN_MESH_ARGS="--depth 10 --trim 0.08"   (--mesh)
 #   TWIN_DB_DIR=$NAV2_WIFI_DIR/ws/maps/rtabmap   TWIN_LOG_DIR=$NAV2_WIFI_DIR/ws/log/3d
 #   TWIN_START_TIMEOUT=300   TWIN_STOP_TIMEOUT=60 (seconds RTAB-Map gets to save)
+#   TWIN_NODE_SETTLE=10      seconds the session's go2_odom_tf must be up before its
+#                            DDS settings are copied (it is restarted once at start)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -95,14 +103,16 @@ TWIN_DB_DIR="${TWIN_DB_DIR:-${NAV2_WIFI_DIR}/ws/maps/rtabmap}"
 TWIN_LOG_DIR="${TWIN_LOG_DIR:-${NAV2_WIFI_DIR}/ws/log/3d}"
 TWIN_START_TIMEOUT="${TWIN_START_TIMEOUT:-300}"
 TWIN_STOP_TIMEOUT="${TWIN_STOP_TIMEOUT:-60}"
+TWIN_NODE_SETTLE="${TWIN_NODE_SETTLE:-10}"
 TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
-TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-180}"
 
 # --- Parse args ------------------------------------------------------------
 ACTION="run"
 TWIN_MODE="auto"
+TWIN_CAMERA_OBSTACLES=0
 TWIN_ROSBRIDGE="1"
 TWIN_WEB="1"
 TWIN_FOXGLOVE="0"
@@ -119,6 +129,8 @@ while [ $# -gt 0 ]; do
         --rgbd)       TWIN_MODE="rgbd" ;;
         --lidar-only) TWIN_MODE="lidar" ;;
         --camera)     TWIN_MODE="camera" ;;
+        --fusion)     TWIN_MODE="fusion" ;;
+        --camera-obstacles) TWIN_CAMERA_OBSTACLES=1 ;;
         --ai|--survey) ;;  # the defaults now (kept for old command lines)
         --no-ai)      AI="false" ;;
         --manual)     SURVEY_AUTO="0" ;;
@@ -170,6 +182,8 @@ TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-${SURVEY_AUTO}}"
 TWIN_AUTO_BUILD="${TWIN_AUTO_BUILD:-1}"
 
+# No camera relay: nothing to wait for in auto mode.
+[[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && [ "${TWIN_MODE}" = auto ] && TWIN_MODE="lidar"
 if [ "${TWIN_MODE}" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
 else
@@ -355,42 +369,57 @@ start_battery_manager() {
     kill_battery_manager
     docker cp "${NODES_DIR}/battery_manager.py" "${CONTAINER_NAME}:/tmp/battery_manager.py" >/dev/null 2>&1 || return 1
     docker exec -u root "$@" "${CONTAINER_NAME}" bash -c \
-        "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; exec python3 -u /tmp/battery_manager.py --ros-args -p auto_dock:=$( [ "${TWIN_BATTERY}" = 1 ] && echo true || echo false ) -p low_soc:=$(float "${TWIN_BATTERY_LOW}") -p resume_soc:=$(float "${TWIN_BATTERY_RESUME}") -p dock_x:=$(float "${dock_x:-0}") -p dock_y:=$(float "${dock_y:-0}") -p dock_yaw:=$(float "${dock_yaw:-0}") -p map_frame:=${TWIN_MAP_FRAME} -p robot_base_frame:=${TWIN_BASE_FRAME}" \
+        "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; exec python3 -u /tmp/battery_manager.py --ros-args -p auto_dock:=$( [ "${TWIN_BATTERY}" = 1 ] && echo true || echo false ) -p low_soc:=$(float "${TWIN_BATTERY_LOW}") -p resume_soc:=$(float "${TWIN_BATTERY_RESUME}") -p dock_x:=$(float "${dock_x:-0}") -p dock_y:=$(float "${dock_y:-0}") -p dock_yaw:=$(float "${dock_yaw:-0}") -p map_frame:=${TWIN_MAP_FRAME} -p robot_base_frame:=${TWIN_BASE_FRAME}" \
         > "${TWIN_LOG_DIR}/battery.log" 2>&1 &
     sleep 4
     docker exec "${CONTAINER_NAME}" pgrep -f battery_manager.py >/dev/null 2>&1
 }
 
-# PID of a ROS node of the session started after this script (so a node left
-# from an earlier session in a surviving container is never picked).
+# "PID UID" of the session's go2_odom_tf node (lidar3d_map -> base_link, the TF
+# RTAB-Map needs), started after this script so a node left from an earlier
+# session is never picked, and up for TWIN_NODE_SETTLE s because the session
+# restarts it once while starting. go2-lidar3d shares the host PID namespace,
+# so any --ros-args process would also match the simulator's and helpers.
 session_ros_pid() {
     local age=$(( $(date +%s) - T0 ))
-    docker exec -u root "${CONTAINER_NAME}" ps -eo pid=,etimes=,args= 2>/dev/null \
-        | awk -v max="${age}" '$2 <= max && index($0, "--ros-args") {print $1; exit}' || true
+    docker exec -u root "${CONTAINER_NAME}" ps -eo pid=,uid=,etimes=,args= 2>/dev/null \
+        | awk -v max="${age}" -v min="${TWIN_NODE_SETTLE}" '$3 <= max && $3 >= min && index($0, "--ros-args") \
+              && index($0, "__node:=go2_odom_tf") {print $1, $2; exit}' || true
+}
+
+# DDS settings (one KEY=value per line) of a node, read as the node's own user:
+# root in the container has no CAP_SYS_PTRACE, so it cannot read
+# /proc/<pid>/environ of the go2 user's nodes.
+node_dds_env() {   # $1 = pid, $2 = uid
+    docker exec -u "$2" "${CONTAINER_NAME}" cat "/proc/$1/environ" 2>/dev/null | tr '\0' '\n' \
+        | grep -E '^(ROS_DOMAIN_ID|RMW_IMPLEMENTATION|CYCLONEDDS_URI|ROS_LOCALHOST_ONLY)=' || true
 }
 
 # Start go2-3d on the same DDS settings (domain, RMW, CycloneDDS config) as the
 # session's own ROS nodes. Runs in the background while wifi_nav.sh runs.
 start_twin_when_ready() {
-    local deadline pid env_lines line key val uri path netmode host_ip mode yolo vlm battery
+    local deadline pid uid node env_lines line key val uri path netmode host_ip mode yolo vlm battery
     local env_args=() mounts=() net=()
 
     deadline=$(( $(date +%s) + TWIN_START_TIMEOUT ))
-    echo "[3d] Waiting for the wifi_nav.sh session's ROS nodes (up to ${TWIN_START_TIMEOUT} s)..."
-    pid=""
+    echo "[3d] Waiting for the wifi_nav.sh session's go2_odom_tf node (up to ${TWIN_START_TIMEOUT} s)..."
+    env_lines=""
     while [ "$(date +%s)" -lt "${deadline}" ]; do
-        pid="$(session_ros_pid)"
-        [ -n "${pid}" ] && break
+        node="$(session_ros_pid)"
+        if [ -n "${node}" ]; then
+            read -r pid uid <<< "${node}"
+            env_lines="$(node_dds_env "${pid}" "${uid}")"
+            grep -q '^ROS_DOMAIN_ID=' <<< "${env_lines}" && break
+        fi
         sleep 3
     done
-    if [ -z "${pid}" ]; then
-        echo "[3d] ERROR: no ROS nodes in ${CONTAINER_NAME} after ${TWIN_START_TIMEOUT} s — 3D stack NOT started."
+    # Without the session's domain go2-3d would sit alone on domain 0: the
+    # bridge would list only go2-3d's own topics and never receive data.
+    if ! grep -q '^ROS_DOMAIN_ID=' <<< "${env_lines}"; then
+        echo "[3d] ERROR: could not read the session's DDS settings after ${TWIN_START_TIMEOUT} s — 3D stack NOT started."
         return 1
     fi
-    sleep 5   # let the session finish writing its DDS config
 
-    env_lines="$(docker exec -u root "${CONTAINER_NAME}" cat "/proc/${pid}/environ" 2>/dev/null | tr '\0' '\n' \
-        | grep -E '^(ROS_DOMAIN_ID|RMW_IMPLEMENTATION|CYCLONEDDS_URI|ROS_LOCALHOST_ONLY)=' || true)"
     while IFS= read -r line; do
         [ -n "${line}" ] || continue
         key="${line%%=*}"; val="${line#*=}"
@@ -431,7 +460,13 @@ start_twin_when_ready() {
     fi
 
     twin_exists && docker rm -f "${TWIN_CONTAINER}" >/dev/null 2>&1
-    echo "[3d] Starting ${TWIN_CONTAINER}: RTAB-Map (${TWIN_MODE}), rosbridge, dashboard, click-to-goal..."
+    local camera_args=()
+    if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
+        camera_args=(-v "${TWIN_CAMERA_INFO_FILE}:/camera_cfg/camera.yaml:ro"
+                     -e TWIN_CAMERA_INFO=/camera_cfg/camera.yaml
+                     -e TWIN_CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}")
+    fi
+    echo "[3d] Starting ${TWIN_CONTAINER} on DDS $(sed -n 's/^ROS_DOMAIN_ID=/domain /p' <<< "${env_lines}"): RTAB-Map (${TWIN_MODE}), rosbridge, dashboard, click-to-goal..."
     if ! docker run -d --name "${TWIN_CONTAINER}" "${net[@]}" \
             --stop-timeout "${TWIN_STOP_TIMEOUT}" \
             --user "$(id -u):$(id -g)" -e HOME=/tmp/go2-3d-home -e ROS_LOG_DIR=/logs/ros \
@@ -453,7 +488,7 @@ start_twin_when_ready() {
             -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
-            -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" \
+            -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" "${camera_args[@]}" \
             "${mounts[@]}" \
             "${TWIN_IMAGE}" bash /twin/start_inside.sh >/dev/null; then
         echo "[3d] ERROR: docker run failed — 3D stack NOT started."
@@ -491,6 +526,14 @@ start_twin_when_ready() {
             fi
             [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "   rosbridge   : ws://${host_ip}:${TWIN_ROSBRIDGE_PORT}"
             [ "${TWIN_FOXGLOVE}" = 1 ] && echo "   Foxglove    : Open connection -> Foxglove WebSocket -> ws://${host_ip}:${TWIN_FOXGLOVE_PORT}"
+            if [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
+                echo "   Obstacles   : /camera/obstacle_points -> Nav2 (check: /camera/obstacle_depth image)"
+                echo "                 Nav2 waits for the first camera obstacles before driving"
+            fi
+            if [ "${TWIN_MODE}" = fusion ]; then
+                echo "   Fusion      : /rtabmap/cloud_map coloured from the calibrated camera"
+                echo "                 /camera/lidar_overlay = LiDAR on the camera image (RViz/Foxglove Image)"
+            fi
             echo "   Logs        : ${TWIN_LOG_DIR}/"
             echo "================================================================"
             return 0
@@ -545,6 +588,20 @@ done
 
 [ "${TWIN_VLM}" = 1 ] && ensure_ollama
 
+if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
+    [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && die "--fusion / --camera-obstacles need the camera: drop --no-camera"
+    if [[ " ${PASSTHRU[*]} " == *" --sim "* ]]; then
+        TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/sim_front_camera.yaml}"
+    else
+        TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
+    fi
+    [ -f "${TWIN_CAMERA_INFO_FILE}" ] || die "--fusion / --camera-obstacles need a camera calibration: ${TWIN_CAMERA_INFO_FILE} not found.
+       Run ./scripts/tools/calibrate_camera.sh with a session up (docs/camera_lidar_fusion.md)."
+    for f in go2_fusion_camera.py go2_lidar_overlay.py go2_camera_obstacles.py; do
+        [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
+    done
+fi
+
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin
 
@@ -581,7 +638,11 @@ echo "================================================================"
 echo " Go2 3D digital twin (wifi_nav.sh + RTAB-Map + web dashboard)"
 echo "================================================================"
 echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC}$( [ "${TWIN_MODE}" != lidar ] && echo ", camera ${TWIN_RGB_TOPIC}" )"
-on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ]; } && echo "on if the camera publishes" || echo off; }
+[ -n "${TWIN_CAMERA_INFO_FILE:-}" ] && echo "  Calibration : ${TWIN_CAMERA_INFO_FILE}"
+[ "${TWIN_CAMERA_OBSTACLES}" = 1 ] && echo "  Obstacles   : camera depth (LiDAR-scaled) -> Nav2 costmap source 'camera'"
+# wifi_nav.sh adds (or, without this flag, removes) the costmap camera source.
+export CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}"
+on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ] || [ "${TWIN_MODE}" = fusion ]; } && echo "on if the camera publishes" || echo off; }
 echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
 echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"
 echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> pause + dock" || echo "report only" ))" )"

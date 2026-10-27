@@ -51,6 +51,7 @@ EXPLORE_GOAL_CLEARANCE_M=0.5 ./scripts/runtime/wifi_nav.sh --sim ...
 | `frontier_max_attempts` | 3 | After 3 failures it is skipped for good. Until then the explorer waits and retries instead of saying "Exploration complete" |
 | `replan_on_explored` | true | Drop a goal once its frontier is seen (not next to a wall) |
 | `unstick_enable` | false | Back off when boxed in. Off until tested on the robot |
+| `recovery_wait_s` | 0 (8 from `wifi_nav.sh` while stuck recovery runs) | After a controller abort, keep the goal this long for [stuck recovery](omni_nav.md)'s step back and retry before dropping the frontier |
 
 ## Improvements so far (branch `wifi-3d-nav`)
 
@@ -95,6 +96,38 @@ Results in the sim, `agri_rooms`:
 - One run mapped the doorway, the corridor and all three rooms in about 2 minutes.
 - Other runs got stuck as described in the next section.
 
+## Stuck recovery and `--omni` with this explorer (2026-10-27)
+
+Upstream added [stuck recovery and `--omni`](omni_nav.md). Stuck recovery runs
+in every session: after an abort it steps back 0.3 m and re-sends the goal.
+`--omni` switches Nav2 to MPPI, which can reverse and sidestep.
+
+Merging them needed three fixes:
+
+- **The explorer waits for recovery** (`recovery_wait_s`). Before, it dropped
+  the goal at once and sent the next one while recovery was still backing up.
+- **Recovery runs on the stack's DDS setup** (`DDS_EXEC_ENV`). Without it,
+  it never saw an abort in the sim.
+- **Recovery counts inflation as free** (`free_threshold` 99, was 50). In a
+  doorway every cell near the dog is inflation (cost 50–98), so it reported
+  `no free space` every time. It still avoids inscribed and lethal cells and
+  unknown space.
+
+Sim runs, `agri_rooms`, `--no-camera`, one run each:
+
+| Run | Setup | Time | Goals | Reached | Dropped early | Nav2 aborts | Rooms seen |
+|---|---|---|---|---|---|---|---|
+| A | `--no-recovery` | 186 s | 24 | 0 | 2 | 21 | none: stuck in room 1's doorway, then a false "complete" |
+| B | recovery as merged | 232 s | 12 | 0 | 4 | 7 | 1: recovery never saw the aborts (DDS) |
+| B2 | + DDS fix | 336 s | 12 | 2 | 3 | 6 | 1, 2: recovery said `no free space` 6 times |
+| B3 | + inflation counts as free | 226 s | 17 | 2 | 8 | 2 | all 3. Both aborts had a wall right behind the dog |
+| C | B3 + `--omni` | 231 s | 12 | 1 | 8 | 0 | all 3. Two goals dropped for no progress |
+
+Results vary a lot from run to run (run 2 on 2026-10-26 had 7 aborts, A had 21).
+`--omni` is the only setup with no aborts. It is still opt-in: MPPI
+movement is untested on the real dog. On this VM it also used more CPU
+(one missed 10 Hz control loop).
+
 ## Known issue: stuck next to an obstacle
 
 **Symptom.** The robot stops in the purple (inflated) part of the costmap,
@@ -109,8 +142,9 @@ facing a crate or wall about 0.6 m away. The explorer log shows several
 4. The explorer treats each abort as a bad frontier and blacklists it.
 
 **What helps now.**
+- Stuck recovery (on by default) steps back and retries, unless a wall is right behind the dog.
+- `--omni` lets MPPI reverse and sidestep: no aborts in the sim (see above).
 - Drive the robot a little away with 2D Goal Pose, then START again.
-- Or set `EXPLORE_UNSTICK_ENABLE=true` (untested on the robot).
 
 **Planned.**
 - **Explorer:** when Nav2 aborts before the robot has moved, back off and retry instead of blacklisting the frontier.

@@ -1,0 +1,23 @@
+# Exact intrinsics of the Gazebo front camera (gazebo/sim/build_model.py:
+# 640x360, horizontal_fov 1.2 rad, no distortion): fx = fy = 320 / tan(0.6).
+# For testing the LiDAR overlay in --sim; the real camera uses front_camera.yaml.
+image_width: 640
+image_height: 360
+camera_name: go2_sim_front_camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [467.74, 0, 320, 0, 467.74, 180, 0, 0, 1]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0, 0, 0, 0, 0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [467.74, 0, 320, 0, 0, 467.74, 180, 0, 0, 0, 1, 0]

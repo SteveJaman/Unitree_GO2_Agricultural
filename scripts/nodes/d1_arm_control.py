@@ -16,36 +16,46 @@ Topics:
 All angles are in DEGREES. Joints 0–5 are the arm, joint 6 is the gripper.
 Enable uses mode 80000 (fully locked) by default.
 
+Over Wi-Fi: with the arm plugged into the Go2's Ethernet port, --robot <Go2
+Wi-Fi IP> (or ARM_ROBOT) talks to scripts/robot/arm_bridge_wifi.py on the
+robot over TCP instead of DDS; every command and reading is the same. Every
+script that uses D1Arm (teach, play, calibration, fold) follows ARM_ROBOT.
+
 Usage (chain-style):
     python3 d1_arm_control.py state
     python3 d1_arm_control.py enable sleep 2 joint 0 20 sleep 3
     python3 d1_arm_control.py home sleep 6 release
     python3 d1_arm_control.py lift --deg 45
     python3 d1_arm_control.py sweep --pct 90
+    python3 d1_arm_control.py --robot 192.168.1.9 state     # over Wi-Fi
 """
 
 import argparse
+import collections
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 
+# DDS is only needed for the wired link; over Wi-Fi (ARM_ROBOT) the robot's
+# bridge speaks DDS and the laptop only TCP.
 try:
     from cyclonedds.domain import DomainParticipant
     from cyclonedds.pub import DataWriter
     from cyclonedds.sub import DataReader
     from cyclonedds.topic import Topic
     from cyclonedds.idl import IdlStruct
+
+    @dataclass
+    class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
+        data: str = ""
 except ImportError:
-    sys.exit("cyclonedds not installed. Run: pip3 install cyclonedds")
-
-
-@dataclass
-class ArmString_(IdlStruct, typename="unitree_arm::msg::dds_::ArmString_"):
-    data: str = ""
+    DomainParticipant = None
 
 
 ADDR_CMD, ADDR_TELEM, ADDR_ACK = 1, 2, 3
@@ -65,6 +75,77 @@ JOINT_NAMES = {
 T_MOVE, T_HOME, T_ENABLE, T_RELEASE = 3.0, 6.0, 1.5, 0.5
 DEG_WAIT = 0.04
 
+BRIDGE_PORT = int(os.environ.get("ARM_BRIDGE_PORT", "18100"))
+
+
+def robot_host():
+    """The Go2's Wi-Fi IP when the arm is reached through its bridge, else None."""
+    return os.environ.get("ARM_ROBOT") or None
+
+
+class TcpLink:
+    """rt/arm_Command / rt/arm_Feedback through arm_bridge_wifi.py on the Go2:
+    one JSON object per line over TCP. A ping every second tells the bridge the
+    laptop is alive; if the pings stop it locks the arm."""
+
+    def __init__(self, host, port=BRIDGE_PORT, timeout=5.0):
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.sock.settimeout(None)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.lines = collections.deque(maxlen=500)
+        self.hello = None
+        self.alive = True
+        self.wlock = threading.Lock()
+        threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._pinger, daemon=True).start()
+
+    def _reader(self):
+        buf = b""
+        try:
+            while self.alive:
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    break
+                *lines, buf = (buf + chunk).split(b"\n")
+                for raw in lines:
+                    text = raw.decode(errors="replace").strip()
+                    if text.startswith('{"bridge"'):
+                        self.hello = text
+                    elif text:
+                        self.lines.append(text)
+        except OSError:
+            pass
+        self.alive = False
+
+    def _pinger(self):
+        while self.alive:
+            try:
+                self.write('{"ping":1}')
+            except ConnectionError:
+                return
+            time.sleep(1.0)
+
+    def write(self, text):
+        try:
+            with self.wlock:
+                self.sock.sendall((text + "\n").encode())
+        except OSError as e:
+            self.alive = False
+            raise ConnectionError(f"arm bridge connection lost: {e}") from e
+
+    def take(self):
+        out = []
+        while self.lines:
+            out.append(self.lines.popleft())
+        return out
+
+    def close(self):
+        self.alive = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
 
 def build_uri(iface, peer=None):
     iface_xml = f'<NetworkInterface name="{iface}" multicast="default"/>'
@@ -81,6 +162,20 @@ def build_uri(iface, peer=None):
 
 
 def preflight(iface, arm_ip, want_ping=True):
+    robot = robot_host()
+    if robot:
+        print(f"[preflight] Arm through the Go2 bridge at {robot}:{BRIDGE_PORT}:")
+        try:
+            socket.create_connection((robot, BRIDGE_PORT), timeout=3).close()
+        except OSError as e:
+            print(
+                f"    [!] bridge not reachable ({e}). Start it with "
+                "wifi_nav.sh --arm-wifi, or on the robot: "
+                "GO2_HOST_IP=<laptop IP> bash ~/go2-agri-arm/arm_bridge_wifi.sh"
+            )
+            return False
+        print("    [ok] bridge reachable")
+        return True
     print("[preflight] Network diagnostics:")
     try:
         res = subprocess.run(
@@ -127,9 +222,20 @@ class D1Arm:
         verbose=False,
         match_timeout=20.0,
         retries=3,
+        robot=None,
     ):
         self.verbose = verbose
         self.seq = 0
+        self.link = None
+        robot = robot or robot_host()
+        if robot:
+            self.ok = self._connect_bridge(robot, match_timeout, retries)
+            return
+        if DomainParticipant is None:
+            sys.exit(
+                "cyclonedds not installed. Run: pip3 install cyclonedds "
+                "(or use the Go2 bridge: --robot / ARM_ROBOT)"
+            )
         os.environ["CYCLONEDDS_URI"] = build_uri(iface, peer)
         if verbose:
             print(f"      CYCLONEDDS_URI = {os.environ['CYCLONEDDS_URI']}")
@@ -144,6 +250,44 @@ class D1Arm:
                 self.ok = True
                 return
         self.p = self.cmd_w = self.fb_r = None
+
+    def _connect_bridge(self, robot, timeout, retries):
+        """TCP to arm_bridge_wifi.py, then wait for arm feedback through it."""
+        for attempt in range(1, retries + 1):
+            try:
+                self.link = TcpLink(robot, BRIDGE_PORT)
+            except OSError as e:
+                if self.verbose:
+                    print(
+                        f"      bridge {robot}:{BRIDGE_PORT} attempt {attempt}/{retries}: {e}"
+                    )
+                time.sleep(2.0)
+                continue
+            t0 = time.time()
+            while time.time() - t0 < timeout and self.link.alive:
+                if self.link.lines:
+                    if self.verbose:
+                        print(f"      bridge {robot}:{BRIDGE_PORT}: arm feedback OK")
+                    return True
+                time.sleep(0.1)
+            print(
+                f"[!] bridge at {robot} connected, but no arm feedback in {timeout:.0f} s: "
+                "is the arm plugged into the Go2 and powered?"
+            )
+            self.link.close()
+            self.link = None
+        return False
+
+    def _write(self, text):
+        if self.link:
+            self.link.write(text)
+        else:
+            self.cmd_w.write(ArmString_(data=text))
+
+    def _take(self):
+        if self.link:
+            return self.link.take()
+        return [s.data for s in self.fb_r.take(N=20)]
 
     def _init(self, domain, timeout):
         try:
@@ -176,18 +320,17 @@ class D1Arm:
         text = json.dumps(payload, separators=(",", ":"))
         if self.verbose:
             print(f"      -> {text}")
-        msg = ArmString_(data=text)
         for _ in range(repeat):
-            self.cmd_w.write(msg)
+            self._write(text)
             time.sleep(0.1)
 
     def _latest(self, address, funcode, timeout=2.0):
         found = None
         t0 = time.time()
         while time.time() - t0 < timeout:
-            for s in self.fb_r.take(N=20):
+            for data in self._take():
                 try:
-                    m = json.loads(s.data)
+                    m = json.loads(data)
                 except Exception:
                     continue
                 if m.get("address") == address and m.get("funcode") == funcode:
@@ -353,6 +496,11 @@ def main():
     )
     ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.100"))
     ap.add_argument(
+        "--robot",
+        default=robot_host(),
+        help="Go2 Wi-Fi IP: reach the arm through arm_bridge_wifi.py (env ARM_ROBOT)",
+    )
+    ap.add_argument(
         "--peer",
         default=None,
         help="unicast peer — DO NOT USE on this firmware; multicast works",
@@ -380,6 +528,8 @@ def main():
     )
 
     args = ap.parse_args()
+    if args.robot:
+        os.environ["ARM_ROBOT"] = args.robot
 
     if not args.skip_preflight and not preflight(args.iface, args.ip):
         print("\n[!] Preflight failed")
@@ -394,9 +544,12 @@ def main():
         retries=args.retries,
     )
     if not arm.ok:
-        print("[!] DDS discovery failed")
+        print(
+            "[!] no connection to the arm"
+            + (" (Go2 bridge)" if args.robot else " (DDS discovery failed)")
+        )
         return 2
-    print("[*] DDS match OK")
+    print(f"[*] arm connected ({'Go2 bridge ' + args.robot if arm.link else 'DDS'})")
 
     if not args.commands:
         # Default: just print state

@@ -17,6 +17,7 @@
 #   SIM_WORLD            worlds/<name>.sdf: agri_rooms (default, field + building)
 #                        or agri_field (field only)
 #   SIM_D1_MOUNT         D1 pose on the trunk, see build_model.py --mount
+#   SIM_SENSOR_YAML      lidar mount file (sensor_from_base), see build_model.py --sensor-yaml
 # ---------------------------------------------------------------------------
 set -eo pipefail
 

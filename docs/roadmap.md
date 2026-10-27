@@ -95,12 +95,12 @@ Required for reconstruction. Currently blocked by hardware.
 | 3.1 | Fix the camera backend on Jetson | ⏳ hardware |
 | 3.2 | Verify image reaches VM | ⏳ |
 | 3.3 | Mount Intel RealSense D435i (if available) | ⏳ hardware |
-| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ⏳ |
+| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](camera_lidar_fusion.md)), ⏳ run on robot |
 
-**Note:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) is already written and bridges
-`/frontvideostream` → `/camera/image_raw`. What is missing is the *camera
-backend* on the Jetson — right now the relay logs
-`WARN: camera unavailable`. See [camera.md](camera.md).
+**Note:** the camera works live. The robot sends its JPEG frames over Wi-Fi
+(`scripts/robot/go2_camera_wifi.sh`, using the Jetson's `go2_camera_jpeg_cli`
+backend), and `go2_camera_relay.py` decodes them to `/camera/image_raw`.
+See [camera.md](camera.md).
 
 **Blocker if no RealSense:** built-in camera + LiDAR gives sparse color
 only. Enough to prototype, not enough for a real-estate quality tour.
@@ -126,8 +126,11 @@ The pipeline that produces the dense 3D tour.
 | 4.10 | `--export` DB → PLY (`rtabmap-export --scan`) | ✅ written, ⏳ verify |
 | 4.11 | YOLO semantic layer (detections → 3D markers in the dashboard) | ✅ [`twin/yolo_node.py`](../twin/yolo_node.py) written (YOLO11s, CPU), ⏳ verify |
 | 4.12 | Go2 camera + LiDAR fusion (LiDAR → depth image, coloured map) | ✅ written in `twin/start_inside.sh`, ⏳ verify; accuracy needs 3.4 |
+| 4.12b | Calibrated camera-coloured map, undistorted, with overlay check (`wifi_3d_nav.sh --fusion`) | ✅ verified in `--sim`, ⏳ needs the camera calibration on the robot |
 | 4.13 | YOLO obstacles in the Nav2 costmap | ✅ [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), run automatically with `--ai`, ⏳ verify |
-| 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ |
+| 4.13b | Camera obstacles in the Nav2 costmap: monocular depth scaled by the LiDAR (`wifi_3d_nav.sh --camera-obstacles`) | ✅ pipeline verified on the dog, ⏳ calibration + drive test |
+| 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ (`--camera-obstacles` already sees glass as depth) |
+| 4.14b | Full mobility: MPPI Omni (reverse + sidestep), omni lattice, stuck recovery (`--omni`) | ✅ verified in sim, loads on the robot, ⏳ drive test on the dog |
 | 4.15 | Low-battery return to the dock (`--ai`) | ✅ [`battery_manager.py`](../scripts/nodes/battery_manager.py) written, ⏳ verify |
 | 4.16 | Local VLM scene reasoning (Ollama llava) → `/vlm_decision` | ✅ [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) written, ⏳ verify; nothing acts on it yet |
 | 4.17 | Resume a map after a battery swap (`--resume`) | ✅ written, ⏳ verify |
@@ -141,6 +144,9 @@ The pipeline that produces the dense 3D tour.
 | 4.25 | Room-aware behaviour (explore one room, VLM checks per room) | ⏳ |
 | 4.26 | Autonomous survey: explore → segment → visit + categorise each room (YOLO evidence, VLM fallback) → report → dock, no user input (`--survey`) | ✅ [`twin/survey_manager.py`](../twin/survey_manager.py) written, simulated, ⏳ verify on robot |
 | 4.27 | Home map in RTAB-Map localization mode; room divide; cleaning-style room sequence | ⏳ |
+| 4.28 | Dashboard on a VM without 3D acceleration: performance mode, map decoding in a Web Worker, shadows once a second | ✅ ~3.4× frame rate in software WebGL (synthetic map), ⏳ verify in the lab browser |
+| 4.29 | Unitree Go2 model in the dashboard with leg joints from `/joint_states` | ✅ rendered and animated against synthetic joint data, ⏳ verify on robot |
+| 4.30 | Camera reliability over Wi-Fi: optical frame for YOLO/RTAB-Map, wait for the late robot camera, UDP buffer check | ✅ written (2026-10-27); ⏳ re-test after raising the VM's UDP buffers |
 
 **3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.
@@ -219,6 +225,8 @@ is captured for later plant-analysis research.
 | 8.8 | Per-joint offset calibration ([`calibrate_arm.py`](../scripts/tools/calibrate_arm.py)), `lift` / `sweep` tests | ✅ written; ⏳ hardware |
 | 8.9 | Folded-pose calibration ([`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)) | ✅ calibrated on the mount |
 | 8.10 | `wifi_nav.sh --arm`: dog + arm from one command, DDS isolated | ✅ written; ⏳ hardware |
+| 8.11 | Teach & Playback for plant scanning ([`teach_arm.py`](../scripts/tools/teach_arm.py), [`play_arm.py`](../scripts/tools/play_arm.py)): compliance mode, saved poses, replayed sweep | ✅ written, tested against a fake arm; ⏳ hardware |
+| 8.12 | Arm plugged into the Go2, controlled over Wi-Fi ([`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py), `--robot`, `--arm-wifi`) | ✅ written, bridge built on the robot, tested against a mock arm; ⏳ hardware |
 
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
 `rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1

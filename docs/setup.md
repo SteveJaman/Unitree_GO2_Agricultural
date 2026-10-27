@@ -41,6 +41,17 @@ After the navigation setup above (needs internet):
 curl -fsSL https://ollama.com/install.sh | sh   # Ollama, for the VLM
 ```
 
+Raise the VM's UDP receive buffers once. The Ubuntu default (208 KB) is too
+small for DDS over Wi-Fi: a camera frame is ~50 UDP packets and one dropped
+packet loses the frame, so the camera arrives at a fraction of its 5 fps and
+RTAB-Map's camera mode gets no data. `wifi_nav.sh` warns when they are too
+small.
+
+```bash
+printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=8388608\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf
+sudo sysctl --system
+```
+
 That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
 `go2-3d` image (RTAB-Map, YOLO, web dashboard; ~3–4 GB) and pulls
 `llava:7b` (~4.7 GB). It also starts `ollama serve` when it isn't running.
@@ -169,6 +180,9 @@ See [D1-T Arm Control](d1arm.md) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
+| `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
+| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [omni_nav.md](omni_nav.md) |
+| `--no-recovery` | Turn off the stuck recovery (on by default: an aborted leg backs the dog up 0.3 m and retries) |
 | `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |
 | `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](tour.md) |
 | `--no-camera` | Skip the camera relay |
