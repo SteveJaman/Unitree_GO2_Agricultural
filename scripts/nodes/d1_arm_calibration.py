@@ -30,6 +30,26 @@ FUNC_POWER = 6
 FUNC_ZERO = 7
 
 
+FOLD_TOL = 3.0  # degrees per joint (0-5) counted as folded
+FOLD_TIMEOUT = 30.0  # s; the fold from home takes well over 5 s
+
+
+def wait_folded(arm):
+    """True once joints 0-5 are within FOLD_TOL of FOLDED_ANGLES."""
+    t0 = time.time()
+    while time.time() - t0 < FOLD_TIMEOUT:
+        d = arm.read_angles() or {}
+        now = [d.get(f"angle{i}") for i in range(6)]
+        if (
+            None not in now
+            and max(abs(n - f) for n, f in zip(now, FOLDED_ANGLES)) <= FOLD_TOL
+        ):
+            print(f"    folded after {time.time() - t0:.1f} s")
+            return True
+        time.sleep(0.3)
+    return False
+
+
 class D1Arm(_SharedArm):
     """The shared D1Arm (d1_arm_control.py) with this script's helpers. The
     link is DDS on --iface, or the Go2 Wi-Fi bridge when ARM_ROBOT is set."""
@@ -79,15 +99,22 @@ def main():
             sys.exit(1)
 
     elif args.move:
-        # 1. Power ON (funcode 6)
-        print("[*] Turning motor power ON (funcode=6)...")
-        arm.send(FUNC_POWER, {"power": 1})
-        time.sleep(1.5)
-
-        # 2. Enable Motors (funcode 5)
-        print("[*] Enabling motors (mode 80000)...")
-        arm.send(FUNC_ENABLE_ALL, {"mode": 80000})
-        time.sleep(1.0)
+        # 1-2. Power on and enable, unless the arm already is: re-enabling a
+        #      held arm sets a new target on this firmware (the shoulder swung).
+        st = (arm.state() or {}).get("data", {})
+        if st.get("power_status") == 1:
+            print("[*] Motor power already on")
+        else:
+            print("[*] Turning motor power ON (funcode=6)...")
+            arm.send(FUNC_POWER, {"power": 1})
+            time.sleep(1.5)
+            st = (arm.state() or {}).get("data", {})
+        if st.get("enable_status") == 1:
+            print("[*] Motors already enabled (holding): not re-enabled")
+        else:
+            print("[*] Enabling motors (mode 80000)...")
+            arm.send(FUNC_ENABLE_ALL, {"mode": 80000})
+            time.sleep(1.0)
 
         # 3. Move (funcode 2)
         print(f"[*] Moving to FOLDED_ANGLES: {FOLDED_ANGLES}")
@@ -97,8 +124,19 @@ def main():
 
         arm.send(FUNC_JOINTS, data)
 
-        print("[*] Waiting 5s for motion to complete...")
-        time.sleep(5.0)
+        # Release only on the mount: from home the fold takes longer than a
+        # fixed wait, and releasing mid-move drops the arm.
+        print(
+            f"[*] Waiting for the folded pose (±{FOLD_TOL:.0f}°, up to {FOLD_TIMEOUT:.0f} s)..."
+        )
+        if not wait_folded(arm):
+            print(
+                "[!] Folded pose not reached: the arm stays enabled and holding (not released)."
+            )
+            print(
+                "    Check it, then: start_arm.sh fold (or release by hand, supporting the arm)."
+            )
+            sys.exit(3)
 
         # 4. Release Motors (funcode 5)
         print("[*] Releasing motors (mode 0)...")

@@ -18,10 +18,12 @@ object per line:
 
 TCP instead of DDS over Wi-Fi: arm traffic is small JSON at 10 Hz, and TCP
 needs no discovery and loses nothing. Safety: when the laptop disconnects or
-is silent for ARM_BRIDGE_TIMEOUT s while the motors hold the arm (last
-enable-all mode not 0), the bridge locks it where it is (mode 80000), so a
-Wi-Fi drop never drops the camera. Only GO2_HOST_IP may connect (if set),
-and only arm commands (address 1) are forwarded.
+is silent for ARM_BRIDGE_TIMEOUT s while the arm is compliant (teach mode:
+last enable-all mode between 0 and 80000), the bridge stiffens it (mode
+80000), so a Wi-Fi drop never lets the camera sag. A fully enabled arm
+already holds by itself and is never sent anything: re-enabling it during a
+move sets a new target on this firmware. Only GO2_HOST_IP may connect (if
+set), and only arm commands (address 1) are forwarded.
 
 Started by arm_bridge_wifi.sh (wifi_nav.sh --arm-wifi copies and runs it).
 Env: ARM_BRIDGE_PORT=18100  ARM_BRIDGE_TIMEOUT=3  GO2_HOST_IP=<laptop>
@@ -66,7 +68,7 @@ class Bridge(Node):
         self.conn = None
         self.conn_lock = threading.Lock()
         self.feedback = 0
-        self.held = False  # motors holding the arm (last enable-all mode != 0)
+        self.mode = None  # last enable-all mode sent (None: unknown, 0: released)
         self.seq = int(time.time()) % 1000000 * 1000
 
     def on_feedback(self, msg):
@@ -92,8 +94,8 @@ class Bridge(Node):
         for _ in range(3):
             self.command(text)
             time.sleep(0.1)
-        self.held = True
-        self.get_logger().warn(f"{why}: arm locked (mode {LOCK_MODE})")
+        self.mode = LOCK_MODE
+        self.get_logger().warn(f"{why}: compliant arm locked (mode {LOCK_MODE})")
 
     def on_line(self, line):
         """One line from the laptop: a ping, or an arm command to forward."""
@@ -108,7 +110,7 @@ class Bridge(Node):
             self.get_logger().warn(f"not an arm command, ignored: {line[:80]!r}")
             return
         if msg["funcode"] == 5:
-            self.held = (msg.get("data") or {}).get("mode", 0) != 0
+            self.mode = (msg.get("data") or {}).get("mode", 0)
         self.command(line)
 
     def serve(self, conn, addr):
@@ -155,10 +157,17 @@ class Bridge(Node):
             with self.conn_lock:
                 self.conn = None
             conn.close()
-            if self.held:
+            # Only a compliant arm (teach mode, 0 < mode < 80000) can sag; it is
+            # stiffened. A fully enabled arm already holds, and re-enabling it
+            # mid-motion sets a new target on this firmware (tested: the
+            # shoulder swung to its limit), so nothing is ever sent to it.
+            if self.mode and self.mode < LOCK_MODE:
                 self.lock_arm(why)
             else:
-                self.get_logger().info(f"{why} (arm not held, nothing to lock)")
+                state = {None: "unknown", 0: "released"}.get(
+                    self.mode, f"mode {self.mode}"
+                )
+                self.get_logger().info(f"{why} (arm {state}: nothing sent)")
 
 
 def _stop(signum, frame):

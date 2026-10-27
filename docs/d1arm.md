@@ -105,10 +105,19 @@ D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi
   `read`, offset calibration, `teach_arm.py`, `play_arm.py`. `cyclonedds` is
   not needed on the laptop for this.
 - **Safety:** the laptop pings every second. If it disconnects, is silent for
-  3 s (`ARM_BRIDGE_TIMEOUT`), or the bridge is stopped while the motors hold
-  the arm, the bridge locks it where it is (mode 80000): a Wi-Fi drop never
-  drops the camera. A released arm (mode 0) is left alone. Only the laptop
-  (`GO2_HOST_IP`) may connect, and only arm commands are forwarded.
+  3 s (`ARM_BRIDGE_TIMEOUT`), or the bridge is stopped while the arm is
+  **compliant** (teach mode, `0 < mode < 80000`), the bridge stiffens it
+  (mode 80000): a Wi-Fi drop never lets the camera sag. A fully enabled arm
+  already holds by itself and a released one rests, so the bridge sends them
+  nothing. Only the laptop (`GO2_HOST_IP`) may connect, and only arm commands
+  are forwarded.
+
+**Firmware behaviour (found 2026-10-27):** enable-all (`funcode 5`, mode
+80000) sent to an arm that is **already enabled** drives it back to its last
+multi-joint (`funcode 2`) target. The first bridge re-sent it on every
+disconnect: an interrupted `home` swung the shoulder, and a later one folded
+the arm on its own. Never re-enable an enabled arm; `fold` and the bridge now
+check first.
 
 **One-time build on the robot** (uses its ROS Foxy; nothing else is
 installed). `wifi_nav.sh --arm-wifi` copies the files to `~/go2-agri-arm` and
@@ -154,7 +163,9 @@ ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh     # all PASS expected
 hand. Run `start_arm.sh read` and paste the printed `FOLDED_ANGLES` line into
 `scripts/nodes/d1_arm_calibration.py`. Redo it whenever the mount changes.
 `fold` powers on, enables, sends one funcode 2 move to `FOLDED_ANGLES`, waits
-5 s, then **releases and powers off**, so the mount must hold the arm.
+until the pose is reached (±3°, up to 30 s), then **releases and powers off**,
+so the mount must hold the arm. If the pose is not reached it does not release
+(exit 3). It skips power-on / enable when the arm already is.
 
 ## Control commands
 

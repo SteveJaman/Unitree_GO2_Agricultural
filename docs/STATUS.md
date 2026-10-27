@@ -29,7 +29,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
 | Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
 | D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
-| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Read verified on the robot (2026-10-27)**: real arm state and angles through the bridge; motion not yet tested |
+| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Moved on the robot over Wi-Fi (2026-10-27)**: power, enable, joint 0 +20°, home, fold. Found and fixed: the bridge's auto-lock re-enabled an enabled arm, which drives it to its last target. Open: `power 0` does not switch motor power off over the bridge |
 | VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
 
 Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
