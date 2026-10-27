@@ -51,7 +51,8 @@
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC=/camera/image_raw (rgbd: /camera/color/image_raw)
 #   TWIN_DEPTH_TOPIC / TWIN_CAMINFO_TOPIC   (rgbd mode, RealSense defaults)
-#   TWIN_CAMERA_WAIT=60         s to wait for the first camera frame (auto)
+#   TWIN_CAMERA_WAIT=180        s to wait for the first camera frame (auto); the
+#                               robot camera starts a minute or more after the session
 #   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"   x y z yaw pitch roll of
 #                               the optical frame in base_link (Go2 URDF
 #                               front_camera_joint); "none" = do not publish
@@ -84,7 +85,7 @@ else
 fi
 TWIN_DEPTH_TOPIC="${TWIN_DEPTH_TOPIC:-/camera/depth/image_rect_raw}"
 TWIN_CAMINFO_TOPIC="${TWIN_CAMINFO_TOPIC:-/camera/color/camera_info}"
-TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-180}"
 TWIN_CAMERA_TF="${TWIN_CAMERA_TF:-0.327 0 0.043 -1.5708 0 -1.5708}"
 TWIN_CAMERA_HFOV_DEG="${TWIN_CAMERA_HFOV_DEG:-120}"
 TWIN_YOLO="${TWIN_YOLO:-0}"
@@ -141,6 +142,9 @@ stop_all() {
 trap 'stop_all; exit 0' TERM INT
 
 echo "[go2-3d] DDS domain ${ROS_DOMAIN_ID:-0}, ${RMW_IMPLEMENTATION:-default RMW}, ${CYCLONEDDS_URI:-no CYCLONEDDS_URI}"
+
+# True if TF parent -> child resolves within 5 s.
+tf_exists() { timeout 5 "$(exe tf2_ros tf2_echo)" "$1" "$2" 2>/dev/null | grep -q Translation; }
 
 # True if something already listens on a local TCP port.
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -228,10 +232,17 @@ if [ "$TWIN_MODE" = auto ] || [ "$TWIN_MODE" = camera ]; then
 fi
 
 if [ "$TWIN_MODE" = camera ]; then
+    # Never re-publish a frame the session owns: the URDF's front_camera is
+    # x forward, and a second parent for it would break the whole TF tree.
     if [ "$TWIN_CAMERA_TF" = none ]; then
         echo "[go2-3d] camera TF: not published (TWIN_CAMERA_TF=none)"
-    elif timeout 5 "$(exe tf2_ros tf2_echo)" "$TWIN_BASE_FRAME" "$CAMERA_FRAME" 2>/dev/null | grep -q Translation; then
+    elif tf_exists "$TWIN_BASE_FRAME" "$CAMERA_FRAME"; then
         echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} already published by the session"
+    elif [ "$CAMERA_FRAME" = front_camera_optical ] && tf_exists "$TWIN_BASE_FRAME" front_camera; then
+        # The relay's optical frame under the URDF camera link: rotation only.
+        echo "[go2-3d] camera TF: front_camera (URDF) -> front_camera_optical"
+        start camera_tf "$(exe tf2_ros static_transform_publisher)" \
+            --yaw -1.5708 --roll -1.5708 --frame-id front_camera --child-frame-id front_camera_optical
     else
         read -r cx cy cz cyaw cpitch croll <<< "$TWIN_CAMERA_TF"
         echo "[go2-3d] camera TF: ${TWIN_BASE_FRAME} -> ${CAMERA_FRAME} = ${TWIN_CAMERA_TF} (x y z yaw pitch roll)"

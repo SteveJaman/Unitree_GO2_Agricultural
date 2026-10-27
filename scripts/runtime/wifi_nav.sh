@@ -805,6 +805,9 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             else
                 echo "[camera] No ${CAMERA_CALIB}: no /camera/camera_info (run scripts/tools/calibrate_camera.sh)"
             fi
+            # Images are stamped front_camera_optical (z forward, x right, y
+            # down), the pinhole convention of camera_info, YOLO and RTAB-Map;
+            # front_camera is the URDF link (x forward). go2-3d adds the TF.
             # In 3D mode mapping.sh starts the robot relay without the camera
             # (GO2_RELAY_CAMERA=0), so the robot sends JPEG frames itself:
             # scripts/robot/go2_camera_wifi.sh -> /go2/front_camera/compressed.
@@ -822,7 +825,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             fi
             echo "[camera] Starting camera relay..."
             docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera_optical ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${EXPLORE}" = "true" ]; then

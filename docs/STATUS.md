@@ -162,7 +162,7 @@ robot, click-to-go, `--export`.
 
 - **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
   LiDAR-only), `go2-3d` adds:
-  - the `base_link → camera_link` optical TF (Go2 URDF mount);
+  - the `front_camera → front_camera_optical` TF (Go2 URDF mount);
   - [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py), approximate
     intrinsics;
   - LiDAR projected into the image as depth, so RTAB-Map runs RGB-D.

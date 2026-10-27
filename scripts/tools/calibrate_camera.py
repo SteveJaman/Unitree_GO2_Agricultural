@@ -194,7 +194,7 @@ def run_live(args, pattern):
 
         def status(self):
             if self.frames == 0:
-                print(f"  no images on {args.topic} yet")
+                print(f"  no images on {args.topic} yet (is a wifi_nav.sh / wifi_3d_nav.sh session running?)")
             elif not self.done:
                 print(
                     f"  {self.frames} frames, {self.searched} searched, board seen in {self.seen}, "

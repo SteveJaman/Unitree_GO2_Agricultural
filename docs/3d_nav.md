@@ -35,7 +35,7 @@ go2_odom_tf ─► TF lidar3d_map → base_link ──────────�
 camera relay ─► /camera/image_raw ──────────────────► go2_camera_info ─► /camera/camera_info
                                                       pointcloud_to_depthimage ─► /camera/lidar_depth
                                                         (LiDAR projected into the image → RTAB-Map RGB-D)
-                                                      static TF base_link → camera_link
+                                                      static TF front_camera → front_camera_optical
                                                       yolo_node (YOLO11s) ─► /yolo/detections, /yolo/image,
 Nav2 costmap ◄── /yolo/obstacles (auto with --ai) ◄──     /yolo/markers, /yolo/obstacles     (--ai)
                                                       vlm_reasoning_node ─► Ollama ─► /vlm_decision (--ai)
@@ -71,7 +71,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
     watches. A raw 720p frame through rosbridge would be ~2.7 MB.
   - **Foxglove** stays available as an alternative (`--foxglove`).
 - **The camera is optional, detected at start.** In the default `auto` mode,
-  `go2-3d` waits up to `TWIN_CAMERA_WAIT` (60 s) for a frame on
+  `go2-3d` waits up to `TWIN_CAMERA_WAIT` (180 s; the robot camera starts a minute or more after the session) for a frame on
   `/camera/image_raw`.
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
     loop closures), and YOLO and the VLM start (unless `--no-ai`).
@@ -88,7 +88,7 @@ publishes no `camera_info`. `go2-3d` fills the gaps:
 
 | Piece | What it does |
 |---|---|
-| Static TF `base_link → camera_link` | The camera's optical frame (z forward, x right, y down) at the official Go2 URDF `front_camera_joint`, (0.327, 0, 0.043) m. `TWIN_CAMERA_TF="x y z yaw pitch roll"`; skipped if the session already publishes that frame; `none` disables it |
+| Static TF `front_camera → front_camera_optical` | The relay stamps images `front_camera_optical` (z forward, x right, y down). Its parent is the URDF's x-forward `front_camera` link (0.327, 0, 0.043) m, so only the rotation is added; `front_camera` itself is never re-published. Without that URDF link, `base_link → front_camera_optical` from `TWIN_CAMERA_TF="x y z yaw pitch roll"`; `none` disables it |
 | [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py) | `/camera/camera_info` with every frame. Pinhole intrinsics from `TWIN_CAMERA_HFOV_DEG` (120° default, 68.75° with `--sim`) |
 | `pointcloud_to_depthimage` (rtabmap_util) | Projects `/lidar3d/registered` into the camera → sparse depth image `/camera/lidar_depth` |
 | RTAB-Map `camera` mode | RGB + LiDAR depth + scan cloud. `/rtabmap/cloud_map` is coloured; the LiDAR still does the registration |
@@ -747,7 +747,7 @@ camera images. The database also opens in
 | `TWIN_RTAB_ARGS` | — | Extra RTAB-Map parameters, e.g. `"--Grid/CellSize 0.1 --Grid/RangeMax 8"` (lighter on the VM) |
 | `TWIN_WEB_PORT` / `TWIN_ROSBRIDGE_PORT` / `TWIN_FOXGLOVE_PORT` | `3000` / `9090` / `8765` | Dashboard, rosbridge, foxglove_bridge ports |
 | `TWIN_RGB_TOPIC` | `/camera/image_raw` (`--rgbd`: `/camera/color/image_raw`) | Camera image |
-| `TWIN_CAMERA_WAIT` | `60` | Seconds to wait for the first camera frame (`auto`) |
+| `TWIN_CAMERA_WAIT` | `180` | Seconds to wait for the first camera frame (`auto`; ends at the first frame; `--no-camera` skips it) |
 | `TWIN_CAMERA_TF` | `0.327 0 0.043 -1.5708 0 -1.5708` | `base_link → camera` optical frame: x y z yaw pitch roll; `none` = don't publish |
 | `TWIN_CAMERA_FRAME` | from the image header | Child frame for that TF |
 | `TWIN_CAMERA_HFOV_DEG` | `120` (`--sim`: `68.75`) | Horizontal field of view for the approximate intrinsics |
@@ -795,7 +795,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Clicks do nothing | `tail …/ws/log/3d/click_to_goal.log`. `no costmap received yet`: the session's Nav2 is not up. `no navigable floor`: click closer to open floor, or raise `max_snap_distance`. Also confirm the Publish tool's topic is `/clicked_point` |
 | `no camera frames … LiDAR-only map, YOLO off` | The camera relay isn't publishing. `tail /tmp/camera_relay.log` in `go2-lidar3d`; see [camera.md](camera.md) |
 | Map colours land on the wrong surfaces | Camera intrinsics / `TWIN_CAMERA_TF` are off: calibrate (see [Camera fusion and YOLO](#camera-fusion-and-yolo)) |
-| `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → camera_link` must resolve |
+| `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → front_camera_optical` must resolve |
 | YOLO boxes in `/yolo/image` but no `/yolo/markers` | Box bottom above the horizon and no LiDAR points inside it, or farther than 6 m. `tail …/ws/log/3d/yolo.log` |
 | Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
 | Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |

@@ -63,7 +63,7 @@
 # Environment:
 #   TWIN_WEB_PORT=3000  TWIN_ROSBRIDGE_PORT=9090  TWIN_FOXGLOVE_PORT=8765
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
-#   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=60 (s, camera auto-detect)
+#   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=180 (s, camera auto-detect)
 #   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"  base_link -> camera optical
 #                                      frame (x y z yaw pitch roll; "none" = skip)
 #   TWIN_CAMERA_HFOV_DEG=120 (68.75 with --sim)        approximate intrinsics
@@ -107,7 +107,7 @@ TWIN_NODE_SETTLE="${TWIN_NODE_SETTLE:-10}"
 TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
 TWIN_MAP_FRAME="${TWIN_MAP_FRAME:-lidar3d_map}"
 TWIN_BASE_FRAME="${TWIN_BASE_FRAME:-base_link}"
-TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-60}"
+TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-180}"
 
 # --- Parse args ------------------------------------------------------------
 ACTION="run"
@@ -182,6 +182,8 @@ TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-${SURVEY_AUTO}}"
 TWIN_AUTO_BUILD="${TWIN_AUTO_BUILD:-1}"
 
+# No camera relay: nothing to wait for in auto mode.
+[[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && [ "${TWIN_MODE}" = auto ] && TWIN_MODE="lidar"
 if [ "${TWIN_MODE}" = rgbd ]; then
     TWIN_RGB_TOPIC="${TWIN_RGB_TOPIC:-/camera/color/image_raw}"
 else
