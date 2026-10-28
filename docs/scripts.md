@@ -29,7 +29,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`scripts/robot/arm_bridge_wifi.sh`](../scripts/robot/arm_bridge_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh --arm-wifi`): D1 arm plugged into the Go2 ↔ laptop over TCP; `--build` once |
 | [`scripts/robot/go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](../scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
-| [`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py) | Every session: on an aborted leg (e.g. facing a wall), step back (and aside with `--omni`) into free space and retry the goal |
+| [`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py) | Every session: on an aborted leg (e.g. facing a wall), step back (or aside, with `--drive hybrid` or `omni`) into free space and retry the goal |
 | [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py) | `--camera-obstacles`: Depth Anything V2-Small depth, scaled by the LiDAR → `/camera/obstacle_points` for the Nav2 costmap |
 | [`go2_fusion_camera.py`](../scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
 | [`go2_lidar_overlay.py`](../scripts/nodes/go2_lidar_overlay.py) | Projects `/lidar3d/registered` onto the front camera → `/camera/lidar_overlay` (camera–LiDAR alignment check, live mount tuning) |
@@ -60,6 +60,7 @@ are in [`twin/`](../twin/), described in [3d_nav.md](3d_nav.md).
 | [`lidar_overlay.sh`](../scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
 | [`rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
 | [`nav2_camera_source.py`](../scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`) |
+| [`nav_compare/`](../scripts/tools/nav_compare/) | Drive-mode trials: `sim_trial.sh` (one unattended Gazebo run), `record.sh start/stop` (record any session, sim or real dog), `run_analysis.sh` → `analyze.py` (table + plots). See [locomotion_comparison.md](locomotion_comparison.md) |
 | [`nav2_omni.py`](../scripts/tools/nav2_omni.py) | Switches go2-nav2-wifi between forward-only RPP and MPPI Omni ([`config/nav2/go2_omni.yaml`](../config/nav2/go2_omni.yaml); run by `wifi_nav.sh`) |
 | [`build_go2_model.py`](../scripts/tools/build_go2_model.py) | Unitree's `go2_description` URDF + meshes → decimated `twin/webapp/public/go2/` (PLY + `go2.json`) for the dashboard's animated Go2; run once in the `go2-3d` image (command in the file) |
 | [`d435i_sender.py`](../scripts/tools/d435i_sender.py) | RealSense D435i on the machine it is plugged into (Jetson / Go2 PC): colour + aligned depth, JPEG / PNG over ZeroMQ (`pip install pyrealsense2 pyzmq opencv-python numpy`) |

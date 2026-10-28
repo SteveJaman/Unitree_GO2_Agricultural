@@ -7,10 +7,11 @@ Regulated Pure Pursuit's "detected collision ahead!" with the nose at a wall,
 or "Failed to make progress"), it:
 
   1. checks the local costmap for a free patch behind the dog, then (with
-     allow_sidestep, i.e. --omni, whose smoother allows vy) to its left and
-     right;
-  2. steps there: escape_distance metres at escape_speed, sent on
-     /cmd_vel_nav so the velocity smoother still limits acceleration;
+     allow_sidestep) to its left and right;
+  2. steps there: escape_distance metres at escape_speed. With --drive omni
+     this goes on /cmd_vel_nav, whose smoother allows vy. With --drive hybrid
+     (forward-only Nav2, whose smoother clamps vy to 0) it goes straight to
+     /cmd_vel after escape_delay_s, once the smoother has stopped publishing;
   3. re-sends the last /goal_pose (the explorer's current frontier, or a 2D
      Goal Pose) so the planner tries again from the new spot, up to
      max_retries times per goal.
@@ -62,7 +63,10 @@ class StuckRecovery(Node):
         # lower is inflation, which in a doorway surrounds the dog (cost 50-98)
         p("free_threshold", 99)
         p("retry_goal", True)
-        p("allow_sidestep", False)  # only when the smoother allows vy (--omni)
+        p("allow_sidestep", False)  # needs vy: --drive omni, or hybrid on /cmd_vel
+        # Wait before moving. On /cmd_vel (hybrid) the smoother still sends its
+        # stop for velocity_timeout (1 s) after the abort; moving earlier fights it.
+        p("escape_delay_s", 0.0)
         p("max_retries", 2)
 
         self.tf = Buffer()
@@ -71,7 +75,7 @@ class StuckRecovery(Node):
         self.goal = None
         self.retries = 0
         self.seen = {}  # goal id -> last status
-        self.escape = None  # (vx, vy, end time) while stepping
+        self.escape = None  # (vx, vy, start, end) while stepping
         self.resend_at = None
         self._own_goal = False  # the next /goal_pose is our own retry
 
@@ -145,7 +149,8 @@ class StuckRecovery(Node):
         name, vx, vy = direction
         speed = self.get_parameter("escape_speed").value
         duration = self.get_parameter("escape_distance").value / speed
-        self.escape = (vx * speed, vy * speed, time.monotonic() + duration)
+        start = time.monotonic() + self.get_parameter("escape_delay_s").value
+        self.escape = (vx * speed, vy * speed, start, start + duration)
         self.get_logger().info(
             f"stepping {name} {self.get_parameter('escape_distance').value:.2f} m"
         )
@@ -200,7 +205,9 @@ class StuckRecovery(Node):
     def tick(self):
         now = time.monotonic()
         if self.escape is not None:
-            vx, vy, end = self.escape
+            vx, vy, start, end = self.escape
+            if now < start:
+                return
             out = Twist()
             if now < end:
                 out.linear.x, out.linear.y = vx, vy

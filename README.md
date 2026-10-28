@@ -83,8 +83,11 @@ Other entry points:
   calibration), wired to the workstation or plugged into the Go2 and
   controlled over Wi-Fi (`--arm-wifi`). Teach & Playback: guide the arm by
   hand to frame plants, then replay the scan sweep.
-- **Full mobility:** `--omni` lets Nav2 walk the dog backwards and sideways;
-  stuck recovery backs it out of dead ends in every session.
+- **Three drive modes:** `--drive hybrid` (default: the dog faces where it
+  walks, and only stuck recovery steps back or sidesteps), `--drive diff`
+  (forward arcs, the original setup; recovery only steps back) or
+  `--drive omni` (Nav2 walks it backwards and sideways during normal driving
+  too). [Comparison with sim results](docs/locomotion_comparison.md).
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
 
 ## Documentation
@@ -100,7 +103,8 @@ Other entry points:
 | [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |
 | [Camera](docs/camera.md) | Go2 camera relay, RViz display, who uses the feed |
 | [Camera + LiDAR fusion](docs/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
-| [Omni navigation](docs/omni_nav.md) | `--omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
+| [Omni navigation](docs/omni_nav.md) | `--drive omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
+| [Locomotion comparison](docs/locomotion_comparison.md) | `--drive diff` vs `hybrid` vs `omni`: sim results with plots, prior use, how to test both in the sim and on the dog |
 | [Waypoint tour](docs/tour.md) | RViz waypoint mode |
 | [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes, collision tuning, diagnostics |
 | [Lab nav fixes](docs/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |

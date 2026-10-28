@@ -265,7 +265,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
 | `--fusion` | **Calibrated camera + LiDAR fusion** instead of `--camera`: the image is undistorted with the lens calibration, so colours line up; also publishes `/camera/lidar_overlay`. YOLO and the VLM run on it too. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
-| `--omni` | Full Go2 mobility: walk backwards, sidestep, stuck recovery. See [omni_nav.md](omni_nav.md) |
+| `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [omni_nav.md](omni_nav.md) and [locomotion_comparison.md](locomotion_comparison.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--foxglove` | Also start foxglove_bridge on `:8765`, see [Alternative visualization](#alternative-visualization-foxglove) |

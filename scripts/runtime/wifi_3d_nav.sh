@@ -155,7 +155,7 @@ while [ $# -gt 0 ]; do
         --view)       ACTION="view" ;;
         --check|--clean|--setup-ssh)
                       ACTION="passthru"; PASSTHRU+=("$1") ;;
-        --host-ip|--robot-ip|--iface)
+        --host-ip|--robot-ip|--iface|--drive)
                       PASSTHRU+=("$1")
                       if [ $# -ge 2 ]; then PASSTHRU+=("$2"); shift; fi ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;

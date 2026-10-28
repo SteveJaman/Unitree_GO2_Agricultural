@@ -5,9 +5,19 @@
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
 # using the go2-nav2-wifi stack, with a CUSTOM frontier explorer.
 #
-# --omni: full Go2 mobility. MPPI (Omni) walks backwards and sidesteps as well
-# as forward, the planner uses omnidirectional lattice moves, and
-# config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+# --drive diff|hybrid|omni (default hybrid, or env GO2_DRIVE): how Nav2 drives
+# the dog.
+#   diff    forward-only arcs, Regulated Pure Pursuit + rotation shim, no
+#           sideways speed: the go2-nav2-wifi setup the real dog has always
+#           used. Stuck recovery can only step back.
+#   hybrid  the same forward-facing driving (the lidar looks where the dog
+#           walks); only stuck recovery uses the omni moves: step back or
+#           sidestep 0.3 m into known free space, then retry.
+#   omni    MPPI (Omni) walks backwards and sidesteps during normal driving
+#           too, and the planner uses omnidirectional lattice moves:
+#           config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+#   --diff / --hybrid / --omni are short for these.
+# Comparison and how to test both: docs/locomotion_comparison.md
 # Every session runs go2_stuck_recovery.py: when a leg is aborted (dog facing a
 # wall) it steps back (and aside with --omni) and retries; --no-recovery: off.
 #
@@ -71,7 +81,7 @@ ACTION="run"
 EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
-OMNI="false"
+DRIVE="${GO2_DRIVE:-hybrid}"   # diff | hybrid | omni (--drive); OMNI below follows it
 RECOVERY="true"
 START_RELAY="true"
 ARM="false"
@@ -102,7 +112,10 @@ while [ $# -gt 0 ]; do
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
         --arm-wifi)     ARM="true"; ARM_LINK="wifi" ;;
-        --omni)         OMNI="true" ;;
+        --drive)        need_arg "$1" "${2:-}"; DRIVE="$2"; shift ;;
+        --omni)         DRIVE="omni" ;;
+        --diff)         DRIVE="diff" ;;
+        --hybrid)       DRIVE="hybrid" ;;
         --no-recovery)  RECOVERY="false" ;;
         --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
@@ -113,6 +126,14 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+# OMNI: Nav2 itself drives omnidirectionally. SIDESTEP: stuck recovery may
+# step aside (hybrid sends it straight to /cmd_vel, past the vy-clamping smoother).
+case "${DRIVE}" in
+    diff)   OMNI="false"; SIDESTEP="false" ;;
+    hybrid) OMNI="false"; SIDESTEP="true" ;;
+    omni)   OMNI="true";  SIDESTEP="true" ;;
+    *) echo "Unknown --drive '${DRIVE}': use diff, hybrid or omni" >&2; exit 1 ;;
+esac
 
 # ===========================================================================
 # Helpers
@@ -612,8 +633,13 @@ echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
-echo "  Omni        : ${OMNI}$( [ "${OMNI}" = "true" ] && echo "  (MPPI: reverse + sidestep)" )"
-echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${OMNI}" = "true" ] && echo "/aside" ), retry)" )"
+case "${DRIVE}" in
+    diff)   drive_note="RPP + rotation shim: forward arcs, turn in place" ;;
+    hybrid) drive_note="forward arcs like diff; step back / sidestep only when stuck" ;;
+    omni)   drive_note="MPPI Omni: forward, reverse, sidestep" ;;
+esac
+echo "  Drive       : ${DRIVE}  (${drive_note})"
+echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${SIDESTEP}" = "true" ] && echo "/aside" ), retry)" )"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
 echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
@@ -937,10 +963,16 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
         if [ "${RECOVERY}" = "true" ]; then
             kill_recovery_inside_container
             docker cp "${RECOVERY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_stuck_recovery.py" 2>/dev/null || true
-            # Sidesteps need the omni smoother (vy); the default one clamps vy to 0.
-            echo "[recovery] Starting stuck recovery (sidestep: ${OMNI})..."
+            # Sidesteps need vy: the omni smoother allows it; with hybrid the
+            # escape bypasses the forward-only smoother (which clamps vy to 0)
+            # and waits until it has stopped publishing.
+            recovery_args="-p allow_sidestep:=${SIDESTEP}"
+            if [ "${DRIVE}" = "hybrid" ]; then
+                recovery_args+=" -p cmd_topic:=/cmd_vel -p escape_delay_s:=1.5"
+            fi
+            echo "[recovery] Starting stuck recovery (drive ${DRIVE}, sidestep: ${SIDESTEP})..."
             docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args -p allow_sidestep:=${OMNI} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args ${recovery_args} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${FLOOR_FILTER}" = "true" ]; then
@@ -1066,8 +1098,8 @@ fi
 
 # Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.
 if [ "${OMNI}" = "true" ] && ! ensure_mppi; then
-    echo "[omni] WARN: MPPI install failed; continuing forward-only"
-    OMNI="false"
+    echo "[omni] WARN: MPPI install failed; continuing with --drive hybrid"
+    OMNI="false"; DRIVE="hybrid"
 fi
 if [ "${OMNI}" = "true" ]; then omni_arg=--enable; else omni_arg=--disable; fi
 python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" "${omni_arg}" "${NAV2_WIFI_DIR}" || true

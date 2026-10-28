@@ -124,9 +124,11 @@ Sim runs, `agri_rooms`, `--no-camera`, one run each:
 | C | B3 + `--omni` | 231 s | 12 | 1 | 8 | 0 | all 3. Two goals dropped for no progress |
 
 Results vary a lot from run to run (run 2 on 2026-10-26 had 7 aborts, A had 21).
-`--omni` is the only setup with no aborts. It is still opt-in: MPPI
-movement is untested on the real dog. On this VM it also used more CPU
-(one missed 10 Hz control loop).
+`--omni` is the only setup with no aborts. A 9-trial comparison on
+2026-10-28 found it slower overall, and it walked backwards and sideways
+half the time. The default is now `--drive hybrid`, which drives like `diff`
+and sidesteps only during stuck recovery. See
+[locomotion_comparison.md](locomotion_comparison.md).
 
 ## Known issue: stuck next to an obstacle
 
@@ -142,8 +144,8 @@ facing a crate or wall about 0.6 m away. The explorer log shows several
 4. The explorer treats each abort as a bad frontier and blacklists it.
 
 **What helps now.**
-- Stuck recovery (on by default) steps back and retries, unless a wall is right behind the dog.
-- `--omni` lets MPPI reverse and sidestep: no aborts in the sim (see above).
+- Stuck recovery (on by default) steps back and retries. With the default `--drive hybrid`, it sidesteps if a wall is right behind the dog.
+- `--drive omni` lets MPPI reverse and sidestep all the time: no aborts in the sim, but slower exploration ([comparison](locomotion_comparison.md)).
 - Drive the robot a little away with 2D Goal Pose, then START again.
 
 **Planned.**
