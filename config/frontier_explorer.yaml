@@ -1,0 +1,52 @@
+# frontier_explorer.py parameters: the single source for the real robot and
+# the Gazebo sim. Both run through scripts/runtime/wifi_nav.sh, which copies
+# this file into the go2-lidar3d container and passes it with --params-file.
+#
+# One-off overrides without editing: EXPLORE_<NAME>=value ./wifi_nav.sh ...
+# (e.g. EXPLORE_MIN_GOAL_DIST=1.0). Anything not listed here uses the
+# default in frontier_explorer.py's DEFAULTS.
+frontier_explorer:
+  ros__parameters:
+    # Frames and topics (go2-nav2-wifi lidar3d stack)
+    robot_base_frame: base_link
+    map_frame: lidar3d_map
+    map_topic: /global_costmap/costmap   # the stack has no /map
+    goal_topic: /goal_pose               # consumed by go2_goal_pose_nav
+    cmd_vel_topic: /cmd_vel_nav          # through the velocity smoother
+    stop_topic: /cmd_vel                 # e-stop bypasses the smoother
+
+    # Frontier selection
+    frontier_max_cost: 98                # free on a frontier edge: below inscribed (doorways)
+    min_frontier_size: 4
+    min_known_cells: 200
+    min_goal_dist: 0.8                   # > goal_xy_tolerance; skips the lidar blind ring
+    frontier_blacklist_s: 30.0
+    frontier_blacklist_radius_m: 0.5
+    frontier_max_attempts: 3             # then skipped for good; until then it blocks "complete"
+    traversable_max_cost: 98             # path-distance BFS: cells up to this cost
+    replan_on_explored: true             # drop a goal once its frontier has been seen
+    frontier_gone_radius: 0.6
+
+    # Keep goals and turns away from walls (distances to lethal cells)
+    goal_clearance_m: 0.6
+    goal_unknown_clearance_m: 0.3
+    turn_clearance_m: 0.6
+    unknown_hole_max_cells: 16           # lidar-ring gaps count as free, not frontiers
+
+    # Goal tracking
+    goal_xy_tolerance: 0.35
+    goal_timeout_s: 60.0
+    goal_timeout_per_m: 4.0              # + this per metre to the goal
+    progress_timeout_s: 20.0
+
+    # Optional behaviours (off until verified on the robot)
+    blind_enable: false
+    blind_trigger_cells: 100
+    blind_step_distance: 0.6
+    blind_step_speed: 0.12
+    coverage_enable: false
+    return_to_init: false
+    spin_on_goal: false
+    unstick_enable: false
+
+    tick_hz: 1.0

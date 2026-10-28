@@ -5,9 +5,19 @@
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
 # using the go2-nav2-wifi stack, with a CUSTOM frontier explorer.
 #
-# --omni: full Go2 mobility. MPPI (Omni) walks backwards and sidesteps as well
-# as forward, the planner uses omnidirectional lattice moves, and
-# config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+# --drive diff|hybrid|omni (default hybrid, or env GO2_DRIVE): how Nav2 drives
+# the dog.
+#   diff    forward-only arcs, Regulated Pure Pursuit + rotation shim, no
+#           sideways speed: the go2-nav2-wifi setup the real dog has always
+#           used. Stuck recovery can only step back.
+#   hybrid  the same forward-facing driving (the lidar looks where the dog
+#           walks); only stuck recovery uses the omni moves: step back or
+#           sidestep 0.3 m into known free space, then retry.
+#   omni    MPPI (Omni) walks backwards and sidesteps during normal driving
+#           too, and the planner uses omnidirectional lattice moves:
+#           config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+#   --diff / --hybrid / --omni are short for these.
+# Comparison and how to test both: docs/locomotion_comparison.md
 # Every session runs go2_stuck_recovery.py: when a leg is aborted (dog facing a
 # wall) it steps back (and aside with --omni) and retries; --no-recovery: off.
 #
@@ -54,14 +64,16 @@ SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
 SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
 # --- Explore runtime overrides --------------------------------------------
-EXPLORE_MAP_FRAME="${EXPLORE_MAP_FRAME:-lidar3d_map}"
-EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
-EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
-EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
-EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
-EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
-EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
-EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
+# Explorer parameters live in config/frontier_explorer.yaml (shared by the
+# robot and --sim). EXPLORE_<NAME>=value in the environment overrides one
+# parameter for this run, e.g. EXPLORE_MIN_GOAL_DIST=1.0.
+EXPLORER_PARAMS="${EXPLORER_PARAMS:-$( cd "${SCRIPT_DIR}/../../config" &> /dev/null && pwd )/frontier_explorer.yaml}"
+EXPLORE_OVERRIDES=""
+while IFS='=' read -r _name _value; do
+    _param="$(echo "${_name#EXPLORE_}" | tr '[:upper:]' '[:lower:]')"
+    [[ "${_value}" =~ ^[A-Za-z0-9_./:+-]+$ ]] || { echo "ERROR: ${_name} has an unsupported value" >&2; exit 2; }
+    EXPLORE_OVERRIDES+=" -p ${_param}:=${_value}"
+done < <(env | grep -E '^EXPLORE_[A-Z0-9_]+=' | grep -vE '^EXPLORE_HOST_PID=' || true)
 
 # --- Parse args ------------------------------------------------------------
 MODE="--nav"
@@ -69,7 +81,7 @@ ACTION="run"
 EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
-OMNI="false"
+DRIVE="${GO2_DRIVE:-hybrid}"   # diff | hybrid | omni (--drive); OMNI below follows it
 RECOVERY="true"
 START_RELAY="true"
 ARM="false"
@@ -96,10 +108,14 @@ while [ $# -gt 0 ]; do
         --clean)        ACTION="clean" ;;
         --check)        ACTION="check" ;;
         --setup-ssh)    ACTION="setup-ssh" ;;
+        --sync-clock)   ACTION="sync-clock" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
         --arm-wifi)     ARM="true"; ARM_LINK="wifi" ;;
-        --omni)         OMNI="true" ;;
+        --drive)        need_arg "$1" "${2:-}"; DRIVE="$2"; shift ;;
+        --omni)         DRIVE="omni" ;;
+        --diff)         DRIVE="diff" ;;
+        --hybrid)       DRIVE="hybrid" ;;
         --no-recovery)  RECOVERY="false" ;;
         --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
@@ -110,6 +126,14 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+# OMNI: Nav2 itself drives omnidirectionally. SIDESTEP: stuck recovery may
+# step aside (hybrid sends it straight to /cmd_vel, past the vy-clamping smoother).
+case "${DRIVE}" in
+    diff)   OMNI="false"; SIDESTEP="false" ;;
+    hybrid) OMNI="false"; SIDESTEP="true" ;;
+    omni)   OMNI="true";  SIDESTEP="true" ;;
+    *) echo "Unknown --drive '${DRIVE}': use diff, hybrid or omni" >&2; exit 1 ;;
+esac
 
 # ===========================================================================
 # Helpers
@@ -117,6 +141,62 @@ done
 robot_ssh() {
     ssh "${GO2_SSH_OPTS[@]}" "$@"
 }
+
+# --- Robot/laptop clock offset ---------------------------------------------
+# Point-LIO stamps TF with the Jetson clock; Nav2 runs on the laptop clock.
+# With skew, the rotation controller looks up a stale robot orientation and
+# over-turns, then crawls/shudders (go2-nav2-wifi
+# docs/NAVIGATION-INCIDENT-2026-09-12.md: 5 s skew). Without internet the
+# Jetson has no time source (it has shown 1970). Four-timestamp estimate,
+# best of 5 by round trip: offset = robot - laptop midpoint, in seconds.
+CLOCK_MAX_SKEW="${CLOCK_MAX_SKEW:-0.1}"
+ROBOT_CLOCK_OFFSET=""
+ROBOT_CLOCK_RTT=""
+measure_robot_clock_offset() {
+    local best_rtt="" best_off="" t0 r t1 rtt off
+    for _ in 1 2 3 4 5; do
+        t0="$(date +%s.%N)"
+        r="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
+        t1="$(date +%s.%N)"
+        [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+        read -r rtt off < <(awk -v a="$t0" -v b="$r" -v c="$t1" 'BEGIN {printf "%.6f %.6f\n", c - a, b - (a + c) / 2}')
+        if [ -z "${best_rtt}" ] || awk -v x="$rtt" -v y="$best_rtt" 'BEGIN {exit !(x < y)}'; then
+            best_rtt="$rtt"; best_off="$off"
+        fi
+    done
+    ROBOT_CLOCK_OFFSET="${best_off}"
+    # Uncertainty is half the round trip (SSH connection setup dominates it).
+    ROBOT_CLOCK_RTT="${best_rtt}"
+}
+
+clock_skew_too_large() {
+    awk -v o="${ROBOT_CLOCK_OFFSET}" -v m="${CLOCK_MAX_SKEW}" 'BEGIN {if (o < 0) o = -o; exit !(o > m)}'
+}
+
+# Set the Jetson clock from this laptop (asks for the robot's sudo password).
+# The robot computes "now - offset" itself after sudo authenticates, so the
+# time spent typing the password does not add error.
+do_sync_clock() {
+    measure_robot_clock_offset || { echo "[clock] ERROR: cannot read the robot clock over SSH." >&2; return 1; }
+    echo "[clock] robot - laptop = ${ROBOT_CLOCK_OFFSET} s; setting the robot clock (enter the robot sudo password)"
+    robot_ssh -t "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "sudo sh -c 'date -s \"@\$(python3 -c \"import time; print(f\\\"{time.time() - (${ROBOT_CLOCK_OFFSET}):.6f}\\\")\")\" >/dev/null'" || return 1
+    measure_robot_clock_offset || return 1
+    echo "[clock] now robot - laptop = ${ROBOT_CLOCK_OFFSET} s (±$(awk -v r="${ROBOT_CLOCK_RTT}" 'BEGIN {printf "%.3f", r / 2}') s)"
+    if clock_skew_too_large; then
+        echo "[clock] ERROR: still above ${CLOCK_MAX_SKEW} s." >&2
+        return 1
+    fi
+    echo "[clock] OK. The robot keeps this until it reboots; NTP/chrony on the robot makes it permanent."
+}
+
+# Nodes we start with `docker exec` must use the same DDS setup as the
+# go2-session stack (Cyclone + its generated config). A bare root exec gets
+# the image's default RMW and no CYCLONEDDS_URI, so it cannot see Nav2/RViz
+# (in --sim the stack is loopback-only) and the explorer never receives
+# /explore/resume (nor the stop on exit).
+DDS_EXEC_ENV=(-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+              -e CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml)
 
 kill_explore_inside_container() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
@@ -166,7 +246,7 @@ kill_camera_relay_inside_container() {
 }
 
 stop_exploration() {
-    docker exec -u root "${CONTAINER_NAME}" bash -c '
+    docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c '
         source /opt/ros/humble/setup.bash
         source /ws/install/setup.bash 2>/dev/null
         timeout 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
@@ -531,6 +611,12 @@ if [ "${ACTION}" = "setup-ssh" ]; then
     exit $?
 fi
 
+if [ "${ACTION}" = "sync-clock" ]; then
+    [ "${SIM}" = "true" ] && { echo "--sync-clock is for the real robot (not --sim)." >&2; exit 2; }
+    do_sync_clock
+    exit $?
+fi
+
 if [ "${ACTION}" = "clean" ]; then
     echo "================================================================"
     echo " Cleaning stale processes and partial runs"
@@ -547,8 +633,13 @@ echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
-echo "  Omni        : ${OMNI}$( [ "${OMNI}" = "true" ] && echo "  (MPPI: reverse + sidestep)" )"
-echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${OMNI}" = "true" ] && echo "/aside" ), retry)" )"
+case "${DRIVE}" in
+    diff)   drive_note="RPP + rotation shim: forward arcs, turn in place" ;;
+    hybrid) drive_note="forward arcs like diff; step back / sidestep only when stuck" ;;
+    omni)   drive_note="MPPI Omni: forward, reverse, sidestep" ;;
+esac
+echo "  Drive       : ${DRIVE}  (${drive_note})"
+echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${SIDESTEP}" = "true" ] && echo "/aside" ), retry)" )"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
 echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
@@ -561,6 +652,21 @@ echo "  Container   : ${CONTAINER_NAME}"
 echo "  Repo        : ${NAV2_WIFI_DIR}"
 echo
 
+# ===========================================================================
+# Single instance: a second run's pre-flight cleanup pkill -9's the first
+# run's robot relay mid-start ("Killed", "port 17999 never bound").
+# ===========================================================================
+if [ "${ACTION}" = "run" ]; then
+    exec 8>"/tmp/wifi_nav.${USER}.lock"
+    if ! flock -n 8; then
+        echo "ERROR: wifi_nav.sh is already running (another terminal?). Stop it first." >&2
+        exit 1
+    fi
+fi
+
+# ===========================================================================
+# Prerequisite checks
+# ===========================================================================
 if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker not found." >&2; exit 1
 fi
@@ -570,6 +676,13 @@ fi
 [ -d "${NAV2_WIFI_DIR}" ] || { echo "ERROR: ${NAV2_WIFI_DIR} not found." >&2; exit 1; }
 [ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || { echo "ERROR: mapping.sh not found." >&2; exit 1; }
 echo "[checks] docker + repo present .................... OK"
+
+# docker cp below is best-effort (|| true), so a missing node script would
+# otherwise run a stale /tmp copy in the container. Fail early instead.
+for f in "${EXPLORER_SCRIPT}" "${CAMERA_RELAY_SCRIPT}" "${FLOOR_FILTER_SCRIPT}"; do
+    [ -f "$f" ] || { echo "ERROR: $f not found (set NODES_DIR)." >&2; exit 1; }
+done
+echo "[checks] node scripts present ($(basename "${NODES_DIR}")/) ........ OK"
 
 if [ "${SIM}" = "true" ]; then
     if docker image inspect "${SIM_IMAGE:-go2-sim:local}" >/dev/null 2>&1; then
@@ -582,11 +695,25 @@ elif robot_ssh -T -o ConnectTimeout=3 \
         "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
     go2_save_robot_ip "${GO2_ROBOT_IP}"
+    if measure_robot_clock_offset; then
+        if clock_skew_too_large; then
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
+            echo "         Skew makes Nav2 act on stale robot poses: over-turning, shudder, wall hits."
+            echo "         Fix:  ./wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
+            if [ "${ACTION}" = "run" ] && [ "${GO2_ALLOW_CLOCK_SKEW:-0}" != 1 ]; then
+                exit 1
+            fi
+        else
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... OK"
+        fi
+    else
+        echo "[checks] robot clock offset ......................... UNKNOWN (could not read robot clock)"
+    fi
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
-    if [ "${START_RELAY}" = "true" ] && [ "${MODE}" != "--plan" ]; then
-        echo "[checks] ERROR: auto relay requires SSH. Use --no-relay to skip."
+    if [ "${ACTION}" = "run" ]; then
+        echo "[checks] ERROR: mapping.sh starts SLAM and motion on the robot over SSH."
         exit 1
     fi
 fi
@@ -705,6 +832,7 @@ if [ "${SIM}" = "true" ]; then
     docker ps --format '{{.Names}}' | grep -x go2-sim >/dev/null || SIM_STARTED="true"
     if ! GO2_HOST_IP="${GO2_HOST_IP}" GO2_ROBOT_IP="${GO2_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
             SIM_ARM="$( [ "${ARM}" = "true" ] && echo 1 || echo 0 )" SIM_ARM_IFACE="${ARM_IFACE}" \
+            SIM_CAMERA="${SIM_CAMERA:-$( [ "${CAMERA}" = "true" ] && echo 1 || echo 0 )}" \
             bash "${SIM_RUN}" up; then
         echo "ERROR: simulator did not start (see: ./gazebo/run_sim.sh logs)." >&2
         exit 1
@@ -835,10 +963,16 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
         if [ "${RECOVERY}" = "true" ]; then
             kill_recovery_inside_container
             docker cp "${RECOVERY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_stuck_recovery.py" 2>/dev/null || true
-            # Sidesteps need the omni smoother (vy); the default one clamps vy to 0.
-            echo "[recovery] Starting stuck recovery (sidestep: ${OMNI})..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args -p allow_sidestep:=${OMNI} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
+            # Sidesteps need vy: the omni smoother allows it; with hybrid the
+            # escape bypasses the forward-only smoother (which clamps vy to 0)
+            # and waits until it has stopped publishing.
+            recovery_args="-p allow_sidestep:=${SIDESTEP}"
+            if [ "${DRIVE}" = "hybrid" ]; then
+                recovery_args+=" -p cmd_topic:=/cmd_vel -p escape_delay_s:=1.5"
+            fi
+            echo "[recovery] Starting stuck recovery (drive ${DRIVE}, sidestep: ${SIDESTEP})..."
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args ${recovery_args} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${FLOOR_FILTER}" = "true" ]; then
@@ -850,7 +984,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
             ' 2>/dev/null || true
             docker cp "${FLOOR_FILTER_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_floor_filter.py" 2>/dev/null || true
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_floor_filter.py --ros-args -p input_topic:=/lidar3d/registered -p output_topic:=/lidar3d/obstacle_points -p floor_margin:=0.20 > /tmp/floor_filter.log 2>&1 &" 2>/dev/null || true
         fi
 
@@ -891,7 +1025,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             # unicast peer). With the container default (FastDDS, multicast
             # discovery only) it found the robot camera rarely or never over Wi-Fi.
             echo "[camera] Starting camera relay..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; [ -f /tmp/go2-wifi-cyclonedds.xml ] && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera_optical ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
@@ -904,11 +1038,23 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
                 sleep 1
             ' 2>/dev/null || true
-            echo "[explore] Copying frontier_explorer.py into container..."
+            echo "[explore] Copying frontier_explorer.py + $(basename "${EXPLORER_PARAMS}") into container..."
             docker cp "${EXPLORER_SCRIPT}" "${CONTAINER_NAME}:/tmp/frontier_explorer.py" 2>/dev/null || true
+            docker cp "${EXPLORER_PARAMS}" "${CONTAINER_NAME}:/tmp/frontier_explorer.yaml" 2>/dev/null || true
+            # With stuck recovery running, an aborted leg gets a step back and
+            # a retry; the explorer waits for it before dropping the frontier.
+            if [ "${RECOVERY}" = "true" ] && [[ "${EXPLORE_OVERRIDES}" != *recovery_wait_s* ]]; then
+                EXPLORE_OVERRIDES+=" -p recovery_wait_s:=8.0"
+            fi
+            [ -n "${EXPLORE_OVERRIDES}" ] && echo "[explore] overrides:${EXPLORE_OVERRIDES}"
             echo "[explore] Starting custom frontier explorer..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; exec python3 /tmp/frontier_explorer.py --ros-args -p robot_base_frame:=base_link -p map_frame:=${EXPLORE_MAP_FRAME} -p map_topic:=${EXPLORE_MAP_TOPIC} -p goal_topic:=/goal_pose -p cmd_vel_topic:=/cmd_vel_nav -p stop_topic:=${EXPLORE_STOP_TOPIC} -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} -p blind_enable:=${EXPLORE_BLIND_ENABLE} -p blind_trigger_cells:=100 -p blind_step_distance:=0.6 -p blind_step_speed:=0.12 -p coverage_enable:=${EXPLORE_COVERAGE_ENABLE} -p return_to_init:=${EXPLORE_RETURN_TO_INIT} -p tick_hz:=1.0" > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && \
+                 source /ws/install/setup.bash 2>/dev/null; \
+                 exec python3 /tmp/frontier_explorer.py \
+                     --ros-args \
+                     --params-file /tmp/frontier_explorer.yaml${EXPLORE_OVERRIDES}" \
+                > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
     ) &
     EXPLORE_HOST_PID=$!
@@ -952,8 +1098,8 @@ fi
 
 # Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.
 if [ "${OMNI}" = "true" ] && ! ensure_mppi; then
-    echo "[omni] WARN: MPPI install failed; continuing forward-only"
-    OMNI="false"
+    echo "[omni] WARN: MPPI install failed; continuing with --drive hybrid"
+    OMNI="false"; DRIVE="hybrid"
 fi
 if [ "${OMNI}" = "true" ]; then omni_arg=--enable; else omni_arg=--disable; fi
 python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" "${omni_arg}" "${NAV2_WIFI_DIR}" || true

@@ -16,11 +16,19 @@
 #
 # Environment:
 #   GO2_HOST_IP=...       DDS bind address (default: auto on enp0s3, else 127.0.0.1)
-#   SIM_GUI=1             Gazebo window (0 = headless)
+#   SIM_GUI=0             1 = Gazebo window. Off by default: on the 4-core VM
+#                         the window ran the sim at ~14% real time, so the
+#                         robot crawled while Nav2/explorer timed out
+#                         (they run on wall-clock time). RViz shows the same.
 #   SIM_ARM=1             create simarm0 + run the D1 emulator (0 = no arm)
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
+#   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the VM)
+#   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halves the sim speed on the VM
+#   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
+#   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
+#   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match
@@ -31,7 +39,7 @@ GZ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${GZ_DIR}/.." && pwd)"
 NAME="${SIM_CONTAINER:-go2-sim}"
 IMAGE="${SIM_IMAGE:-go2-sim:local}"
-SIM_GUI="${SIM_GUI:-1}"
+SIM_GUI="${SIM_GUI:-0}"
 SIM_ARM="${SIM_ARM:-1}"
 SIM_ARM_IFACE="${SIM_ARM_IFACE:-simarm0}"
 SIM_ARM_SUBNET="${SIM_ARM_SUBNET:-192.168.123}"
@@ -51,6 +59,29 @@ resolve_host_ip() {
     else
         GO2_HOST_IP=127.0.0.1
         echo "[sim] no Wi-Fi address; using ${GO2_HOST_IP} (sim only needs this machine)"
+    fi
+}
+
+# The laptop's go2_odom_tf turns /lidar3d/odom into base_link with
+# sensor_from_base from go2-nav2-wifi's lidar3d_robot_viz.yaml (bind-mounted
+# into go2-lidar3d). The sim must place its virtual sensor with the same
+# transform, or RViz/Nav2 see a shifted, tilted robot. Read it from that file.
+resolve_sensor_from_base() {
+    if [ -n "${SIM_SENSOR_FROM_BASE:-}" ]; then
+        echo "[sim] lidar mount from SIM_SENSOR_FROM_BASE"
+        return 0
+    fi
+    local yaml="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}/go2_nav2/config/lidar3d_robot_viz.yaml"
+    if [ -f "$yaml" ]; then
+        # First uncommented "sensor_from_base: [..]" line.
+        SIM_SENSOR_FROM_BASE="$(sed -n 's/^[[:space:]]*sensor_from_base:[[:space:]]*\[\(.*\)\].*/\1/p' "$yaml" \
+            | head -1 | tr ',' ' ' | tr -s ' ')"
+    fi
+    if [ -n "${SIM_SENSOR_FROM_BASE:-}" ]; then
+        echo "[sim] lidar mount from ${yaml}: ${SIM_SENSOR_FROM_BASE}"
+    else
+        echo "[sim] WARN: ${yaml} not found; using build_model.py's built-in lidar mount." >&2
+        echo "[sim]       If the laptop uses a different mount, the robot pose in RViz will be wrong." >&2
     fi
 }
 
@@ -89,6 +120,33 @@ remove_arm_iface() {
     rm -f "$IFACE_MARKER"
 }
 
+# Sim seconds per wall second, measured over 5 s. The laptop stack runs on
+# wall-clock time, so below ~0.8 the robot moves slower than Nav2 commands
+# and goals time out.
+sim_seconds() {
+    docker exec "$NAME" bash -c 'GZ_PARTITION=go2sim GZ_IP=127.0.0.1 timeout 3 gz topic -e -n 1 -t /stats' 2>/dev/null \
+        | awk '/^sim_time/{f=1} f&&/ sec:/{s=$2} f&&/nsec:/{print s+$2/1e9; exit}'
+}
+
+report_rtf() {
+    local a b w0 w1 rtf
+    a="$(sim_seconds)"; w0="$(date +%s.%N)"
+    sleep 5
+    b="$(sim_seconds)"; w1="$(date +%s.%N)"
+    if [ -z "$a" ] || [ -z "$b" ]; then
+        echo "[sim] (could not measure the real-time factor)"
+        return 0
+    fi
+    rtf="$(awk -v a="$a" -v b="$b" -v w0="$w0" -v w1="$w1" 'BEGIN{printf "%.2f", (b-a)/(w1-w0)}')"
+    if awk -v r="$rtf" 'BEGIN{exit !(r < 0.8)}'; then
+        echo "[sim] WARN: sim runs at ${rtf}x real time; the robot will crawl and goals time out."
+        echo "[sim]       Try SIM_CAMERA=0 (wifi_nav --no-camera does this), keep SIM_GUI=0 and"
+        echo "[sim]       SIM_LIDAR_HZ=5, close other heavy apps, or give the VM more CPU cores."
+    else
+        echo "[sim] real-time factor ${rtf}"
+    fi
+}
+
 cmd_up() {
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image ${IMAGE} missing: run ./gazebo/setup_gazebo.sh"
     [ -d "$GZ_DIR/models/go2_description" ] && [ -d "$GZ_DIR/models/d1_description" ] \
@@ -99,6 +157,7 @@ cmd_up() {
     fi
     sim_exists && docker rm -f "$NAME" >/dev/null
     resolve_host_ip
+    resolve_sensor_from_base
     setup_arm_iface
 
     local gui="$SIM_GUI"
@@ -126,7 +185,9 @@ cmd_up() {
         -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}" \
         -e SIM_GUI="$gui" -e SIM_ARM="$SIM_ARM" -e SIM_ARM_IFACE="$SIM_ARM_IFACE" \
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
-        -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
+        -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
+        -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
+        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" \
@@ -149,6 +210,7 @@ cmd_up() {
                     echo "[sim] WARN: D1 emulator not ready yet; see ./gazebo/run_sim.sh logs"
                 fi
             fi
+            report_rtf
             return 0
         fi
         sleep 2; t=$((t + 2))

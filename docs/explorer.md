@@ -29,6 +29,9 @@ Four phases:
 | `cmd_vel_topic` | `/cmd_vel_nav` | Goes through the smoother — do NOT use `/cmd_vel` |
 | `stop_topic` | `/cmd_vel` | Emergency stop bypasses the smoother so it overrides Nav2 |
 | `min_frontier_size` | `4` | Cells per cluster — frontiers are thin |
+| `frontier_max_cost` | `98` | Cells up to this cost count as free on a frontier edge (doorways) |
+| `min_goal_dist` | `0.8` | Skip frontiers closer than this (must exceed goal tolerance; the lidar blind ring makes fake frontiers under the robot) |
+| `unknown_hole_max_cells` | `16` | Unknown pockets this small are lidar gaps, not frontiers |
 | `min_known_cells` | `200` | Map must have this many known cells before frontier logic runs |
 | `blind_trigger_cells` | `100` | Below this, do a blind step |
 | `blind_enable` | `false` | Off by default — fights Nav2 during first tests |
@@ -36,9 +39,13 @@ Four phases:
 | `return_to_init` | `false` | Off by default |
 | `spin_on_goal` | `false` | Off by default — enable for tour capture |
 | `spin_rate_rad_s` | `0.4` | Rotation rate during the spin-on-goal |
-| `frontier_blacklist_s` / `frontier_blacklist_radius` | `30` / `0.6` | An abandoned frontier is skipped for this long, within this radius (m) |
-| `traversable_max_cost` | `90` | Costmap value below which a cell counts for path distance (99+ inscribed / lethal) |
-| `goal_snap_radius` | `1.0` | Search radius (m) around the frontier centroid for a clear goal |
+| `frontier_blacklist_s` / `frontier_blacklist_radius_m` | `30` / `0.5` | An abandoned frontier is skipped for this long, within this radius (m) |
+| `frontier_max_attempts` | `3` | Then skipped for good; until then a blacklisted frontier blocks "complete" |
+| `traversable_max_cost` | `98` | Costmap value up to which a cell counts for path distance (99+ inscribed / lethal) |
+| `goal_clearance_m` / `goal_unknown_clearance_m` | `0.6` / `0.3` | A goal is snapped to a cell this far from walls / unknown space |
+| `goal_search_radius_m` | `1.5` | Search radius (m) around the frontier centroid for a clear goal |
+| `goal_timeout_s` + `goal_timeout_per_m` | `60` + `4` | Time allowed per goal grows with its distance |
+| `unstick_enable` | `false` | Back off when boxed in or in lethal space |
 | `frontier_gone_radius` / `replan_on_explored` | `0.6` / `true` | Drop the goal once no frontier cell is left this close to it |
 | `tick_hz` | `1.0` | Main loop rate |
 
@@ -52,21 +59,26 @@ Four phases:
   - Cost: about 1.4 s on a 50 × 50 m map at 5 cm. It runs only when a goal is
     chosen.
 - **Goal:** not the cluster centroid, which on curved frontiers often lies in
-  unknown space. It is the reachable cell near the centroid with the lowest
-  cost (the most clearance), kept 2 cells back from unknown space. It faces
-  the frontier, so the robot arrives looking into the unknown area instead of
-  turning to +x.
+  unknown space. It is the nearest free cell to the centroid that is at least
+  `goal_clearance_m` from walls and `goal_unknown_clearance_m` from unknown
+  space. It faces the frontier, so the robot arrives looking into the unknown
+  area instead of turning to +x.
 - **Re-plan:** while driving, the goal is dropped as soon as its frontier has
   been seen, and the next one is chosen. The LiDAR usually clears a frontier
   long before the robot reaches it. The count is in `/explore/status` as
   `replans=`.
-- **Blacklist:** abandoned goals (no progress, timeout) are blacklisted by
-  position, so the frontier is skipped even if its cluster shape changes.
+- **Blacklist:** abandoned goals (no progress, timeout, Nav2 abort) are
+  blacklisted by position, so the frontier is skipped even if its cluster
+  shape changes. After `frontier_max_attempts` it is skipped for good; until
+  then the explorer waits instead of reporting "complete".
   (Before, the check missed almost every time: it compared the centroid
   pixel with the first 10 cluster cells.)
 - **Nothing blocks:** the 10-message stop burst and the spin-on-goal run
   from a 20 Hz timer. TF, map updates and STOP keep working during them; the
   spin used to freeze the node for ~16 s.
+
+Fixes found in the Gazebo sim and the known "stuck next to an obstacle" case:
+[exploration.md](exploration.md).
 
 ## Running the explorer manually
 

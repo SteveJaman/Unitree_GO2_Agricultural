@@ -83,8 +83,11 @@ Other entry points:
   calibration), wired to the workstation or plugged into the Go2 and
   controlled over Wi-Fi (`--arm-wifi`). Teach & Playback: guide the arm by
   hand to frame plants, then replay the scan sweep.
-- **Full mobility:** `--omni` lets Nav2 walk the dog backwards and sideways;
-  stuck recovery backs it out of dead ends in every session.
+- **Three drive modes:** `--drive hybrid` (default: the dog faces where it
+  walks, and only stuck recovery steps back or sidesteps), `--drive diff`
+  (forward arcs, the original setup; recovery only steps back) or
+  `--drive omni` (Nav2 walks it backwards and sideways during normal driving
+  too). [Comparison with sim results](docs/locomotion_comparison.md).
 - **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
 
 ## Documentation
@@ -95,18 +98,21 @@ Other entry points:
 | [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
 | [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, `--resume`, export and mesh |
 | [Explorer](docs/explorer.md) | Frontier explorer phases, parameters, manual launch |
+| [Exploration runbook](docs/exploration.md) | Run auto-explore on the robot or in the sim, fixes so far, known issues |
 | [Scripts](docs/scripts.md) | Every runtime script, ROS node and tool |
 | [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |
 | [Camera](docs/camera.md) | Go2 camera relay, RViz display, who uses the feed |
 | [Camera + LiDAR fusion](docs/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
-| [Omni navigation](docs/omni_nav.md) | `--omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
+| [Omni navigation](docs/omni_nav.md) | `--drive omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
+| [Locomotion comparison](docs/locomotion_comparison.md) | `--drive diff` vs `hybrid` vs `omni`: sim results with plots, prior use, how to test both in the sim and on the dog |
 | [Waypoint tour](docs/tour.md) | RViz waypoint mode |
 | [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes, collision tuning, diagnostics |
 | [Lab nav fixes](docs/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |
 | [Development](docs/development.md) | Repository layout, lint hooks, legacy code, external projects |
 | [Status](docs/STATUS.md) | Current state and the robot test checklist |
 | [Roadmap](docs/roadmap.md) | Milestones and what is next |
-| [Simulation](gazebo/README.md) | Gazebo setup, what is simulated, limits |
+| [Simulation](gazebo/README.md) | Gazebo setup, what is simulated, limits, the rooms world |
+| [Unity sim](docs/simulation.md) | Test the explorer + Nav2 in the CMU Unity sim (no robot) |
 | [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations and rooms |
 
 ## System Requirements

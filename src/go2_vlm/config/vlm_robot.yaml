@@ -1,0 +1,20 @@
+# Real Go2 front camera via go2_camera_relay.py (/camera/image_raw).
+# Mount from go2_description front_camera_joint: x=0.327 m, z=0.043 m.
+# hfov and pitch are estimates: check them with /vlm/debug_image and the mask
+# in RViz before trusting distances.
+vlm_semantic_costmap:
+  ros__parameters:
+    image_topic: /camera/image_raw
+    compressed: false
+    map_frame: lidar3d_map
+    robot_frame: base_link
+    cam_hfov_deg: 100.0
+    cam_x: 0.327
+    cam_z: 0.043
+    cam_pitch_down_deg: 0.0
+    base_height: 0.30
+    max_range: 4.0
+    n_strips: 3
+    ground_top_frac: 0.58
+    period_s: 5.0
+    mark_ttl_s: 180.0

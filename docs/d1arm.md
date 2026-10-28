@@ -318,6 +318,63 @@ Sim differences:
 The official D1 URDF limits are ±134.6° / ±89.95°, slightly inside the ±135° / ±90°
 used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../gazebo/README.md).
 
+## MoveIt 2 and plant inspection
+
+[`src/d1_moveit_config`](../src/d1_moveit_config/) is a MoveIt 2 setup for the
+D1-550 on the Go2's back. It plans collision-free arm motion (IK, OMPL) and
+runs on ros2_control **mock hardware**: the arm moves in RViz, not for real.
+
+One-time install:
+
+```bash
+sudo apt install ros-humble-moveit ros-humble-ros2-control ros-humble-ros2-controllers
+```
+
+Run:
+
+```bash
+./scripts/runtime/arm_moveit.sh              # RViz + MoveIt; drag the marker, Plan & Execute
+./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
+```
+
+`arm_moveit.sh` builds `d1_550_description` from
+`~/files/unitree-D1-550-Robot-ARM` (override with `D1_ARM_DIR`) together with
+`d1_moveit_config`. It uses ROS domain 78, localhost only, so nothing reaches
+the robot.
+
+**Model.** `world` is the ground under a standing Go2. The trunk (0.29 m up)
+and the space its legs occupy are collision boxes, so plans keep the arm off
+the dog. The D1 base sits 0.057 m above the trunk origin, matching
+`gazebo/sim/build_model.py`. `tool0` is between the fingertips, with x pointing
+out of the gripper: a wrist camera would look along it.
+
+**Inspection demo** ([`inspect_plant.py`](../src/d1_moveit_config/scripts/inspect_plant.py)):
+
+1. Adds a raised bed (0.3 m) and a plant (0.3 m stem, 0.17 m canopy) to the
+   planning scene, 0.5 m to the right of the dog. These are the same sizes as
+   `gazebo/worlds/agri_field.sdf`.
+2. Places viewpoints on a sphere 0.10 m outside the canopy, on the dog's side:
+   5 directions (−50° to +50°) × 2 heights (level and 30° above), ordered as a
+   sweep.
+3. For each one, asks MoveIt for a collision-free move with `tool0` pointing at
+   the canopy centre (within ~9°, roll free), holds for `dwell_s`, then moves on.
+   Unreachable viewpoints are skipped. Arrows in RViz show each viewpoint:
+   green reached, red not.
+4. Returns to `home`.
+
+Parameters: `plant_x`, `plant_y`, `standoff`, `azimuths_deg`, `elevations_deg`,
+`dwell_s`, `plan_only`, and `image_topic` (saves a frame per viewpoint to
+`~/plant_inspection/`). For example:
+
+```bash
+ros2 run d1_moveit_config inspect_plant.py --ros-args -p plant_x:=0.2 -p plan_only:=true
+```
+
+**Not done yet:** driving the real arm. That needs a ros2_control hardware
+plugin, or a `FollowJointTrajectory` bridge, that sends MoveIt's trajectories
+as D1 JSON commands (funcode 2, degrees). Check the joint sign conventions
+against the firmware first: the URDF's Joint1 axis is −z.
+
 ## Troubleshooting
 
 | Symptom | Meaning | Fix |

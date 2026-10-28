@@ -1,7 +1,8 @@
 # Gazebo simulation: Go2 + D1
 
 A Gazebo Harmonic simulation of the Unitree Go2 with the D1 arm on its back, in a
-small field with raised beds and plants. The simulator stands in for the real
+small field with raised beds and plants, plus a building with rooms for
+exploration tests. The simulator stands in for the real
 robot: the **unchanged** project scripts (`wifi_nav.sh`, `start_arm.sh`,
 `d1_arm_control.py`, `d1_arm_calibration.py`, the explorer, `diag_arm.sh` …)
 run against it.
@@ -24,7 +25,7 @@ Docker and a desktop session (RViz and the Gazebo window). No GPU required
 | Jetson: Point-LIO → `/lidar3d/odom`, `/lidar3d/registered`, `/lidar3d/path` on DDS domain 64 | `sim_robot_bridge.py` publishes the same topics, same frames (`lidar3d_map`), from Gazebo |
 | Leg joints from `/lf/lowstate` | `/joint_states` with a fixed standing pose |
 | cmd_vel TCP server on Jetson :17999 (`go2_cmd_vel_tcp.py`) | Same 12-byte protocol on :17999 of this machine → Gazebo |
-| Sport API walking | **Gliding base**: the body follows `/cmd_vel` (VelocityControl); legs hold a standing pose, no gait |
+| Sport API walking | **Gliding base**: the body follows `/cmd_vel` (VelocityControl); legs hold a standing pose, no gait. The bridge also turns the base back to level (`--upright-gain`, default 2/s), so a knock can't leave it tilted. Feet and body are frictionless, so slow turns (0.1 rad/s) move it as commanded |
 | Front camera | Gazebo camera → `/camera/image_raw` (no relay needed) |
 | D1 arm over `enp0s8`, DDS domain 0, JSON on `rt/arm_Command` | `d1_arm_emulator.py` speaks the same protocol on interface `simarm0` and drives the Gazebo joints |
 
@@ -56,13 +57,16 @@ launches, pointed at this machine instead of the robot.
 - The D1 is mounted on the trunk top (`SIM_D1_MOUNT`, default `0 0 0.057 0 0 0`).
 - **The D1 URDF ships `effort=0 velocity=0` on every joint** (the controllers would
   apply no force); real limits are patched in.
-- A virtual lidar is placed where the stack's lidar mount puts the sensor, so the
-  laptop's `go2_odom_tf` recovers the exact body pose. The mount (`sensor_from_base`)
-  is read at every start from go2-nav2-wifi's
-  `go2_nav2/config/lidar3d_robot_viz.yaml` (`SIM_SENSOR_YAML`), the file
-  `go2_odom_tf` itself uses. With the [lab fix](../docs/LAB-NAV-FIXES.md) applied, the
-  lidar sits at the Go2 URDF mount (0.289, 0, −0.047 m). If the file is missing, the
-  sim falls back to that same URDF mount and prints a warning.
+- A virtual lidar is placed using the **same lidar mount the laptop uses**
+  (`sensor_from_base` in go2-nav2-wifi `go2_nav2/config/lidar3d_robot_viz.yaml`,
+  the file `go2_odom_tf` itself uses), so the laptop's `go2_odom_tf` recovers the
+  exact body pose. `run_sim.sh` reads it at every start and passes it in
+  `SIM_SENSOR_FROM_BASE` (set that variable to override); the file is also mounted
+  for `build_model.py --sensor-yaml`. With the [lab fix](../docs/LAB-NAV-FIXES.md)
+  applied, the lidar sits at the Go2 URDF mount (0.289, 0, −0.047 m). If the file
+  is missing, the sim falls back to that same URDF mount and prints a warning. If
+  the two differ, RViz shows the dog shifted, tilted or floating, and Nav2 plans
+  from that wrong pose.
 
 ## Commands
 
@@ -95,23 +99,33 @@ the VM, so the VM needs `pip3 install cyclonedds`.
 
 | Variable | Default | |
 |---|---|---|
-| `SIM_GUI` | `1` | Gazebo window (`0` = headless) |
+| `SIM_GUI` | `0` | `1` opens the Gazebo window. On the 4-core VM the window slowed the sim to ~14 % of real time, so the robot crawled and goals timed out. `up` prints the real-time factor and warns below 0.8 |
 | `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black on the VM |
 | `SIM_ARM` | `1` | Create `simarm0` and run the D1 emulator |
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
+| `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
+| `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
+| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
-| `GO2_HOST_IP` | auto (`enp0s3`, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
+| `GO2_HOST_IP` | auto (`enp0s3`, else the default-route interface, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
+| `SIM_SENSOR_FROM_BASE` | read from go2-nav2-wifi `lidar3d_robot_viz.yaml` | Lidar mount `x y z qx qy qz qw`; must match the laptop |
+| `SIM_DRIFT_YAW` | `0` | Heading error added per radian turned (e.g. `0.02`). Tests drift tolerance |
+| `SIM_DRIFT_SCALE` | `0` | Distance scale error (e.g. `0.03` = 3 % long) |
 
 ## Simulation differences
 
 These are deliberate. They're listed so test results aren't over-read:
 
 - **No gait.** Body sway, foot slip, stairs, and gait-induced lidar motion aren't simulated.
-- **Perfect localization.** `/lidar3d/odom` is ground truth. Point-LIO drift and initialization aren't tested.
-- **Lidar.** It's a level 360°×65° scanner (180×16 rays at 10 Hz), not the L1's hemispherical pattern.
+- **Perfect localization by default.** `/lidar3d/odom` is ground truth. Point-LIO
+  startup jumps aren't simulated. To test how the explorer and Nav2 cope with
+  drift, set `SIM_DRIFT_YAW` / `SIM_DRIFT_SCALE`: the reported pose then
+  diverges from the truth and the lidar cloud is placed with the drifted pose,
+  so walls smear and double as they do with real drift.
+- **Lidar.** It's a level 360°×65° scanner (180×16 rays at 5 Hz, `SIM_LIDAR_HZ`), not the L1's hemispherical pattern.
 - **D1 motion.**
   - Motion is rate-limited to 60°/s, or paced by `delay_ms`. The real controller's own profile is unknown.
   - **Release** holds the pose, because Gazebo joints can't go limp.
@@ -126,6 +140,7 @@ These are deliberate. They're listed so test results aren't over-read:
 |---|---|
 | `image go2-sim:local missing` | `./gazebo/setup_gazebo.sh` |
 | `no lidar frame after 240 s` | Software rendering is slow: `SIM_TIMEOUT=600`, or `SIM_GUI=0`, or `SIM_RENDER_ENGINE=ogre` |
+| Robot crawls, explorer goals time out, Nav2 commands 0.3 m/s | Sim below real time (see the real-time factor from `up`). Nav2 runs on wall-clock time. Use `SIM_GUI=0` and close heavy apps |
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
 | `enp0s8 already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
@@ -148,3 +163,38 @@ These are deliberate. They're listed so test results aren't over-read:
 | `sim/d1_arm_emulator.py` | The "D1 controller": JSON-over-DDS protocol → Gazebo joints |
 | `sim/bridge.yaml` | `ros_gz_bridge` topic map |
 | `worlds/agri_field.sdf` | 12 × 8 m field, three planted beds, walls, crates |
+| `worlds/agri_rooms.sdf` | Generated: the field + a 12 × 7 m building through a doorway in the field's north wall. A 2 m corridor, three 4 × 5 m rooms with 1.2 m doors (room 2 ↔ 3 too), crates, a workbench, an alcove. 1.2 m walls hide each room until the robot looks in |
+| `worlds/build_rooms_world.py` | Writes `agri_rooms.sdf` from `agri_field.sdf`. Edit the layout there and rerun |
+
+## Exploration world
+
+The open field is mapped from the spawn point in one scan, so the frontier
+explorer reports "Exploration complete" after two or three goals. The default
+`agri_rooms` world adds space that is only visible from inside: a corridor
+and three rooms behind 1.2 m walls, entered through a doorway in the field's
+north wall (x = -4). The whole site is 12 × 15 m, so it stays inside Nav2's
+30 × 30 m rolling global costmap wherever the robot is, and mapped space is
+not forgotten and explored again.
+
+```bash
+./scripts/runtime/wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera
+# RViz: Auto Explore: START
+SIM_WORLD=agri_field ./scripts/runtime/wifi_nav.sh --sim ...   # field only
+```
+
+First run (2026-10-24, `--no-camera`, 5 Hz lidar): the robot went through the
+doorway, into the corridor and all three rooms in about 2 minutes (27.5 m).
+Of 6 goals, 5 were reached and 1 was aborted by Nav2 at the room 3 door. Then
+it reported "Exploration complete" with every area mapped (room 2 at 98 %,
+the rest of the workbench's shadow).
+
+The sim needs a desktop session even without the Gazebo window. The server
+renders the lidar through `$DISPLAY`. `--headless-rendering` (EGL, used only
+when there is no display) returns empty lidar scans on the VM's software GL,
+so Nav2 gets no map.
+
+Explorer settings, results and the known "stuck next to a crate" case:
+[docs/exploration.md](../docs/exploration.md).
+
+`run_sim.sh up` does nothing if the sim is already running. Run
+`./gazebo/run_sim.sh down` first when you switch worlds.

@@ -64,6 +64,17 @@ docker exec -u root go2-lidar3d bash -lc \
     'source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null && ros2 topic list'
 ```
 
+### Build fails: `nav2_common` / `nav2_bringup` package configuration could not be found
+
+Navigation2 isn't installed in the sourced ROS 2 environment:
+
+```bash
+sudo apt update
+sudo apt install ros-$ROS_DISTRO-nav2-common ros-$ROS_DISTRO-nav2-bringup
+# or the whole stack:
+sudo apt install ros-$ROS_DISTRO-navigation2 ros-$ROS_DISTRO-nav2-bringup
+```
+
 ### `Invalid frame ID "lidar3d_map"` on TF lookup
 
 The session isn't up, or Point-LIO isn't forwarding.
@@ -282,6 +293,13 @@ Diagnose without the RViz button: [`test_explore.sh`](../scripts/tools/test_expl
 
 Either the button isn't publishing, or the explorer isn't subscribed.
 
+If `ros2 topic info -v /explore/resume` lists the explorer but not `rviz`,
+the two are on different DDS setups. Anything started with `docker exec` must
+get the stack's `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and
+`CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml`. `wifi_nav.sh` does
+this for the explorer, relays and stop (`DDS_EXEC_ENV`); add both with `-e`
+when you run `ros2` commands by hand as root.
+
 ```bash
 go2sh
 ros2 topic echo /explore/resume
@@ -297,6 +315,15 @@ ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: true}"
 If the dog then explores, the bug is in `go2_explore_panel`. Check the
 plugin XML and `CMakeLists.txt` in
 [`src/go2_explore_panel/`](../src/go2_explore_panel/).
+
+### Dog stuck in the purple costmap next to a box, `No frontier has a goal clear of walls`
+
+The dog stopped facing an obstacle inside its inflation zone. Nav2's
+controller aborts every new goal with `RegulatedPurePursuitController detected
+collision ahead!` because it can't turn in place first. The explorer then
+blacklists those frontiers. Drive it clear with 2D Goal Pose and click START
+again, or try `EXPLORE_UNSTICK_ENABLE=true`. Details and the planned fix:
+[exploration.md → Known issue](exploration.md#known-issue-stuck-next-to-an-obstacle).
 
 ### Explorer `state=EXPLORING`, `goals_sent=0`
 

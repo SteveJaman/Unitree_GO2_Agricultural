@@ -6,7 +6,7 @@
 set -eo pipefail
 
 CONTAINER="${CONTAINER_NAME:-go2-lidar3d}"
-EXPLORER_SRC="${EXPLORER_SRC:-$HOME/files/Unitree_GO2_Agricultural/scripts/frontier_explorer.py}"
+EXPLORER_SRC="${EXPLORER_SRC:-$HOME/files/Unitree_GO2_Agricultural/scripts/nodes/frontier_explorer.py}"
 CONTAINER_EXPLORER="/tmp/frontier_explorer.py"
 CONTAINER_LOG="/tmp/frontier.log"
 MONITOR_SECONDS=30

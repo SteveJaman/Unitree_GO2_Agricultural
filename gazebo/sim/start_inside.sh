@@ -14,6 +14,8 @@
 #   SIM_RENDER_ENGINE    ogre2 (default) or ogre (older/software GL)
 #   SIM_ARM=1            run the D1 emulator on SIM_ARM_IFACE (default simarm0)
 #   SIM_SPAWN="x y yaw"  robot start pose (default "-4.5 0 0")
+#   SIM_WORLD            worlds/<name>.sdf: agri_rooms (default, field + building)
+#                        or agri_field (field only)
 #   SIM_D1_MOUNT         D1 pose on the trunk, see build_model.py --mount
 #   SIM_SENSOR_YAML      lidar mount file (sensor_from_base), see build_model.py --sensor-yaml
 # ---------------------------------------------------------------------------
@@ -21,7 +23,8 @@ set -eo pipefail
 
 SIM=/sim
 GEN=/tmp/sim-gen
-WORLD=agri_field
+WORLD="${SIM_WORLD:-agri_rooms}"
+[ -f "$SIM/worlds/${WORLD}.sdf" ] || { echo "[sim] ERROR: no world $SIM/worlds/${WORLD}.sdf" >&2; exit 1; }
 : "${GO2_HOST_IP:?GO2_HOST_IP must be set}"
 GO2_ROBOT_IP="${GO2_ROBOT_IP:-$GO2_HOST_IP}"
 GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}"
@@ -75,7 +78,11 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 GZ_SERVER_ARGS=(-r -s --render-engine "$SIM_RENDER_ENGINE")
-[ "$SIM_GUI" = 1 ] || GZ_SERVER_ARGS+=(--headless-rendering)
+# The lidar and camera are rendered by the server. With a desktop it renders
+# through $DISPLAY (GLX) even without the window. --headless-rendering (EGL)
+# is only for machines with no display: on the VM's software GL it returns
+# lidar scans that are all inf (empty /lidar3d/registered, no map).
+[ -n "${DISPLAY:-}" ] || GZ_SERVER_ARGS+=(--headless-rendering)
 echo "[sim] starting Gazebo server (${SIM_RENDER_ENGINE}, GUI=${SIM_GUI})..."
 gz sim "${GZ_SERVER_ARGS[@]}" "$GEN/world.sdf" &
 PIDS+=("$!")

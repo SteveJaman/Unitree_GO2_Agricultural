@@ -61,4 +61,28 @@ ament_export_include_directories(include)
 ament_export_libraries(go2_explore_panel)
 ament_export_targets(export_go2_explore_panel)
 
+
+# Python nodes. The canonical copy lives in scripts/nodes/ (wifi_nav.sh
+# docker-cp's it from there), so install it from that path rather than
+# keeping a second copy inside this package.
+set(GO2_NODES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/nodes")
+if(EXISTS "${GO2_NODES_DIR}/frontier_explorer.py")
+  install(PROGRAMS
+    "${GO2_NODES_DIR}/frontier_explorer.py"
+    DESTINATION lib/${PROJECT_NAME}
+  )
+else()
+  message(WARNING "frontier_explorer.py not found in ${GO2_NODES_DIR}; not installing it")
+endif()
+
+# The package's own older explorer (2D /map stack, 2026-10-13 revision),
+# kept for reference and comparison. Runs as frontier_explorer_pkg.py;
+# frontier_explorer.py above stays the fixed, maintained version.
+install(PROGRAMS
+  go2_expolore_panel/frontier_explorer.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME frontier_explorer_pkg.py
+)
+
+
 ament_package()

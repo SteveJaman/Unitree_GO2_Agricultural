@@ -1,25 +1,40 @@
-# Full Go2 Mobility: Omnidirectional Navigation (`--omni`)
+# Full Go2 Mobility: Omnidirectional Navigation (`--drive omni`)
 
-[← Back to README](../README.md) · [3D Nav](3d_nav.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../README.md) · [3D Nav](3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](troubleshooting.md)
+
+Both launchers take `--drive diff|hybrid|omni`. All three stay supported; pick one per session:
 
 ```bash
-./scripts/runtime/wifi_nav.sh --omni                     # or wifi_3d_nav.sh --omni
-./scripts/runtime/wifi_3d_nav.sh --omni --camera-obstacles
+./scripts/runtime/wifi_nav.sh                            # --drive hybrid (default): faces forward, omni moves only to get unstuck
+./scripts/runtime/wifi_nav.sh --drive diff               # forward arcs only (the original setup)
+./scripts/runtime/wifi_nav.sh --drive omni               # MPPI reverse + sidestep while driving; --omni is short for this
+./scripts/runtime/wifi_3d_nav.sh --drive omni --camera-obstacles
+GO2_DRIVE=omni ./scripts/runtime/wifi_nav.sh             # same, from the environment
 ```
+
+The start-up banner shows the mode (`Drive : omni (MPPI Omni: ...)`). If
+MPPI cannot be installed, the session falls back to `hybrid` and says so.
+
+**`omni` is not the default.** In the sim it explored worse than `diff` and
+`hybrid`. Half of its commands were backwards or sideways, into space the
+forward-facing lidar was not watching. `hybrid` keeps normal driving facing
+forward and uses the sidestep only in stuck recovery. Results, and how to
+test the modes in the sim and on the dog:
+[locomotion_comparison.md](locomotion_comparison.md).
 
 By default, go2-nav2-wifi drives the Go2 like a two-wheeled robot. It plans
 forward-only arcs, follows them with Regulated Pure Pursuit (which turns in
 place, then walks forward, and never reverses), and its velocity smoother
-clamps sideways speed to 0. A quadruped can do much more, and `--omni` turns
-that on:
+clamps sideways speed to 0. A quadruped can do much more: `--omni` turns
+that on for all driving, `hybrid` only for getting unstuck:
 
-| | Default | `--omni` |
-|---|---|---|
-| Planner (Smac State Lattice) | `diff` primitives: forward arcs | `omni` primitives: forward, sideways, backward |
-| Controller | Regulated Pure Pursuit + rotation shim | **MPPI**, `Omni` motion model (vx, vy, wz together) |
-| Walk backwards | no | yes, up to 0.20 m/s |
-| Sidestep | no (vy clamped to 0) | yes, up to 0.20 m/s |
-| Stuck (leg aborted) | **recovery** (every session): step back 0.3 m, retry the goal | same, and it can also step aside |
+| | `--drive diff` | `--drive hybrid` (default) | `--drive omni` |
+|---|---|---|---|
+| Planner (Smac State Lattice) | `diff` primitives: forward arcs | same as `diff` | `omni` primitives: forward, sideways, backward |
+| Controller | Regulated Pure Pursuit + rotation shim | same as `diff` | **MPPI**, `Omni` motion model (vx, vy, wz together) |
+| Walk backwards while driving | no | no | yes, up to 0.20 m/s |
+| Sidestep while driving | no (vy clamped to 0) | no (vy clamped to 0) | yes, up to 0.20 m/s |
+| Stuck (leg aborted) | **recovery**: step back 0.3 m, retry the goal | step back **or aside** 0.3 m (straight to `/cmd_vel`), retry | step back or aside (via the smoother), retry |
 
 The robot side needs no change: `robot_sport_bridge.py` already passes `vy`
 to Unitree's `Move()`, and so does the simulator.
@@ -41,12 +56,16 @@ to Unitree's `Move()`, and so does the simulator.
 - **[`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)**
   runs in **every** session; turn it off with `--no-recovery`. It watches
   `follow_path`. When a leg is aborted, it checks the local costmap for a
-  free, known patch behind the dog, and with `--omni` also to its left, then
-  right. It steps 0.3 m there at 0.12 m/s through the velocity smoother, then
-  re-sends the last goal, whether the explorer's frontier or your 2D Goal
-  Pose (up to 2 times). If nothing is free, it doesn't move. Without
-  `--omni` it only backs up, because the default smoother clamps sideways
-  speed. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
+  free, known patch behind the dog, and with `hybrid` or `omni` also to its
+  left, then right. It steps 0.3 m there at 0.12 m/s, then re-sends the last
+  goal, whether the explorer's frontier or your 2D Goal Pose (up to 2 times).
+  If nothing is free, it doesn't move.
+  - With `omni`, the step goes through the velocity smoother.
+  - With `diff`, it goes through the smoother too, so it can only back up:
+    the smoother clamps sideways speed.
+  - With `hybrid`, it publishes straight to `/cmd_vel` 1.5 s after the abort
+    (`escape_delay_s`), once the smoother has braked and stopped publishing,
+    so the sidestep isn't clamped. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
 
 ### Why the dog used to stare at walls
 
@@ -116,4 +135,4 @@ in hand:
 | Controller CPU high | Lower `batch_size` (e.g. 600) or `time_steps` (30) |
 | Dog faces a wall and does nothing | Check that recovery is on (`Recovery : true` in the start-up banner) and look at `/tmp/stuck_recovery.log`. With `--omni` it can also sidestep and reverse along the path |
 | `CRITICAL FAILURE: SERVER controller_server IS DOWN` | The controller missed its 4 s lifecycle heartbeat because the VM was overloaded (seen in the simulator: Gazebo + RViz at load 15 on 6 cores). Nav2 stays down until a restart. Close other heavy programs |
-| Recovery never moves | `docker exec go2-lidar3d tail /tmp/stuck_recovery.log`: `no free space` means everything around is occupied or unknown. It never steps into unknown space |
+| Recovery never moves | `docker exec go2-lidar3d tail /tmp/stuck_recovery.log`: `no free space (back: max cost …, … unknown)` means a cell in the escape box is inscribed/lethal (cost ≥ `free_threshold`, 99) or unknown. It never steps into unknown space |
