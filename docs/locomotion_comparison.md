@@ -15,7 +15,10 @@ repeat the test in the sim and on the real dog.
   and reversed into space its lidar was not facing.
 - Keeping the dog facing forward and using the omni moves **only to get
   unstuck** (`hybrid`) does as well as `diff`. It also has an escape when a
-  wall is right behind the dog. `hybrid` is now the default.
+  wall is right behind the dog. In 3 runs each, `diff` was slightly faster,
+  but the gap is within run-to-run spread. `hybrid` is now the default.
+- None of the modes is stock Nav2: all of them run on the fixes listed in
+  [What is not stock Nav2](#what-is-not-stock-nav2).
 - No published project runs Nav2's omni controller on a Go2 or another
   quadruped. Everything below `omni` is our own test.
 
@@ -87,6 +90,76 @@ How `hybrid` is wired:
 So `omni` is reasonable to try. But "a quadruped can sidestep" does not by
 itself make it better for navigation, and the sim says it is not, at least
 for frontier exploration with a forward-looking lidar.
+
+## What is not stock Nav2
+
+All three modes, and every trial below, run on top of these changes. "diff"
+here means the original real-dog setup **plus** these fixes, not plain Nav2.
+
+### Getting unstuck
+
+| Change | Stock behaviour | Ours |
+|---|---|---|
+| **Stuck recovery** ([`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)) | After an abort ("collision ahead"), the dog stands there facing the wall | Checks the local costmap for known free space behind the dog, steps back 0.3 m at 0.12 m/s, then re-sends the goal (up to 2 tries) |
+| **Sidestep escape** (`hybrid`) | Impossible: the velocity smoother clamps `vy` to 0 | If the space behind is blocked, it tries left, then right. The command goes straight to `/cmd_vel`, 1.5 s after the abort |
+| **Inflation counts as free** for recovery (`free_threshold` 99, was 50) | In a doorway every cell is inflation, so recovery reported `no free space` every time | It still refuses inscribed and lethal cells and unknown space |
+| **Recovery on the stack's DDS setup** (`DDS_EXEC_ENV`) | Recovery never saw the aborts | It sees and handles them |
+| **Explorer waits for recovery** (`recovery_wait_s` 8 s) | The explorer dropped the goal at once and sent a new one mid-escape | It keeps the goal until recovery retries it, then gives up if nothing happens |
+
+### Not hitting obstacles
+
+| Change | Why |
+|---|---|
+| **Lidar mount from the official Go2 URDF** (`lidar3d_robot_viz.yaml`) | The shipped value came from another robot. On ours it tilted the body about 20° and turned the heading about 120°, so Nav2 steered on the wrong heading |
+| **Regulated Pure Pursuit instead of DWB**, behind a rotation shim (turns in place when more than 0.8 rad off the path) | DWB plans from the measured velocity, which is noisy over Wi-Fi (about ±0.1 m/s while standing still). RPP follows the path geometrically |
+| **Velocity smoother** (acceleration limits, deadband) | Smooth starts and stops. No stepping in place on tiny commands |
+| **Floor filter** ([`go2_floor_filter.py`](../scripts/nodes/go2_floor_filter.py)) | Fits the ground plane in each scan and removes floor points, so a slightly tilted floor is not marked as an obstacle |
+| **Camera obstacles** (`--camera-obstacles`, [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py)) | Adds glass, thin legs, dark surfaces and the area right in front of the dog (all missed by the lidar) to the costmap. Monocular depth is scaled to metres with the lidar |
+| **Safe click-to-goal** ([`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)) | A click on a wall or desk is moved to the nearest known free floor cell |
+| **Stop on exit** | Ctrl+C sends a burst of zero commands, so the dog does not keep walking on its last command |
+
+Details: [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md),
+[camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2).
+
+### Explorer: where to go
+
+| Change | Before | Effect |
+|---|---|---|
+| Goals clear of walls and unknown space (`goal_clearance_m` 0.6, `goal_unknown_clearance_m` 0.3) | Goals right against walls | Goals the dog can reach and turn at |
+| Room to turn (`turn_clearance_m` 0.6) | Goals behind the dog in tight spots | Skipped when it can't turn in place |
+| Doorway frontiers count (`frontier_max_cost` 98) | 1.2 m doorways were "too small" | No false "complete" in the corridor |
+| Small unknown gaps filled (`unknown_hole_max_cells`) | Gaps in the lidar ring around the dog counted as frontiers | No stall on a fresh map |
+| Timeout grows with distance (60 s + 4 s/m) | Long goals timed out | |
+| Retry before giving up (`frontier_max_attempts` 3, 30 s blacklist) | One failure hid a frontier for good | No false "complete" |
+| Frontiers scored by path length (upstream) | Frontiers behind walls were picked | Unreachable frontiers are dropped |
+| Goal faces the frontier, and the goal is dropped once its frontier is seen (upstream) | | The dog arrives looking into the unknown and wastes no time |
+
+Parameters: [exploration.md](exploration.md#parameters).
+
+### Infrastructure that affects navigation
+
+- **One DDS setup for every helper** (explorer, floor filter, recovery, stop).
+  Before, START in RViz did nothing.
+- **Clock-skew check** between the robot and the laptop at start-up. Skew
+  causes drift and shudder ([drift-and-shudder.md](drift-and-shudder.md)).
+- **Sim fixes:**
+  - the body stays upright;
+  - the feet are frictionless, so slow turns move the dog;
+  - the real-time factor is checked at start-up;
+  - the `agri_rooms` test world ([gazebo/README.md](../gazebo/README.md)).
+
+### Built but off
+
+- **Explorer unstick** (`unstick_enable`): reverses when boxed in. Stuck
+  recovery replaces it.
+- **Spin on goal** (`spin_on_goal`): a 360° look after each goal.
+
+### Planned, not done
+
+- `use_rotate_to_heading: true`, or a lower rotation-shim
+  `angular_dist_threshold`, in go2-nav2-wifi. In the sim,
+  `use_rotate_to_heading` got the dog through the room 2/3 doorway once.
+  Neither change has had repeat trials yet.
 
 ## Sim results (2026-10-28)
 
