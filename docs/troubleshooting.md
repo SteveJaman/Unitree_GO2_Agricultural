@@ -7,6 +7,7 @@ Sections are self-contained. Search for the error message you see.
 
 **Jump to:** [At a glance](#at-a-glance) ·
 [Session / Infrastructure](#session--infrastructure) ·
+[Robot Wi-Fi](#robot-wi-fi-usb-dongle) ·
 [Motion](#motion) · [Explorer](#explorer) · [D1-T Arm](#d1-t-arm) ·
 [Camera](#camera) · [RViz / VM](#rviz--vm) · [3D twin](#3d-digital-twin) ·
 [Known blockers](#known-blockers-and-fixes) ·
@@ -28,6 +29,8 @@ Sections are self-contained. Search for the error message you see.
 | Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | VM UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
 | Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
+| `(53) The Wi-Fi network could not be found` on the Go2 | No regulatory domain (`country 00`): 5 GHz is passive-scan only | `sudo iw reg set US` + make it permanent. See [Robot Wi-Fi](#the-wi-fi-network-could-not-be-found-53) |
+| `Secrets were required, but not provided` on the Go2 | Wi-Fi profile built in pieces; password unreadable | Delete it and recreate it with one `nmcli connection add`. See [Robot Wi-Fi](#secrets-were-required-but-not-provided) |
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
@@ -206,6 +209,81 @@ docker compose -f docker-compose.yml -f docker-compose.lidar3d.yml -p go2-lidar3
 ```
 
 Confirm with `docker ps` — the container name must be `go2-lidar3d`.
+
+---
+
+## Robot Wi-Fi (USB dongle)
+
+The Go2 joins the building Wi-Fi through a USB Wi-Fi dongle (`wlan0`, for
+example a TP-Link) managed by NetworkManager on the Jetson. Two separate
+problems can stack up and look like one. Run everything below on the robot
+(`ssh unitree@<robot>`).
+
+First, check that the hardware is fine: the dongle appears in `lsusb` and
+`ip link` shows `wlan0`. If both are there, the problem is configuration, not
+the dongle.
+
+### The Wi-Fi network could not be found (53)
+
+**Cause: no regulatory domain.** `iw reg get` shows `country 00`, the "world"
+default. That is the most restrictive setting:
+
+- every 5 GHz channel is **passive-scan only**, and the DFS ranges are
+  limited further;
+- in passive mode the dongle hears the network only when the router happens to
+  send a beacon on the channel it is listening to;
+- with a weak 5 GHz signal through the robot's body, it keeps missing it.
+
+**Fix:** set the country, so the radio can actively scan and use the right
+channels:
+
+```bash
+iw reg get                      # country 00 = the problem
+sudo iw reg set US              # your country code
+```
+
+Make it permanent (survives a reboot):
+
+```bash
+echo "options cfg80211 ieee80211_regdom=US" | sudo tee /etc/modprobe.d/cfg80211.conf
+```
+
+### `Secrets were required, but not provided`
+
+**Cause: a broken connection profile**, so the password is never used. This
+happens when a profile is built in pieces: an attempt with `--ask`, a separate
+`nmcli connection add`, a few `nmcli connection modify` commands, and a
+`nmcli device wifi connect` interrupted with Ctrl+C. The password then ends up
+stored in a way `nmcli connection up` can't read, for example flagged to be
+typed in each time. NetworkManager keeps asking for a password it has no way
+to prompt for.
+
+**Fix:** delete the profile and recreate it with **one** command that sets
+everything at once:
+
+```bash
+sudo nmcli connection delete "<SSID>"
+sudo nmcli connection add type wifi ifname wlan0 con-name "<SSID>" ssid "<SSID>" \
+    wifi-sec.key-mgmt wpa-psk wifi-sec.psk '<password>' connection.autoconnect yes
+sudo nmcli connection up "<SSID>"
+```
+
+Success looks like this in `journalctl -u NetworkManager`: the network is
+found, the 4-way handshake completes, and DHCP gives the robot an address from
+the router (for example `192.168.1.4`). Then follow
+[Robot IP not found](#robot-ip-not-found--dhcp-changed) if the session
+doesn't find the new address.
+
+### Not the cause: the USB device-mode service
+
+Stopping or disabling the Go2's USB service does **not** fix (or break) the
+dongle. That service controls USB *device* mode: the USB-C link that makes the
+Go2 show up as a network device on a PC. It doesn't affect the USB *host*
+ports the dongle is plugged into. Re-enabling it is optional and only matters
+if you use that USB-C link.
+
+**In short:** the country code lets the Go2 see the 5 GHz network, and
+rebuilding the profile in one clean command lets it log in.
 
 ---
 
