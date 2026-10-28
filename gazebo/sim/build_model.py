@@ -14,13 +14,15 @@ Output (in --out):
 What the builder changes:
   * Go2 legs become fixed joints at a standing pose ("gliding base"): the body
     is moved by gz VelocityControl from /cmd_vel; there is no gait.
+    Go2 contacts are frictionless so the body moves exactly as commanded.
   * The D1 is attached to the Go2 trunk (--mount), with names prefixed "d1_".
     Its URDF ships effort=0 velocity=0 on every joint, which would make the
     joint controllers apply no force, so real limits are patched in.
-  * A virtual lidar is placed where the stack's measured mount puts the
+  * A virtual lidar (5 Hz by default, --lidar-hz) is placed where the stack's measured mount puts the
     sensor (inverse of sensor_from_base from go2-nav2-wifi
     go2_nav2/config/lidar3d_robot_viz.yaml), level, with a wide vertical FOV.
-  * A camera is placed at Unitree's front_camera mount.
+  * A camera is placed at Unitree's front_camera mount (--camera 0 skips the
+    sensor: software rendering of it costs sim speed).
   * Gazebo plugins: VelocityControl, OdometryPublisher, JointStatePublisher
     and one JointPositionController per D1 joint.
 
@@ -35,11 +37,14 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-# T_sensor_base measured on the robot (xyz, quaternion xyzw), from
-# go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml (2026-09-09).
-SENSOR_FROM_BASE = [-0.14056185097700238, 0.24211459251444103, -0.08014714132241024,
-                    0.8713242364998213, -0.47301693680109264, 0.11500275477832939,
-                    0.06183379966256489]
+# T_sensor_base (xyz, quaternion xyzw). The laptop's go2_odom_tf turns the lidar
+# pose into base_link with go2-nav2-wifi go2_nav2/config/lidar3d_robot_viz.yaml,
+# so the sim reads the same file (--sensor-yaml); a mismatch tilts the body in
+# RViz and skews Nav2's heading. Fallback when the file is missing: the official
+# Go2 URDF lidar mount (radar_joint rpy 0 2.8782 0, inverted), which is what
+# scripts/tools/apply-lab-nav-fixes.sh writes into that file.
+SENSOR_FROM_BASE = [0.267276, 0.0, -0.120571, 0.0, -0.991341, 0.0, 0.131316]
+SENSOR_YAML_KEY = re.compile(r"^\s*sensor_from_base\s*:\s*\[([^\]]*)\]", re.MULTILINE)
 
 # Standing pose (rad). Gives a trunk height of ~0.29 m with Go2 leg lengths.
 STAND = {"hip": 0.0, "thigh": 0.9, "calf": -1.8}
@@ -249,13 +254,36 @@ def gz(robot, xml_text):
     robot.append(ET.fromstring(xml_text))
 
 
-def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
+def load_sensor_from_base(path):
+    """sensor_from_base from a go2_odom_tf params file; the built-in default if absent."""
+    if not path or not os.path.isfile(path):
+        print(f"WARN: {path or 'no --sensor-yaml'} not found; using the official Go2 URDF lidar mount",
+              file=sys.stderr)
+        return list(SENSOR_FROM_BASE), "default (Go2 URDF)"
+    with open(path) as f:
+        m = SENSOR_YAML_KEY.search(f.read())   # first uncommented value
+    vals = [float(v) for v in m.group(1).split(",")] if m else []
+    if len(vals) != 7:
+        sys.exit(f"{path}: expected 'sensor_from_base: [x, y, z, qx, qy, qz, qw]'")
+    return vals, path
+
+
+def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE,
+          camera=True, lidar_hz=5.0):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
     robot = ET.parse(go2_urdf).getroot()
     robot.set("name", MODEL_NAME)
     strip_ros1_extensions(robot)
     rewrite_meshes(robot, "go2_description", mesh_root)
     stand_angles = fix_leg_joints(robot, stand)
+    # Frictionless Go2 contacts. The legs rest on the ground (VelocityControl
+    # ignores linear z, gravity holds the feet down), and per 4 ms step
+    # friction cancelled ~0.04 m/s of foot motion: a 0.1 rad/s turn did not
+    # move the robot at all (Nav2's RPP ramps its turn rate from measured
+    # speed, so it stayed at 0.1 for good) and 0.30 m/s came out as 0.27.
+    for link in robot.findall("link"):
+        if link.find("collision") is not None:
+            gz(robot, f'<gazebo reference="{link.get("name")}"><mu1>0</mu1><mu2>0</mu2></gazebo>')
 
     roots = {l.get("name") for l in robot.findall("link")} - {j.find("child").get("link") for j in robot.findall("joint")}
     if roots != {"base"}:
@@ -265,7 +293,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
     spawn_z = -lowest_point(robot, poses) + CLEARANCE_M
 
     # Virtual lidar at the measured sensor position, level, wide vertical FOV.
-    t, q = SENSOR_FROM_BASE[:3], SENSOR_FROM_BASE[3:]
+    t, q = sensor_from_base[:3], sensor_from_base[3:]
     R = rot_quat(*q)
     lidar_xyz = [-sum(R[r][c] * t[r] for r in range(3)) for c in range(3)]
     add_link(robot, "sim_lidar")
@@ -284,13 +312,14 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
 
     gz(robot, f"""<gazebo reference="sim_lidar"><sensor name="lidar3d" type="gpu_lidar">
   <topic>/sim/lidar</topic><gz_frame_id>sim_lidar</gz_frame_id>
-  <update_rate>10</update_rate><always_on>1</always_on><visualize>false</visualize>
+  <update_rate>{lidar_hz:g}</update_rate><always_on>1</always_on><visualize>false</visualize>
   <lidar><scan>
     <horizontal><samples>180</samples><resolution>1</resolution><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal>
     <vertical><samples>16</samples><resolution>1</resolution><min_angle>-0.4363</min_angle><max_angle>0.6981</max_angle></vertical>
   </scan><range><min>0.15</min><max>25.0</max><resolution>0.01</resolution></range></lidar>
 </sensor></gazebo>""")
-    gz(robot, """<gazebo reference="sim_camera"><sensor name="front_camera" type="camera">
+    if camera:
+        gz(robot, """<gazebo reference="sim_camera"><sensor name="front_camera" type="camera">
   <topic>/camera/image_raw</topic><gz_frame_id>camera_link</gz_frame_id>
   <update_rate>10</update_rate><always_on>1</always_on>
   <camera><horizontal_fov>1.2</horizontal_fov><image><width>640</width><height>360</height><format>R8G8B8</format></image>
@@ -332,7 +361,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand):
     params = {
         "model_name": MODEL_NAME,
         "spawn_z": round(spawn_z, 4),
-        "sensor_from_base": SENSOR_FROM_BASE,
+        "sensor_from_base": list(sensor_from_base),
         "lidar_offset_xyz": [round(v, 5) for v in lidar_xyz],
         "camera_offset_xyz": cam_xyz,
         "leg_joint_names": LEG_ORDER,
@@ -361,6 +390,19 @@ def main():
     ap.add_argument("--mount", default=os.environ.get("SIM_D1_MOUNT", "0.0 0 0.057 0 0 0"),
                     help="D1 base pose on the Go2 trunk: 'x y z roll pitch yaw' (m, rad). "
                          "Default: centre of the trunk top")
+    ap.add_argument("--lidar-hz", type=float, default=float(os.environ.get("SIM_LIDAR_HZ", "5") or 5),
+                    help="lidar rate (default env SIM_LIDAR_HZ or 5). Software rendering of each "
+                         "scan stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43x real "
+                         "time, 5 Hz at 0.85x. Nav2's costmap expects a scan every 0.8 s")
+    ap.add_argument("--camera", choices=("0", "1"), default=os.environ.get("SIM_CAMERA", "1") or "1",
+                    help="1 = render the front camera; 0 saves CPU (default env SIM_CAMERA)")
+    ap.add_argument("--sensor-from-base", default=os.environ.get("SIM_SENSOR_FROM_BASE", ""),
+                    help="lidar mount 'x y z qx qy qz qw' from the laptop's lidar3d_robot_viz.yaml "
+                         "(default: --sensor-yaml)")
+    ap.add_argument("--sensor-yaml", default=os.environ.get("SIM_SENSOR_YAML", os.path.expanduser(
+                        "~/files/go2-nav2-wifi/go2_nav2/config/lidar3d_robot_viz.yaml")),
+                    help="go2_odom_tf params file to take sensor_from_base from, so the sim's lidar "
+                         "mount matches the laptop stack (default: the go2-nav2-wifi checkout)")
     a = ap.parse_args()
     mount = floats(a.mount, 6)
     mesh_root = a.mesh_root or os.path.dirname(os.path.abspath(a.go2))
@@ -368,10 +410,20 @@ def main():
     for p in (a.go2, a.d1):
         if not os.path.isdir(p):
             sys.exit(f"missing model directory: {p} (run gazebo/setup_gazebo.sh)")
-    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND)
+    if a.sensor_from_base.strip():
+        sensor_from_base = floats(a.sensor_from_base.replace(",", " "), 7)
+        source = "SIM_SENSOR_FROM_BASE"
+    else:
+        sensor_from_base, source = load_sensor_from_base(a.sensor_yaml)
+    if math.sqrt(sum(v * v for v in sensor_from_base[3:])) < 0.5:
+        sys.exit(f"sensor_from_base: quaternion is not unit length: {sensor_from_base[3:]}")
+    urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base,
+                         camera=a.camera == "1", lidar_hz=a.lidar_hz)
     print(f"wrote {urdf}")
+    print(f"sensor_from_base from {source}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "
           f"D1 joints: {len(params['d1_joints'])}")
+    print(f"sensor_from_base={params['sensor_from_base']}")
 
 
 if __name__ == "__main__":

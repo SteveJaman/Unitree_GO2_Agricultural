@@ -1,0 +1,5 @@
+# Build context is twin/ (wifi_3d_nav.sh --build). Only the dashboard sources
+# are copied; keep local builds and dependencies out of the context.
+webapp/node_modules
+webapp/dist
+**/__pycache__

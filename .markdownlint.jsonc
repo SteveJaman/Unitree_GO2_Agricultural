@@ -1,0 +1,8 @@
+// markdownlint rules for README.md and docs/ (markdownlint-cli2, pre-commit).
+{
+  "default": true,
+  // Tables, URLs and command lines are long by nature.
+  "MD013": false,
+  // Same heading text under different parents (e.g. "Troubleshooting").
+  "MD024": { "siblings_only": true }
+}

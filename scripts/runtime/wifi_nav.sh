@@ -5,6 +5,22 @@
 # Live waypoint navigation + autonomous frontier exploration over Wi-Fi
 # using the go2-nav2-wifi stack, with a CUSTOM frontier explorer.
 #
+# --drive diff|hybrid|omni (default hybrid, or env GO2_DRIVE): how Nav2 drives
+# the dog.
+#   diff    forward-only arcs, Regulated Pure Pursuit + rotation shim, no
+#           sideways speed: the go2-nav2-wifi setup the real dog has always
+#           used. Stuck recovery can only step back.
+#   hybrid  the same forward-facing driving (the lidar looks where the dog
+#           walks); only stuck recovery uses the omni moves: step back or
+#           sidestep 0.3 m into known free space, then retry.
+#   omni    MPPI (Omni) walks backwards and sidesteps during normal driving
+#           too, and the planner uses omnidirectional lattice moves:
+#           config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
+#   --diff / --hybrid / --omni are short for these.
+# Comparison and how to test both: docs/locomotion_comparison.md
+# Every session runs go2_stuck_recovery.py: when a leg is aborted (dog facing a
+# wall) it steps back (and aside with --omni) and retries; --no-recovery: off.
+#
 # One-command workflow:
 #   1. Power on the dog and stand it
 #   2. Run:  ./wifi_nav.sh
@@ -26,11 +42,17 @@ MAPS_DIR="${NAV2_WIFI_DIR}/ws/maps/lidar3d"
 ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
+RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
+ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # scripts/robot: go2_camera_wifi.*, arm_bridge_wifi.* (run on the robot)
+CAMERA_CALIB="${CAMERA_CALIB:-$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )/config/camera/front_camera.yaml}"
+CAMERA_WIDTH="${CAMERA_WIDTH:-960}"   # robot-side JPEG width (1920 native); the calibration must match
+CAMERA_FPS="${CAMERA_FPS:-5}"
 ARM_START_SCRIPT="${SCRIPT_DIR}/start_arm.sh"
 SIM_RUN="$( cd "${SCRIPT_DIR}/../../gazebo" &> /dev/null && pwd )/run_sim.sh"
 ARM_LOG="${NAV2_WIFI_DIR}/ws/log/arm.log"
+ARM_BRIDGE_PORT="${ARM_BRIDGE_PORT:-18100}"
 
 NUMPY_PIN="${NUMPY_PIN:-numpy<1.25}"
 
@@ -42,15 +64,16 @@ SAFETY_MAX_VEL_THETA="${SAFETY_MAX_VEL_THETA:-0.50}"
 SAFETY_INFLATION_RADIUS="${SAFETY_INFLATION_RADIUS:-0.70}"
 
 # --- Explore runtime overrides --------------------------------------------
-EXPLORE_MAP_FRAME="${EXPLORE_MAP_FRAME:-lidar3d_map}"
-EXPLORE_MAP_TOPIC="${EXPLORE_MAP_TOPIC:-/global_costmap/costmap}"
-EXPLORE_STOP_TOPIC="${EXPLORE_STOP_TOPIC:-/cmd_vel}"
-EXPLORE_MIN_FRONTIER_SIZE="${EXPLORE_MIN_FRONTIER_SIZE:-4}"
-EXPLORE_MIN_KNOWN_CELLS="${EXPLORE_MIN_KNOWN_CELLS:-200}"
-EXPLORE_MIN_GOAL_DIST="${EXPLORE_MIN_GOAL_DIST:-0.8}"
-EXPLORE_BLIND_ENABLE="${EXPLORE_BLIND_ENABLE:-false}"
-EXPLORE_COVERAGE_ENABLE="${EXPLORE_COVERAGE_ENABLE:-false}"
-EXPLORE_RETURN_TO_INIT="${EXPLORE_RETURN_TO_INIT:-false}"
+# Explorer parameters live in config/frontier_explorer.yaml (shared by the
+# robot and --sim). EXPLORE_<NAME>=value in the environment overrides one
+# parameter for this run, e.g. EXPLORE_MIN_GOAL_DIST=1.0.
+EXPLORER_PARAMS="${EXPLORER_PARAMS:-$( cd "${SCRIPT_DIR}/../../config" &> /dev/null && pwd )/frontier_explorer.yaml}"
+EXPLORE_OVERRIDES=""
+while IFS='=' read -r _name _value; do
+    _param="$(echo "${_name#EXPLORE_}" | tr '[:upper:]' '[:lower:]')"
+    [[ "${_value}" =~ ^[A-Za-z0-9_./:+-]+$ ]] || { echo "ERROR: ${_name} has an unsupported value" >&2; exit 2; }
+    EXPLORE_OVERRIDES+=" -p ${_param}:=${_value}"
+done < <(env | grep -E '^EXPLORE_[A-Z0-9_]+=' | grep -vE '^EXPLORE_HOST_PID=' || true)
 
 # --- Parse args ------------------------------------------------------------
 MODE="--nav"
@@ -58,8 +81,11 @@ ACTION="run"
 EXPLORE="true"
 FLOOR_FILTER="false"
 CAMERA="true"
+DRIVE="${GO2_DRIVE:-hybrid}"   # diff | hybrid | omni (--drive); OMNI below follows it
+RECOVERY="true"
 START_RELAY="true"
 ARM="false"
+ARM_LINK="wired"      # --arm-wifi: the arm plugged into the Go2, through its Wi-Fi bridge
 SIM="false"
 SIM_STARTED="false"
 SIM_OWNER="wifi-nav-sim-$$"
@@ -82,8 +108,15 @@ while [ $# -gt 0 ]; do
         --clean)        ACTION="clean" ;;
         --check)        ACTION="check" ;;
         --setup-ssh)    ACTION="setup-ssh" ;;
+        --sync-clock)   ACTION="sync-clock" ;;
         --no-relay)     START_RELAY="false" ;;
         --arm)          ARM="true" ;;
+        --arm-wifi)     ARM="true"; ARM_LINK="wifi" ;;
+        --drive)        need_arg "$1" "${2:-}"; DRIVE="$2"; shift ;;
+        --omni)         DRIVE="omni" ;;
+        --diff)         DRIVE="diff" ;;
+        --hybrid)       DRIVE="hybrid" ;;
+        --no-recovery)  RECOVERY="false" ;;
         --sim)          SIM="true" ;;
         --host-ip)      need_arg "$1" "${2:-}"; HOST_IP_FLAG="$2"; shift ;;
         --robot-ip)     need_arg "$1" "${2:-}"; ROBOT_IP_FLAG="$2"; shift ;;
@@ -93,6 +126,14 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+# OMNI: Nav2 itself drives omnidirectionally. SIDESTEP: stuck recovery may
+# step aside (hybrid sends it straight to /cmd_vel, past the vy-clamping smoother).
+case "${DRIVE}" in
+    diff)   OMNI="false"; SIDESTEP="false" ;;
+    hybrid) OMNI="false"; SIDESTEP="true" ;;
+    omni)   OMNI="true";  SIDESTEP="true" ;;
+    *) echo "Unknown --drive '${DRIVE}': use diff, hybrid or omni" >&2; exit 1 ;;
+esac
 
 # ===========================================================================
 # Helpers
@@ -100,6 +141,62 @@ done
 robot_ssh() {
     ssh "${GO2_SSH_OPTS[@]}" "$@"
 }
+
+# --- Robot/laptop clock offset ---------------------------------------------
+# Point-LIO stamps TF with the Jetson clock; Nav2 runs on the laptop clock.
+# With skew, the rotation controller looks up a stale robot orientation and
+# over-turns, then crawls/shudders (go2-nav2-wifi
+# docs/NAVIGATION-INCIDENT-2026-09-12.md: 5 s skew). Without internet the
+# Jetson has no time source (it has shown 1970). Four-timestamp estimate,
+# best of 5 by round trip: offset = robot - laptop midpoint, in seconds.
+CLOCK_MAX_SKEW="${CLOCK_MAX_SKEW:-0.1}"
+ROBOT_CLOCK_OFFSET=""
+ROBOT_CLOCK_RTT=""
+measure_robot_clock_offset() {
+    local best_rtt="" best_off="" t0 r t1 rtt off
+    for _ in 1 2 3 4 5; do
+        t0="$(date +%s.%N)"
+        r="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
+        t1="$(date +%s.%N)"
+        [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+        read -r rtt off < <(awk -v a="$t0" -v b="$r" -v c="$t1" 'BEGIN {printf "%.6f %.6f\n", c - a, b - (a + c) / 2}')
+        if [ -z "${best_rtt}" ] || awk -v x="$rtt" -v y="$best_rtt" 'BEGIN {exit !(x < y)}'; then
+            best_rtt="$rtt"; best_off="$off"
+        fi
+    done
+    ROBOT_CLOCK_OFFSET="${best_off}"
+    # Uncertainty is half the round trip (SSH connection setup dominates it).
+    ROBOT_CLOCK_RTT="${best_rtt}"
+}
+
+clock_skew_too_large() {
+    awk -v o="${ROBOT_CLOCK_OFFSET}" -v m="${CLOCK_MAX_SKEW}" 'BEGIN {if (o < 0) o = -o; exit !(o > m)}'
+}
+
+# Set the Jetson clock from this laptop (asks for the robot's sudo password).
+# The robot computes "now - offset" itself after sudo authenticates, so the
+# time spent typing the password does not add error.
+do_sync_clock() {
+    measure_robot_clock_offset || { echo "[clock] ERROR: cannot read the robot clock over SSH." >&2; return 1; }
+    echo "[clock] robot - laptop = ${ROBOT_CLOCK_OFFSET} s; setting the robot clock (enter the robot sudo password)"
+    robot_ssh -t "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "sudo sh -c 'date -s \"@\$(python3 -c \"import time; print(f\\\"{time.time() - (${ROBOT_CLOCK_OFFSET}):.6f}\\\")\")\" >/dev/null'" || return 1
+    measure_robot_clock_offset || return 1
+    echo "[clock] now robot - laptop = ${ROBOT_CLOCK_OFFSET} s (±$(awk -v r="${ROBOT_CLOCK_RTT}" 'BEGIN {printf "%.3f", r / 2}') s)"
+    if clock_skew_too_large; then
+        echo "[clock] ERROR: still above ${CLOCK_MAX_SKEW} s." >&2
+        return 1
+    fi
+    echo "[clock] OK. The robot keeps this until it reboots; NTP/chrony on the robot makes it permanent."
+}
+
+# Nodes we start with `docker exec` must use the same DDS setup as the
+# go2-session stack (Cyclone + its generated config). A bare root exec gets
+# the image's default RMW and no CYCLONEDDS_URI, so it cannot see Nav2/RViz
+# (in --sim the stack is loopback-only) and the explorer never receives
+# /explore/resume (nor the stop on exit).
+DDS_EXEC_ENV=(-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+              -e CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml)
 
 kill_explore_inside_container() {
     docker exec -u root "${CONTAINER_NAME}" bash -c '
@@ -110,6 +207,22 @@ kill_explore_inside_container() {
         fi
         sleep 1
     ' 2>/dev/null || true
+}
+
+kill_recovery_inside_container() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c \
+        'pkill -f "^python3 /tmp/go2_stuck_recovery.py" 2>/dev/null || true' 2>/dev/null || true
+}
+
+# MPPI is not in the upstream go2-lidar3d image; install it on first use.
+ensure_mppi() {
+    if docker exec "${CONTAINER_NAME}" test -d /opt/ros/humble/share/nav2_mppi_controller; then
+        return 0
+    fi
+    echo "[omni] Installing ros-humble-nav2-mppi-controller in ${CONTAINER_NAME} (needs internet)..."
+    docker exec -u root "${CONTAINER_NAME}" bash -c \
+        'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ros-humble-nav2-mppi-controller' \
+        >/dev/null 2>&1
 }
 
 kill_floor_filter_inside_container() {
@@ -133,7 +246,7 @@ kill_camera_relay_inside_container() {
 }
 
 stop_exploration() {
-    docker exec -u root "${CONTAINER_NAME}" bash -c '
+    docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c '
         source /opt/ros/humble/setup.bash
         source /ws/install/setup.bash 2>/dev/null
         timeout 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
@@ -142,7 +255,7 @@ stop_exploration() {
 
 remote_kill_relays() {
     robot_ssh -T -o ConnectTimeout="${1:-5}" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" bash -s <<'REMOTE_KILL'
-pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
+pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge|go2_camera_wifi|go2_camera_jpeg_cli' 2>/dev/null || true
 rm -f /tmp/robot-relay.pid /tmp/go2-relay-wifi.sock*
 REMOTE_KILL
 }
@@ -171,7 +284,7 @@ start_robot_relay() {
 set -e
 export GO2_HOST_IP="${WN_HOST_IP}" GO2_ROBOT_IP="${WN_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${WN_DOMAIN_ID}"
 
-pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge' 2>/dev/null || true
+pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge|go2_camera_wifi|go2_camera_jpeg_cli' 2>/dev/null || true
 rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
 
@@ -217,6 +330,46 @@ stop_robot_relay() {
     remote_kill_relays 3 >/dev/null 2>&1 || true
 }
 
+# --arm-wifi: the D1 arm plugged into the Go2's Ethernet port. Copy
+# scripts/robot/arm_bridge_wifi.* to ~/go2-agri-arm and start it detached
+# (setsid: it outlives this SSH session); it serves the laptop over TCP.
+# The one-message package it needs is built once by hand (--build), never here.
+ARM_ROBOT_DIR="go2-agri-arm"
+start_arm_bridge() {
+    local robot="${GO2_ROBOT_USER}@${GO2_ROBOT_IP}"
+    robot_ssh -T -n -o ConnectTimeout=5 "${robot}" \
+        "pkill -TERM -f 'arm_bridge_[w]ifi' 2>/dev/null; mkdir -p ~/${ARM_ROBOT_DIR}" 2>/dev/null \
+        || { echo "[arm] cannot reach ${robot} over SSH"; return 1; }
+    scp -q -r "${GO2_SSH_OPTS[@]}" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.sh" "${ROBOT_CAMERA_DIR}/arm_bridge_wifi.py" \
+        "${ROBOT_CAMERA_DIR}/unitree_arm" "${NAV2_WIFI_DIR}/ws/scripts/robot-source-unitree-ros.sh" \
+        "${robot}:${ARM_ROBOT_DIR}/" 2>/dev/null \
+        || { echo "[arm] could not copy the arm bridge to the robot"; return 1; }
+    if ! robot_ssh -T -n -o ConnectTimeout=5 "${robot}" "test -f ~/${ARM_ROBOT_DIR}/ws/install/setup.bash" 2>/dev/null; then
+        echo "[arm] The arm bridge is not built on the robot yet. Once, on the robot:"
+        echo "        bash ~/${ARM_ROBOT_DIR}/arm_bridge_wifi.sh --build"
+        return 1
+    fi
+    robot_ssh -T -n -o ConnectTimeout=5 "${robot}" \
+        "GO2_HOST_IP=${GO2_HOST_IP} ARM_BRIDGE_PORT=${ARM_BRIDGE_PORT} setsid nohup bash ~/${ARM_ROBOT_DIR}/arm_bridge_wifi.sh > /tmp/arm_bridge_wifi.log 2>&1 < /dev/null &" \
+        2>/dev/null || { echo "[arm] could not start the arm bridge"; return 1; }
+    for _ in $(seq 1 20); do
+        if (exec 3<>"/dev/tcp/${GO2_ROBOT_IP}/${ARM_BRIDGE_PORT}") 2>/dev/null; then
+            echo "[arm] Bridge up: ${GO2_ROBOT_IP}:${ARM_BRIDGE_PORT} (robot log /tmp/arm_bridge_wifi.log)"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[arm] Bridge did not open port ${ARM_BRIDGE_PORT}; on the robot: tail /tmp/arm_bridge_wifi.log"
+    return 1
+}
+
+# SIGTERM, not -9: the bridge locks a held arm before it exits.
+stop_arm_bridge() {
+    [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ] && [ -n "${GO2_ROBOT_IP}" ] || return 0
+    robot_ssh -T -n -o ConnectTimeout=3 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "pkill -TERM -f 'arm_bridge_[w]ifi'" >/dev/null 2>&1 || true
+}
+
 do_clean() {
     echo "[clean] Killing local stale processes..."
     pkill -9 -f "rviz2"             2>/dev/null || true
@@ -230,6 +383,7 @@ do_clean() {
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         echo "[clean] Killing stale helpers inside container..."
         kill_explore_inside_container
+        kill_recovery_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
     fi
@@ -438,6 +592,8 @@ fi
 ARM_STATUS="off"
 if [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ] && [ "${SIM}" = "true" ]; then
     ARM_STATUS="on (simulated D1 on ${ARM_IFACE}; checked after the simulator starts)"
+elif [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ] && [ "${ARM_LINK}" = "wifi" ]; then
+    ARM_STATUS="on (plugged into the Go2, over Wi-Fi: arm_bridge_wifi on the robot, TCP ${ARM_BRIDGE_PORT})"
 elif [ "${ARM}" = "true" ] && [ "${ACTION}" != "clean" ]; then
     if [ ! -f "${ARM_START_SCRIPT}" ]; then
         echo "[arm] WARN: ${ARM_START_SCRIPT} missing — arm disabled"
@@ -452,6 +608,12 @@ fi
 
 if [ "${ACTION}" = "setup-ssh" ]; then
     do_setup_ssh
+    exit $?
+fi
+
+if [ "${ACTION}" = "sync-clock" ]; then
+    [ "${SIM}" = "true" ] && { echo "--sync-clock is for the real robot (not --sim)." >&2; exit 2; }
+    do_sync_clock
     exit $?
 fi
 
@@ -471,6 +633,13 @@ echo "  Mode        : ${MODE}"
 echo "  Explore     : ${EXPLORE}"
 echo "  Floor filter: ${FLOOR_FILTER}"
 echo "  Camera      : ${CAMERA}"
+case "${DRIVE}" in
+    diff)   drive_note="RPP + rotation shim: forward arcs, turn in place" ;;
+    hybrid) drive_note="forward arcs like diff; step back / sidestep only when stuck" ;;
+    omni)   drive_note="MPPI Omni: forward, reverse, sidestep" ;;
+esac
+echo "  Drive       : ${DRIVE}  (${drive_note})"
+echo "  Recovery    : ${RECOVERY}$( [ "${RECOVERY}" = "true" ] && echo "  (aborted leg -> step back$( [ "${SIDESTEP}" = "true" ] && echo "/aside" ), retry)" )"
 echo "  Auto relay  : ${START_RELAY}"
 echo "  D1 arm      : ${ARM_STATUS}"
 echo "  Simulation  : ${SIM}$( [ "${SIM}" = "true" ] && echo "  (Gazebo: ${SIM_RUN})" )"
@@ -526,6 +695,20 @@ elif robot_ssh -T -o ConnectTimeout=3 \
         "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "echo OK" >/dev/null 2>&1; then
     echo "[checks] passwordless SSH to robot ............... OK"
     go2_save_robot_ip "${GO2_ROBOT_IP}"
+    if measure_robot_clock_offset; then
+        if clock_skew_too_large; then
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
+            echo "         Skew makes Nav2 act on stale robot poses: over-turning, shudder, wall hits."
+            echo "         Fix:  ./wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
+            if [ "${ACTION}" = "run" ] && [ "${GO2_ALLOW_CLOCK_SKEW:-0}" != 1 ]; then
+                exit 1
+            fi
+        else
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... OK"
+        fi
+    else
+        echo "[checks] robot clock offset ......................... UNKNOWN (could not read robot clock)"
+    fi
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
@@ -564,6 +747,21 @@ if [ "${FLOOR_FILTER}" = "true" ]; then
     fi
 fi
 
+# DDS over Wi-Fi: a 73 KB camera frame or a LiDAR cloud is ~50 UDP packets,
+# and losing one loses the whole sample. With the Ubuntu default (208 KB)
+# the sockets overflow and the camera arrives at ~0.2 of its 5 fps.
+RMEM_MIN=8388608
+rmem_max="$(cat /proc/sys/net/core/rmem_max 2>/dev/null || echo 0)"
+rmem_default="$(cat /proc/sys/net/core/rmem_default 2>/dev/null || echo 0)"
+if [ "${rmem_max}" -ge "${RMEM_MIN}" ] && [ "${rmem_default}" -ge "${RMEM_MIN}" ]; then
+    echo "[checks] UDP receive buffers ($(( rmem_max / 1048576 )) MB) ............. OK"
+else
+    echo "[checks] UDP receive buffers ................... TOO SMALL (rmem_max ${rmem_max}, rmem_default ${rmem_default})"
+    echo "         Camera frames and LiDAR clouds get dropped. Fix once (then restart the session):"
+    echo "           printf 'net.core.rmem_max=16777216\\nnet.core.rmem_default=8388608\\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf"
+    echo "           sudo sysctl --system"
+fi
+
 if [ "${CAMERA}" = "true" ]; then
     if [ -f "${CAMERA_RELAY_SCRIPT}" ]; then
         echo "[checks] camera relay script present .............. OK"
@@ -593,7 +791,9 @@ if [ "${ACTION}" = "check" ]; then
     else
         echo "[checks] container ${CONTAINER_NAME} ................. MISSING (created on run)"
     fi
-    if [ "${ARM}" = "true" ]; then
+    if [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ]; then
+        echo "[checks] arm link ......................... Go2 bridge over Wi-Fi (TCP ${ARM_BRIDGE_PORT})"
+    elif [ "${ARM}" = "true" ]; then
         echo "[checks] arm interface ${ARM_IFACE} ${ARM_HOST_CIDR} ....... OK"
         if grep -qxF 'FOLDED_ANGLES = [0.0, -90.0, 90.0, 0.0, 0.0, 0.0, 0.0]' \
                <(tr -d '\r' < "${NODES_DIR}/d1_arm_calibration.py"); then
@@ -632,6 +832,7 @@ if [ "${SIM}" = "true" ]; then
     docker ps --format '{{.Names}}' | grep -x go2-sim >/dev/null || SIM_STARTED="true"
     if ! GO2_HOST_IP="${GO2_HOST_IP}" GO2_ROBOT_IP="${GO2_ROBOT_IP}" GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
             SIM_ARM="$( [ "${ARM}" = "true" ] && echo 1 || echo 0 )" SIM_ARM_IFACE="${ARM_IFACE}" \
+            SIM_CAMERA="${SIM_CAMERA:-$( [ "${CAMERA}" = "true" ] && echo 1 || echo 0 )}" \
             bash "${SIM_RUN}" up; then
         echo "ERROR: simulator did not start (see: ./gazebo/run_sim.sh logs)." >&2
         exit 1
@@ -721,9 +922,20 @@ cleanup() {
         kill_explore_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
+        kill_recovery_inside_container
     fi
     (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
+    stop_arm_bridge
     stop_robot_relay
+    if [ "${OMNI}" = "true" ]; then
+        python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" --disable "${NAV2_WIFI_DIR}" || true
+    fi
+    # Leave go2-nav2-wifi's planner config without the camera source, so a
+    # later mapping.sh run never waits on camera obstacles that never come.
+    if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then
+        python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" --disable \
+            "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
+    fi
     if [ "${SIM}" = "true" ]; then
         docker exec "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh stop lidar3d-viz \
             --owner "${SIM_OWNER}" >/dev/null 2>&1 || true
@@ -744,9 +956,24 @@ else
 fi
 echo
 
-if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ]; then
+if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" = "true" ] || [ "${RECOVERY}" = "true" ]; then
     (
         sleep 20
+
+        if [ "${RECOVERY}" = "true" ]; then
+            kill_recovery_inside_container
+            docker cp "${RECOVERY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_stuck_recovery.py" 2>/dev/null || true
+            # Sidesteps need vy: the omni smoother allows it; with hybrid the
+            # escape bypasses the forward-only smoother (which clamps vy to 0)
+            # and waits until it has stopped publishing.
+            recovery_args="-p allow_sidestep:=${SIDESTEP}"
+            if [ "${DRIVE}" = "hybrid" ]; then
+                recovery_args+=" -p cmd_topic:=/cmd_vel -p escape_delay_s:=1.5"
+            fi
+            echo "[recovery] Starting stuck recovery (drive ${DRIVE}, sidestep: ${SIDESTEP})..."
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_stuck_recovery.py --ros-args ${recovery_args} > /tmp/stuck_recovery.log 2>&1 &" 2>/dev/null || true
+        fi
 
         if [ "${FLOOR_FILTER}" = "true" ]; then
             docker exec -u root "${CONTAINER_NAME}" bash -c '
@@ -757,7 +984,7 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
             ' 2>/dev/null || true
             docker cp "${FLOOR_FILTER_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_floor_filter.py" 2>/dev/null || true
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_floor_filter.py --ros-args -p input_topic:=/lidar3d/registered -p output_topic:=/lidar3d/obstacle_points -p floor_margin:=0.20 > /tmp/floor_filter.log 2>&1 &" 2>/dev/null || true
         fi
 
@@ -766,9 +993,40 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
             kill_camera_relay_inside_container
             echo "[camera] Copying go2_camera_relay.py into container..."
             docker cp "${CAMERA_RELAY_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_camera_relay.py" 2>/dev/null || true
+            # Lens calibration (scripts/tools/calibrate_camera.py) -> /camera/camera_info
+            camera_info_arg=""
+            if [ -f "${CAMERA_CALIB}" ]; then
+                docker cp "${CAMERA_CALIB}" "${CONTAINER_NAME}:/tmp/front_camera.yaml" 2>/dev/null \
+                    && camera_info_arg="-p camera_info_file:=/tmp/front_camera.yaml"
+                echo "[camera] Calibration ${CAMERA_CALIB} -> /camera/camera_info"
+            else
+                echo "[camera] No ${CAMERA_CALIB}: no /camera/camera_info (run scripts/tools/calibrate_camera.sh)"
+            fi
+            # Images are stamped front_camera_optical (z forward, x right, y
+            # down), the pinhole convention of camera_info, YOLO and RTAB-Map;
+            # front_camera is the URDF link (x forward). go2-3d adds the TF.
+            # setsid: nohup alone died with the SSH session about a minute later.
+            # In 3D mode mapping.sh starts the robot relay without the camera
+            # (GO2_RELAY_CAMERA=0), so the robot sends JPEG frames itself:
+            # scripts/robot/go2_camera_wifi.sh -> /go2/front_camera/compressed.
+            echo "[camera] Starting the robot camera publisher (${GO2_ROBOT_USER}@${GO2_ROBOT_IP}:~/go2-agri-camera)..."
+            robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+                "pkill -f 'go2_camera_[w]ifi|go2_camera_jpeg_[c]li' 2>/dev/null; mkdir -p ~/go2-agri-camera" 2>/dev/null || true
+            if scp -q "${GO2_SSH_OPTS[@]}" "${ROBOT_CAMERA_DIR}/go2_camera_wifi.sh" "${ROBOT_CAMERA_DIR}/go2_camera_wifi.py" \
+                    "${NAV2_WIFI_DIR}/ws/scripts/robot-source-unitree-ros.sh" \
+                    "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}:go2-agri-camera/" 2>/dev/null; then
+                robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+                    "GO2_HOST_IP=${GO2_HOST_IP} GO2_RELAY_DOMAIN_ID=${GO2_RELAY_DOMAIN_ID} GO2_CAM_WIDTH=${CAMERA_WIDTH} GO2_CAM_FPS=${CAMERA_FPS} setsid nohup bash ~/go2-agri-camera/go2_camera_wifi.sh > /tmp/go2_camera_wifi.log 2>&1 < /dev/null &" \
+                    2>/dev/null || echo "[camera] WARN: could not start the robot camera publisher"
+            else
+                echo "[camera] WARN: could not copy the camera publisher to the robot"
+            fi
+            # The relay joins the session's CycloneDDS config (the robot as a
+            # unicast peer). With the container default (FastDDS, multicast
+            # discovery only) it found the robot camera rarely or never over Wi-Fi.
             echo "[camera] Starting camera relay..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
-                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_topic:=/frontvideostream -p output_topic:=/camera/image_raw -p frame_id:=camera_link -p resolution:=720p > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; [ -f /tmp/go2-wifi-cyclonedds.xml ] && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml; nohup python3 /tmp/go2_camera_relay.py --ros-args -p source_type:=compressed -p source_topic:=/go2/front_camera/compressed -p output_topic:=/camera/image_raw -p frame_id:=front_camera_optical ${camera_info_arg} > /tmp/camera_relay.log 2>&1 &" 2>/dev/null || true
         fi
 
         if [ "${EXPLORE}" = "true" ]; then
@@ -780,30 +1038,22 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
                 fi
                 sleep 1
             ' 2>/dev/null || true
-            echo "[explore] Copying frontier_explorer.py into container..."
+            echo "[explore] Copying frontier_explorer.py + $(basename "${EXPLORER_PARAMS}") into container..."
             docker cp "${EXPLORER_SCRIPT}" "${CONTAINER_NAME}:/tmp/frontier_explorer.py" 2>/dev/null || true
+            docker cp "${EXPLORER_PARAMS}" "${CONTAINER_NAME}:/tmp/frontier_explorer.yaml" 2>/dev/null || true
+            # With stuck recovery running, an aborted leg gets a step back and
+            # a retry; the explorer waits for it before dropping the frontier.
+            if [ "${RECOVERY}" = "true" ] && [[ "${EXPLORE_OVERRIDES}" != *recovery_wait_s* ]]; then
+                EXPLORE_OVERRIDES+=" -p recovery_wait_s:=8.0"
+            fi
+            [ -n "${EXPLORE_OVERRIDES}" ] && echo "[explore] overrides:${EXPLORE_OVERRIDES}"
             echo "[explore] Starting custom frontier explorer..."
-            docker exec -u root "${CONTAINER_NAME}" bash -c \
+            docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
                 "source /opt/ros/humble/setup.bash && \
                  source /ws/install/setup.bash 2>/dev/null; \
                  exec python3 /tmp/frontier_explorer.py \
                      --ros-args \
-                     -p robot_base_frame:=base_link \
-                     -p map_frame:=${EXPLORE_MAP_FRAME} \
-                     -p map_topic:=${EXPLORE_MAP_TOPIC} \
-                     -p goal_topic:=/goal_pose \
-                     -p cmd_vel_topic:=/cmd_vel_nav \
-                     -p stop_topic:=${EXPLORE_STOP_TOPIC} \
-                     -p min_frontier_size:=${EXPLORE_MIN_FRONTIER_SIZE} \
-                     -p min_known_cells:=${EXPLORE_MIN_KNOWN_CELLS} \
-                     -p min_goal_dist:=${EXPLORE_MIN_GOAL_DIST} \
-                     -p blind_enable:=${EXPLORE_BLIND_ENABLE} \
-                     -p blind_trigger_cells:=100 \
-                     -p blind_step_distance:=0.6 \
-                     -p blind_step_speed:=0.12 \
-                     -p coverage_enable:=${EXPLORE_COVERAGE_ENABLE} \
-                     -p return_to_init:=${EXPLORE_RETURN_TO_INIT} \
-                     -p tick_hz:=1.0" \
+                     --params-file /tmp/frontier_explorer.yaml${EXPLORE_OVERRIDES}" \
                 > "${NAV2_WIFI_DIR}/ws/log/frontier.log" 2>&1 &
         fi
     ) &
@@ -812,7 +1062,23 @@ if [ "${EXPLORE}" = "true" ] || [ "${FLOOR_FILTER}" = "true" ] || [ "${CAMERA}" 
     echo
 fi
 
-if [ "${ARM}" = "true" ]; then
+if [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ] && [ "${SIM}" = "true" ]; then
+    echo "[arm] WARN: --arm-wifi needs the real robot; the simulator uses --arm"
+    ARM="false"
+elif [ "${ARM}" = "true" ] && [ "${ARM_LINK}" = "wifi" ]; then
+    mkdir -p "$(dirname "${ARM_LOG}")"
+    echo "[arm] Arm over Wi-Fi: bridge on the robot, then fold in the background (log: ${ARM_LOG})"
+    (
+        if start_arm_bridge && env ARM_ROBOT="${GO2_ROBOT_IP}" ARM_BRIDGE_PORT="${ARM_BRIDGE_PORT}" \
+                bash "${ARM_START_SCRIPT}" fold > "${ARM_LOG}" 2>&1; then
+            echo "[arm] Arm folded and released (over Wi-Fi)."
+        else
+            echo "[arm] WARNING: arm over Wi-Fi failed — navigation continues. Last lines of ${ARM_LOG}:"
+            tail -5 "${ARM_LOG}" 2>/dev/null | sed 's/^/    /'
+        fi
+    ) &
+    ARM_PID=$!
+elif [ "${ARM}" = "true" ]; then
     mkdir -p "$(dirname "${ARM_LOG}")"
     echo "[arm] Folding the D1 arm in the background (log: ${ARM_LOG})"
     (
@@ -829,6 +1095,25 @@ if [ "${ARM}" = "true" ]; then
     ) &
     ARM_PID=$!
 fi
+
+# Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.
+if [ "${OMNI}" = "true" ] && ! ensure_mppi; then
+    echo "[omni] WARN: MPPI install failed; continuing with --drive hybrid"
+    OMNI="false"; DRIVE="hybrid"
+fi
+if [ "${OMNI}" = "true" ]; then omni_arg=--enable; else omni_arg=--disable; fi
+python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" "${omni_arg}" "${NAV2_WIFI_DIR}" || true
+
+# Camera obstacles in the Nav2 costmaps only for wifi_3d_nav.sh --camera-obstacles:
+# the source makes Nav2 stop when camera data stops, so every other session removes it.
+if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then cam_src=--enable; else cam_src=--disable; fi
+python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src}" \
+    "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
+
+# Live camera, LiDAR-on-camera overlay and the RTAB-Map 3D map in RViz (once per file).
+python3 "${SCRIPT_DIR}/../tools/rviz_add_camera.py" \
+    "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_planning.rviz" \
+    "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_navigation.rviz" || true
 
 if [ "${SIM}" = "true" ]; then
     : "${DISPLAY:?RViz needs a desktop session: run this in a terminal on the VM desktop}"

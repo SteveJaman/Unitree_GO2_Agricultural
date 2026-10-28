@@ -26,3 +26,14 @@ desktop.ini
 # Generated TF diagrams
 frames_*.gv
 frames_*.pdf
+
+# Camera calibration runs (views, previews); the installed result is config/camera/front_camera.yaml
+config/camera/runs/
+
+# D1 arm plant-scan poses taught with scripts/tools/teach_arm.py (user data)
+config/arm_waypoints.json
+
+# Session data written by wifi_3d_nav.sh runs (this machine's maps and rooms)
+config/home_map.json
+config/semantic_rooms.json
+config/survey_report.json

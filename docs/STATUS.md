@@ -2,7 +2,38 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-20
+Last updated: 2026-10-27
+
+---
+
+## Physical test readiness (2026-10-23)
+
+**Primary interface: the web dashboard** at `http://<VM IP>:3000`, started by
+`./scripts/runtime/wifi_3d_nav.sh`. RViz still opens with the session, and
+Foxglove is the optional alternative (`--foxglove`).
+
+| Feature | State |
+|---|---|
+| Web dashboard (3D map, robot, plan, camera, battery, VLM, click-to-go, explorer START/STOP) | **Implemented (pending physical test)**: tested against a mock rosbridge |
+| Dashboard UI overhaul: full-screen map, glass panels, waypoint pin + neon route, smoothed robot, Auto Explore / Return to Dock, battery icon, VLM toasts, camera PiP | **Implemented (pending physical test)**: tested against a mock rosbridge (2026-10-23) |
+| Solid map (live voxels, lighting, shadows) and presentation mesh (`--export --mesh`, `--view`) | **Implemented**: meshing tested on a synthetic room (Open3D); real scans pending |
+| Semantic rooms: segmentation, naming with VLM suggestion, merge, navigate to room | **Implemented (pending physical test)**: segmentation tested on a synthetic floor plan; UI tested against a mock rosbridge |
+| Autonomous survey (`--survey`): explore, segment, visit and name every room, report, dock | **Implemented (pending physical test)**: state machine tested in a simulated session; dashboard card builds |
+| Explorer fixes: path-distance BFS, snapped goal + heading, re-plan when the frontier is seen, position blacklist, non-blocking stop/spin | **Implemented (pending physical test)**: tested on synthetic maps (2026-10-25) |
+| Auto-localization at the dock (`--ai` / `--resume`) | **Implemented (pending physical test)** |
+| VLM action loop (2× `BLOCKED` → pause explorer + dock) | **Implemented (pending physical test)**: needs `ollama serve` + `llava:7b` |
+| Battery dock (< 15 % → pause + dock, START blocked < 20 %) | **Implemented (pending physical test)**: needs `/lf/lowstate` over the relay |
+| YOLO obstacles in the Nav2 costmap (patched automatically with `--ai`) | **Implemented (pending physical test)** |
+| `--resume` after a battery swap | **Implemented (pending physical test)** |
+| Dashboard performance mode (software renderer), Go2 model with live leg joints | **Implemented (pending physical test)**: measured against synthetic data in software WebGL (2026-10-27) |
+| Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
+| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
+| D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
+| D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Read verified on the robot (2026-10-27)**: real arm state and angles through the bridge; motion not yet tested |
+| VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
+
+Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
+and the [Next session plan](#next-session-plan).
 
 ---
 
@@ -13,23 +44,26 @@ has been verified on the robot yet except where noted.
 
 ### Repository structure
 
-```
+```text
 scripts/
-├── runtime/     wifi_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
+├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
 │                go2_net.sh (sourced: IP detection / robot discovery)
-├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py,
+├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
+│                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
 │                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
 └── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
+                 add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh,
                  preflight.sh, save_rviz_config.sh, test_explore.sh,
                  test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
+twin/            go2-3d container: docker/Dockerfile, start_inside.sh, yolo_node.py
 ```
 
-Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/)
+Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/) · [`twin/`](../twin/)
 
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
-- [README](../README.md) rewritten for the current stack
-- Docs: [`camera.md`](camera.md), [`d1arm.md`](d1arm.md), [`roadmap.md`](roadmap.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md)
+- Docs: [`setup.md`](setup.md), [`architecture.md`](architecture.md), [`3d_nav.md`](3d_nav.md), [`explorer.md`](explorer.md), [`scripts.md`](scripts.md), [`d1arm.md`](d1arm.md), [`camera.md`](camera.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md), [`LAB-NAV-FIXES.md`](LAB-NAV-FIXES.md), [`development.md`](development.md), [`roadmap.md`](roadmap.md)
+- README cut to a short landing page (2026-10-23); details moved into the docs above
 
 ### Navigation — verified working
 
@@ -61,8 +95,9 @@ Code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
 
 ### Camera — code complete, untested
 
-[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) bridges `/frontvideostream` (custom Unitree msg) →
-`/camera/image_raw` (standard `sensor_msgs/Image`). Launches automatically
+The robot sends JPEG frames over Wi-Fi ([`go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh));
+[`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) decodes them to
+`/camera/image_raw` (frame `front_camera_optical`). Launches automatically
 via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
 
 ### DHCP networking — code complete, untested on robot (2026-10-18)
@@ -115,6 +150,95 @@ emulator against the **unmodified** `d1_arm_control.py` and `d1_arm_calibration.
 over real CycloneDDS; `wifi_nav.sh --sim` / `run_sim.sh` with a fake harness.
 Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 
+### 3D digital twin — code complete, untested (2026-10-21)
+
+[`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs `wifi_nav.sh`
+unchanged, plus a separate `go2-3d` container ([`twin/`](../twin/)). The
+container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), rosbridge `:9090`
+with the web dashboard `:3000` (foxglove_bridge `:8765` with `--foxglove`) and
+[`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)
+(`/clicked_point` → nearest safe floor → `/goal_pose`). It copies the session's DDS settings, and
+the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](3d_nav.md).
+
+Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
+the `go2-3d:local` image build, RTAB-Map on live data, the dashboard on the
+robot, click-to-go, `--export`.
+
+**Camera fusion + YOLO11s (2026-10-23).**
+
+- **Camera fusion:** when `/camera/image_raw` publishes (auto-detected, else
+  LiDAR-only), `go2-3d` adds:
+  - the `front_camera → front_camera_optical` TF (Go2 URDF mount);
+  - [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py), approximate
+    intrinsics;
+  - LiDAR projected into the image as depth, so RTAB-Map runs RGB-D.
+- **YOLO11s:** [`twin/yolo_node.py`](../twin/yolo_node.py) runs on the CPU and
+  publishes `/yolo/detections`, `/yolo/image`, `/yolo/markers` and
+  `/yolo/obstacles`. Obstacles are placed by LiDAR depth, or by the floor plane
+  when no LiDAR points fall inside the box.
+- **Nav2:** [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh)
+  adds `/yolo/obstacles` to the costmap config. Since 2026-10-23 it runs
+  automatically with `--ai`.
+- **Verified off-robot:**
+  - optical TF axes;
+  - LiDAR and floor depth for a synthetic object (exact match);
+  - box placement;
+  - the costmap patch on a sample config (global only, idempotent, undo).
+- **Not yet run:** the image build (no Docker on the dev machine), YOLO on
+  real frames, the costmap patch on the real upstream file.
+
+**AI nodes, `--resume`, named locations (2026-10-23).** `wifi_3d_nav.sh --ai`
+starts three nodes:
+
+- [`battery_manager.py`](../scripts/nodes/battery_manager.py), in
+  `go2-lidar3d`: below 15 % it pauses the explorer and sends the dock goal;
+  START is blocked until 20 %.
+- [`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py): Ollama
+  `llava:7b` → `/vlm_decision`. Since 2026-10-23, two `BLOCKED` answers in a
+  row pause the explorer and send the dock goal.
+- [`auto_localize.py`](../scripts/nodes/auto_localize.py) (2026-10-23, also
+  with `--resume`): one-shot `/initialpose` at the dock (0, 0, 0). Skipped if
+  the robot is already more than 0.5 m from the origin. Verified off-robot:
+  publishes ×3 near the origin, refuses at 2.3 m; VLM debounce and cooldown.
+- YOLO.
+
+The other two features:
+
+- `--resume` reopens the newest RTAB-Map database, after taking a `.bak` copy.
+- `--save-location` labels clicked points into `config/semantic_locations.json`.
+
+**Web dashboard (2026-10-23).**
+
+- **What it is:** [`twin/webapp`](../twin/webapp/), React + three.js + roslib,
+  replacing Foxglove as the main viewer.
+- **Where it runs:** built into `go2-3d`, served on `:3000`, over rosbridge
+  `:9090`.
+- **What it shows:** status bar (battery from the new `/battery_state`, speed,
+  VLM, explorer START/STOP), 3D map, robot, plan, goal and YOLO boxes,
+  click-to-go, and the camera (JPEG via `twin/image_compressor.py`).
+- **Battery:** `battery_manager.py` now always runs as a monitor; it docks
+  only with `--ai`.
+- **Verified off-robot:**
+  - `npm run build`;
+  - in headless Chrome against a mock rosbridge: map, robot, plan, goal, YOLO
+    labels and both camera feeds render, the status bar values are correct,
+    click-to-go publishes `/clicked_point`, and STOP publishes
+    `/explore/resume false`;
+  - battery monitor vs dock mode.
+- **Not yet run:** the image build with the dashboard stage, real rosbridge,
+  and the robot.
+
+Verified off-robot:
+
+- the `--ai` / `--no-*` flag logic;
+- the battery state machine: 15 % → pause + dock goal 2 s later, re-sent
+  every 30 s, DOCKED within 0.5 m, START refused until 20 %;
+- VLM answer parsing;
+- the atomic JSON save.
+
+Not yet run: any of these on ROS or the robot. The battery topic over the
+relay is unconfirmed.
+
 ### One-command orchestration
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
@@ -152,6 +276,39 @@ Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 | 14 | Robot discovery | `./scripts/runtime/wifi_nav.sh --check` | banner shows `[discovered]` robot IP |
 | 15 | Go2 Jetson MAC prefix | `ip link` on the Jetson | starts `02:00:00` (else set `GO2_MAC_PREFIX`) |
 | 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
+| 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
+| 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
+| 19 | Dense map grows | dashboard `http://<VM IP>:3000`, 3D view | map fills in as the dog walks |
+| 20 | Click-to-go | dashboard Click-to-go, click the floor, then a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
+| 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
+| 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
+| 23 | Camera TF / intrinsics | dashboard: coloured map vs camera panel | colours on the right surfaces (else calibrate, roadmap 3.4) |
+| 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
+| 25 | YOLO → Nav2 | `--ai` (banner `YOLO → Nav2 : on`), chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
+| 26 | Battery data | `go2sh; ros2 topic echo /lf/lowstate --field bms_state.soc` | matches the app's battery % |
+| 27 | Low-battery dock | `TWIN_BATTERY_LOW=95 wifi_3d_nav.sh --ai` (test threshold), explorer running | explorer stops, dog drives to the start point, START refused |
+| 28 | VLM | `ollama serve` + `llava:7b`, `--ai` | `[checks] Ollama llava:7b … OK`; `/vlm_decision` updates in the dashboard |
+| 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
+| 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
+| 31 | Dashboard | open `http://<VM IP>:3000` from Windows | green rosbridge dot, robot moves with the dog, battery % matches the app |
+| 32 | Dashboard camera | camera mode, dashboard Camera / YOLO tabs | ~5 fps each |
+| 33 | Dashboard STOP | explorer running, click STOP | dog stops, explorer `IDLE` |
+| 34 | Auto-localization | `--ai` with the dog at the dock | `auto_localize.log`: `initial pose … published`; no manual 2D Pose Estimate needed |
+| 35 | VLM action | explorer running, block the path with a desk / board | `vlm.log`: `BLOCKED 1/2`, then `path BLOCKED (confirmed)`; explorer stops, dog returns to the dock |
+| 36 | VLM false alarm | `TWIN_VLM_ACT=0 … --ai`, normal run | count how often `BLOCKED` appears on a clear path before trusting the action |
+| 37 | Battery-swap restart | Ctrl+C, swap, dog at the dock, `--ai --resume` | READY shows `[resumed …]`, auto-localized, map continues |
+| 38 | Solid map frame rate | dashboard Solid, big map, ⚙ shows fps | ≥ 50 fps on the presentation laptop (else Detail: Medium) |
+| 39 | Presentation mesh | after a run: `--export --mesh`, then `--view` | 3D Scan shows closed walls and floor; < 1 min meshing |
+| 40 | Return to Dock | explorer running, press Return to Dock | explorer stops, pin at the dock, route drawn, dog drives home |
+| 41 | Room segmentation | map two rooms joined by a door | two coloured rooms split at the doorway; `config/semantic_rooms.json` written |
+| 42 | Room naming | Rooms → Edit, click a room, robot inside it, `--ai` | dialog shows a VLM suggestion; Save keeps the name after the next re-segmentation |
+| 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
+| 44 | Explorer re-plan | explore a room with an open doorway | log `explored before arrival: re-planning`; fewer stops; `replans=` grows |
+| 45 | Explorer STOP during spin | `spin_on_goal:=true`, STOP mid-spin | rotation stops within ~0.1 s |
+| 46 | Autonomous survey | plain `wifi_3d_nav.sh`, dog at the dock, two or more rooms, a bed or fridge in one | no input needed: rooms visited and spun in, named (✨), dog docks; `config/survey_report.json` written |
+| 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
+| 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
+| 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
 
 ---
 
@@ -162,13 +319,53 @@ Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
 | [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
-| RTAB-Map + RealSense | Depth camera not yet purchased |
+| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | Depth camera not yet purchased; LiDAR-only and Go2-camera fusion work without it |
 
 ---
 
 ## Known issues
 
 Full list of fixes: [troubleshooting.md](troubleshooting.md).
+
+### VLM never answers on the VM (2026-10-27)
+
+Measured with the node's own prompt on a camera-sized frame: llava:7b loads
+in ~5 min (the 10.9 GB VM swaps) and reads one image in ~2 min (627 tokens at
+~5 tokens/s), longer than `vlm_reasoning_node.py`'s 120 s timeout. Every
+request times out (`Ollama not reachable … timed out` in `vlm.log`), so
+`/vlm_decision` stays silent and BLOCKED → dock can never trigger. YOLO is
+fine (0.2–0.8 s per frame). Fix: Ollama on a GPU host (`TWIN_VLM_URL`, see
+[3d_nav.md](3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
+
+### D1 arm not answering — resolved (2026-10-27)
+
+Earlier neither the workstation nor the Go2 reached `192.168.123.100`. With
+the arm plugged into the Go2 and powered, it answers (ping 0.65 ms) and
+reports state and angles over Wi-Fi through the bridge.
+
+### Camera at ~0.2 fps on the VM — fix known, needs `sudo` (2026-10-27)
+
+The robot sends 5 fps; the VM's UDP sockets overflow (Ubuntu default
+`rmem_max` 208 KB, `RcvbufErrors` growing) and drop most frames. Effects:
+dashboard "Camera unavailable", RTAB-Map camera mode starved (empty map),
+YOLO and the VLM idle. Fix: [setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup);
+`wifi_nav.sh` now warns.
+
+### Relay on the wrong DDS; best-effort readers — fixed (2026-10-27)
+
+The robot camera reached the laptop at 5 fps, but the relay ran on the
+container default FastDDS and never discovered it; now it uses the
+session's CycloneDDS config. The 3D twin's camera readers were best-effort,
+so every ~1.5 MB raw frame was lost with the small UDP buffers; YOLO, the
+VLM, `go2_camera_info.py` and the image compressor now read reliable. The
+robot publisher is started with `setsid` (it died with the SSH session).
+
+### Camera found too late; wrong camera frame — fixed (2026-10-27)
+
+`go2-3d` gave up on the camera after 60 s while the robot camera starts a
+minute or more after the session (now 180 s). Images were stamped with the
+URDF's x-forward `front_camera`, which camera mode treated as optical, so
+YOLO placed objects in the wrong axes (now `front_camera_optical`).
 
 ### Port 17999 conflict — now auto-handled
 
@@ -251,6 +448,24 @@ ros2 topic echo /explore/status            # watch goals_sent
 
 # 8. Commit any config/tour.rviz that gets saved
 ```
+
+### Autonomous loop test (3D twin)
+
+```bash
+# Dog standing AT THE DOCK (the map origin, dock goal and auto-localization assume it)
+# First run needs internet: builds the image, pulls llava:7b, starts ollama serve
+./scripts/runtime/wifi_3d_nav.sh                # banner: YOLO → Nav2 on, Ollama OK, Localize auto, Survey AUTO
+# Open http://<VM IP>:3000 (READY block) and watch; the survey needs no input
+# Step-by-step instead: ./scripts/runtime/wifi_3d_nav.sh --manual
+# Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh
+# VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --manual
+
+# After a battery swap: dog back at the dock, then
+./scripts/runtime/wifi_3d_nav.sh --resume
+```
+
+Work through checks 17–49 above (see [3d_nav.md](3d_nav.md)). Keep the
+handheld remote as the emergency stop.
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
 once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).

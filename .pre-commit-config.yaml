@@ -48,6 +48,12 @@ repos:
         files: '^scripts/(runtime|tools)/.*\.sh$'
         args: [--severity=warning, "--exclude=SC1091,SC1090"]
 
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.14.0
+    hooks:
+      - id: markdownlint-cli2
+        files: '^(README\.md|docs/.*\.md|gazebo/README\.md|config/README\.md)$'
+
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v18.1.8
     hooks:

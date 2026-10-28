@@ -71,6 +71,7 @@ waypoint becomes the active goal.
 ### 3. Add the local path
 
 Same as above but:
+
 - **Topic**: `/local_plan`
 - **Color**: cyan (`0; 255; 255`)
 
@@ -90,21 +91,20 @@ planner routes the way it does.
 
 1. Add **Image** → OK
 2. **Topic**: `/camera/image_raw`
-3. **Reliability Policy**: `Best Effort`
+3. **Reliability Policy**: `Reliable`
 
-The `Best Effort` setting is required. The relay publishes with
-`BEST_EFFORT` QoS; RViz defaults to `RELIABLE`. The mismatch silently
-drops every frame.
+The relay publishes reliably. A Best Effort display loses most of the large
+raw frames.
 
 See [camera.md](camera.md) for the full camera setup.
 
 ### 6. Save the config
 
-**File → Save Config As**
+Use **File → Save Config As**.
 
 Save to:
 
-```
+```text
 ~/files/Unitree_GO2_Agricultural/config/tour.rviz
 ```
 
@@ -215,6 +215,7 @@ will fight your waypoints, and vice versa. If you want to switch:
 3. Then start the other
 
 If you want both available in the same session, the cleanest pattern is:
+
 - Use waypoint mode for a specific route (e.g. a tour capture pass)
 - Use the explorer for open-ended mapping
 
@@ -245,7 +246,7 @@ route executes cleanly, the next steps are:
 
 1. **[Milestone 2](roadmap.md#milestone-2--explorer-verification)** — verify the explorer produces goals on a live map
 2. **[Milestone 3](roadmap.md#milestone-3--camera-pipeline)** — camera backend fix on the Jetson
-3. **[Milestone 4](roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour)
+3. **[Milestone 4](roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour). The live 3D version, with click-to-go goals in the web dashboard, is [`wifi_3d_nav.sh`](3d_nav.md)
 4. **[Milestone 5](roadmap.md#milestone-5--capture-automation)** — spin-on-goal capture (`-p spin_on_goal:=true`)
 5. **[Milestone 6](roadmap.md#milestone-6--end-to-end-autonomous-capture)** — one-command end-to-end tour capture
 

@@ -38,8 +38,15 @@ ros_exec() {
 }
 
 echo "=== 2. robot topics reach ${CONTAINER} (domain 64) ==="
+# The first check used to fail on /lidar3d/odom while the CLI daemon was still
+# discovering the sim (the motion test below reads odom fine). Wait for
+# discovery first, and read the sensor-QoS topics as best effort.
+ros_exec "for i in \$(seq 1 30); do ros2 topic list 2>/dev/null | grep -qx /lidar3d/odom && exit 0; sleep 1; done; exit 1" \
+    || echo "  (warn) /lidar3d/odom not discovered after 30 s"
 for t in /lidar3d/odom /lidar3d/registered /lidar3d/path /joint_states /camera/image_raw; do
-    if ros_exec "timeout 20 ros2 topic echo --once $t >/dev/null 2>&1"; then ok "$t"; else bad "$t (nothing within 20 s)"; fi
+    qos=""
+    case "$t" in /lidar3d/odom|/lidar3d/registered) qos="--qos-reliability best_effort" ;; esac
+    if ros_exec "timeout 20 ros2 topic echo --once $qos $t >/dev/null 2>&1"; then ok "$t"; else bad "$t (nothing within 20 s)"; fi
 done
 
 echo "=== 3. motion through TCP 17999 ==="

@@ -5,6 +5,8 @@ container). Protocol source: Unitree "D1 Mechanical Arm Services Interface" doc,
 cross-checked against working open-source drivers (see References).
 
 **Verified config:** interface `enp0s8`, DDS domain 0, **multicast** discovery.
+Or plug the arm into the Go2 and control it over Wi-Fi: see
+[Arm over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2).
 Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 
 ## Files
@@ -15,14 +17,19 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | `scripts/nodes/d1_arm_control.py` | Chain-style CLI + `D1Arm` class: `state`, `enable`, `release`, `home`, `power`, `joint`, `joints`, `sleep`, `feedback`, `status`, `motors`, `lift`, `sweep` |
 | `scripts/nodes/d1_arm_calibration.py` | `--read` the folded pose, `--move` fold (power on → enable → move → release → power off) |
 | `scripts/tools/calibrate_arm.py` | Measures per-joint offset (commanded vs reported angle) with small ± test moves |
+| `scripts/tools/teach_arm.py` | Plant scanning: guide the arm by hand in compliance mode, save scan poses to `config/arm_waypoints.json` |
+| `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
+| `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
+| `scripts/robot/unitree_arm/` | One-message ROS 2 package (`ArmString`) the bridge is built with on the robot |
 
 `./scripts/runtime/wifi_nav.sh --arm` runs `start_arm.sh fold` in the
-background, alongside navigation.
+background, alongside navigation; `--arm-wifi` does the same with the arm
+plugged into the Go2.
 
 The scripts run with the host's `python3` and need the `cyclonedds` package
-there: `pip3 install cyclonedds`. Don't source ROS in that shell: ROS's
+there for the wired link: `pip3 install cyclonedds` (not needed over Wi-Fi). Don't source ROS in that shell: ROS's
 `libddsc` can clash with the pip package.
 
 ## Protocol summary (verified against the doc and working drivers)
@@ -40,6 +47,14 @@ there: `pip3 install cyclonedds`. Don't source ROS in that shell: ROS's
 - Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
   Joint names: 0 base, 1 shoulder, 2 elbow, 3 wrist roll, 4 wrist pitch, 5 wrist yaw.
 - Arm default IP `192.168.123.100`.
+
+## Hardware
+
+- **Power:** 24V DC via the DC 5.5-2.1 barrel jack (~1 min boot)
+- **Communication:** RJ45 to the VM's `enp0s8`. Arm at `192.168.123.100`, VM at
+  `192.168.123.99` (`sudo ip addr add 192.168.123.99/24 dev enp0s8`). DDS
+  discovery is multicast. It is kept separate from the Go2's Wi-Fi DDS
+- **Debug:** USB-C (serial debug only)
 
 ## Network
 
@@ -62,6 +77,64 @@ the arm doesn't reply to ping, cold-boot the VM (power off, not reboot).
 
 Overrides: `ARM_IFACE` (default `enp0s8`), `ARM_IP` (`192.168.123.100`),
 `ARM_HOST_IP` (`192.168.123.99`), `ARM_DOMAIN` (`0`).
+
+## Arm over Wi-Fi (plugged into the Go2)
+
+The arm's address, `192.168.123.100`, is on the Go2's internal network (the
+Jetson is `192.168.123.18`). Plug the arm's RJ45 into the Go2's Ethernet port
+and the laptop controls it over Wi-Fi, like the dog, with no cable to the
+workstation:
+
+```text
+D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi, TCP 18100──► laptop D1Arm
+```
+
+- **Bridge (robot):** [`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py)
+  talks to the arm with the robot's ROS 2 Foxy (`rclpy`, message
+  `unitree_arm/ArmString` = DDS `unitree_arm::msg::dds_::ArmString_`) on
+  `eth0`, multicast, as on the workstation. It loads Unitree's CycloneDDS
+  (`robot-source-unitree-ros.sh`, copied alongside): `rclpy` with Foxy's
+  stock CycloneDDS segfaults creating a node on the Go2. It serves the laptop one JSON
+  message per line over TCP: arm commands in, every `rt/arm_Feedback` message
+  out.
+- **Why TCP:** arm traffic is small JSON at 10 Hz. TCP needs no DDS discovery
+  over Wi-Fi and loses nothing (see the camera's Wi-Fi DDS problems in
+  [troubleshooting](troubleshooting.md#camera)).
+- **Laptop:** `D1Arm` (`d1_arm_control.py`) takes `--robot <Go2 Wi-Fi IP>` or
+  `ARM_ROBOT`. Every arm script follows it unchanged: the control CLI, `fold`,
+  `read`, offset calibration, `teach_arm.py`, `play_arm.py`. `cyclonedds` is
+  not needed on the laptop for this.
+- **Safety:** the laptop pings every second. If it disconnects, is silent for
+  3 s (`ARM_BRIDGE_TIMEOUT`), or the bridge is stopped while the motors hold
+  the arm, the bridge locks it where it is (mode 80000): a Wi-Fi drop never
+  drops the camera. A released arm (mode 0) is left alone. Only the laptop
+  (`GO2_HOST_IP`) may connect, and only arm commands are forwarded.
+
+**One-time build on the robot** (uses its ROS Foxy; nothing else is
+installed). `wifi_nav.sh --arm-wifi` copies the files to `~/go2-agri-arm` and
+prints this command if the build is missing:
+
+```bash
+ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'
+```
+
+**Every session:**
+
+```bash
+./scripts/runtime/wifi_nav.sh --arm-wifi                  # nav + bridge + fold over Wi-Fi
+./scripts/runtime/start_arm.sh --robot <robot-ip> state   # any arm command, over Wi-Fi
+ARM_ROBOT=<robot-ip> python3 scripts/tools/teach_arm.py   # teach / play the same way
+```
+
+Without `wifi_nav.sh`, start the bridge on the robot yourself:
+`GO2_HOST_IP=<laptop Wi-Fi IP> bash ~/go2-agri-arm/arm_bridge_wifi.sh` (log:
+`/tmp/arm_bridge_wifi.log` when started by `wifi_nav.sh`).
+
+**Power:** the arm needs 24 V DC. Check that the Go2 EDU's power output can
+supply it, or keep the arm on its own supply.
+
+Overrides: `ARM_BRIDGE_PORT` (18100), `ARM_BRIDGE_TIMEOUT` (3 s),
+`ARM_BRIDGE_IFACE` (`eth0`), `ARM_DOMAIN` (0).
 
 ## Run
 
@@ -111,6 +184,91 @@ $A sweep --joints 0,1 --pct 50 --yes
   (DDS discovery wait, default 20 s), `--retries`, `--verbose`,
   `--skip-preflight`.
 
+## Command reference
+
+Every command is `{"seq":N,"address":1,"funcode":F,"data":{...}}`, where
+`data` is a nested JSON object, not a string.
+
+| Action | funcode | `data` | Purpose |
+|---|---|---|---|
+| Single joint | `1` | `{"id":J,"angle":DEG,"delay_ms":0}` | Move joint J (6 = gripper) |
+| All joints | `2` | `{"mode":1,"angle0":…,"angle6":…}` | Move all 7 at once |
+| Enable all | `5` | `{"mode":80000}` | Motors on, fully locked |
+| Compliance | `5` | `{"mode":5000}` | Motors on, low stiffness: holds its weight, yields to a hand (teach) |
+| Release | `5` | `{"mode":0}` | Motors off (limp, drag-teach) |
+| Home | `7` | *(none)* | Return all joints to zero |
+
+Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
+The scripts reject anything beyond them.
+
+## Parameters
+
+| Flag / env | Default | Notes |
+|---|---|---|
+| `--iface` / `ARM_IFACE` | `enp0s8` | Interface that reaches the arm |
+| `--ip` / `ARM_IP` | `192.168.123.100` | Arm address (preflight ping and route check) |
+| `ARM_HOST_IP` | `192.168.123.99` | VM address `start_arm.sh` expects on the interface |
+| `--domain` / `ARM_DOMAIN` | `0` | DDS domain |
+| `--enable-mode` | `80000` | `enable` value (80000 = fully locked) |
+| `--match-timeout` | `20` | Seconds to wait for DDS discovery |
+| `--deg` | `45` | `lift` target for the shoulder |
+| `--pct` / `--joints` | `90` / `all` | `sweep` range (% of limit) and joints |
+| `--yes` | off | Skip the confirmation prompt for `lift` / `sweep` |
+| `--peer` | *(none)* | Unicast discovery. **Don't use**: this firmware needs multicast |
+
+## Plant Scanning (Teach & Playback)
+
+Kinesthetic teaching for plant data collection: guide the arm by hand until
+the end camera frames a plant, save the pose, and let the arm replay the
+whole sweep later. Fully released (`mode 0`) the arm drops under the
+camera's weight, so teaching uses **compliance mode** (`funcode 5`,
+`{"mode": 5000}`): the motors hold the arm up but yield to a push.
+
+**1. Teach** (one hand on the arm, the other on the keyboard):
+
+```bash
+python3 scripts/tools/teach_arm.py          # add poses to the existing sweep
+python3 scripts/tools/teach_arm.py --new    # start a new sweep
+```
+
+1. The arm powers on and goes compliant: *"Arm is compliant. You can now
+   move it by hand."*
+2. Move it until the camera frames the plant, then press **Enter**. The six
+   joint angles (telemetry address 2, funcode 1) are appended to
+   `config/arm_waypoints.json`, and the file is written after every pose.
+   Poses beyond the joint limits, or saved without telemetry, are refused.
+3. Repeat for every scan angle, in the order you want them visited.
+4. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
+   Ctrl+D lock it too, so it never drops.
+
+If the arm sags under the camera, raise `--stiffness` (e.g. 8000); if it is
+hard to push, lower it.
+
+**2. Play back:**
+
+```bash
+python3 scripts/tools/play_arm.py --dry-run  # check the file and print the poses
+python3 scripts/tools/play_arm.py            # run the sweep
+```
+
+Every waypoint is checked against the joint limits before anything moves.
+Then the arm powers on, locks, homes (`funcode 7`) and visits each pose
+with a smooth trajectory (`funcode 2`, `mode 1`). It waits until the pose is
+reached (within `--tolerance`, 3°), prints *"Waypoint N reached. [Camera
+should capture photo here]"* and holds `--dwell` seconds (3). At the end it
+homes again and **stays locked**; `--release` releases it at home (support
+it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
+locks the arm where it stopped.
+
+`config/arm_waypoints.json` is user data (git-ignored):
+
+```json
+{"waypoints": [{"angles": [10.5, -32.0, 45.1, 0.0, 20.0, 0.0], "saved": "2026-10-27T17:05:12"}]}
+```
+
+Both scripts take the usual `--iface`, `--ip`, `--domain`,
+`--skip-preflight` and `--file` (another waypoint file, e.g. one per crop).
+
 ## Offset calibration
 
 `calibrate_arm.py` moves each joint through ±`--test-deg` from zero and
@@ -140,12 +298,70 @@ export ARM_IFACE=simarm0 ARM_HOST_IP=192.168.123.51
 `wifi_nav.sh --sim --arm` sets these for you.
 
 Sim differences:
+
 - Motion is rate-limited to 60°/s.
 - `release` holds the pose.
 - Gripper 0–65° maps to 0–30 mm of finger travel.
 
 The official D1 URDF limits are ±134.6° / ±89.95°, slightly inside the ±135° / ±90°
 used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../gazebo/README.md).
+
+## MoveIt 2 and plant inspection
+
+[`src/d1_moveit_config`](../src/d1_moveit_config/) is a MoveIt 2 setup for the
+D1-550 on the Go2's back. It plans collision-free arm motion (IK, OMPL) and
+runs on ros2_control **mock hardware**: the arm moves in RViz, not for real.
+
+One-time install:
+
+```bash
+sudo apt install ros-humble-moveit ros-humble-ros2-control ros-humble-ros2-controllers
+```
+
+Run:
+
+```bash
+./scripts/runtime/arm_moveit.sh              # RViz + MoveIt; drag the marker, Plan & Execute
+./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
+```
+
+`arm_moveit.sh` builds `d1_550_description` from
+`~/files/unitree-D1-550-Robot-ARM` (override with `D1_ARM_DIR`) together with
+`d1_moveit_config`. It uses ROS domain 78, localhost only, so nothing reaches
+the robot.
+
+**Model.** `world` is the ground under a standing Go2. The trunk (0.29 m up)
+and the space its legs occupy are collision boxes, so plans keep the arm off
+the dog. The D1 base sits 0.057 m above the trunk origin, matching
+`gazebo/sim/build_model.py`. `tool0` is between the fingertips, with x pointing
+out of the gripper: a wrist camera would look along it.
+
+**Inspection demo** ([`inspect_plant.py`](../src/d1_moveit_config/scripts/inspect_plant.py)):
+
+1. Adds a raised bed (0.3 m) and a plant (0.3 m stem, 0.17 m canopy) to the
+   planning scene, 0.5 m to the right of the dog. These are the same sizes as
+   `gazebo/worlds/agri_field.sdf`.
+2. Places viewpoints on a sphere 0.10 m outside the canopy, on the dog's side:
+   5 directions (−50° to +50°) × 2 heights (level and 30° above), ordered as a
+   sweep.
+3. For each one, asks MoveIt for a collision-free move with `tool0` pointing at
+   the canopy centre (within ~9°, roll free), holds for `dwell_s`, then moves on.
+   Unreachable viewpoints are skipped. Arrows in RViz show each viewpoint:
+   green reached, red not.
+4. Returns to `home`.
+
+Parameters: `plant_x`, `plant_y`, `standoff`, `azimuths_deg`, `elevations_deg`,
+`dwell_s`, `plan_only`, and `image_topic` (saves a frame per viewpoint to
+`~/plant_inspection/`). For example:
+
+```bash
+ros2 run d1_moveit_config inspect_plant.py --ros-args -p plant_x:=0.2 -p plan_only:=true
+```
+
+**Not done yet:** driving the real arm. That needs a ros2_control hardware
+plugin, or a `FollowJointTrajectory` bridge, that sends MoveIt's trajectories
+as D1 JSON commands (funcode 2, degrees). Check the joint sign conventions
+against the firmware first: the URDF's Joint1 axis is −z.
 
 ## Troubleshooting
 
@@ -159,10 +375,28 @@ used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../ga
 | `joint N limit ±L°` | target outside the limit | use a smaller angle |
 | `free(): invalid pointer` crash | ROS's CycloneDDS mixed with the pip one | run without sourcing ROS |
 | `wifi_nav.sh --arm` skipped the arm | see `go2-nav2-wifi/ws/log/arm.log` | run `start_arm.sh --check` |
+| `--arm-wifi`: "not built on the robot yet" | the one-time build is missing | `ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'` |
+| `--robot`: "bridge not reachable" | bridge not running, or another laptop IP | on the robot: `tail /tmp/arm_bridge_wifi.log`; it accepts only `GO2_HOST_IP` |
+| Bridge exits at once, `exit 139` / segfault | Foxy's stock CycloneDDS instead of Unitree's | `robot-source-unitree-ros.sh` must sit next to the bridge in `~/go2-agri-arm` (`wifi_nav.sh --arm-wifi` copies it) |
+| `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |
+
+## Arm roadmap
+
+| Step | Purpose | Status |
+|---|---|---|
+| 1. Direct control | Prove the arm responds to JSON commands | Written: chain control, fold, lift/sweep, offset calibration |
+| 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
+| 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Written (2026-10-27), tested against a mock arm; ⏳ first run on the robot |
+| 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
+| 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
+| 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |
+| 6. AI autonomy | Model commands both the dog and the arm | Long-term |
+
+See [docs/roadmap.md](roadmap.md) for the overall project roadmap.
 
 ## References
 
-- Unitree D1 doc: https://support.unitree.com/home/en/developer/D1Arm_services
+- Unitree D1 doc: <https://support.unitree.com/home/en/developer/D1Arm_services>
 - chen37058/Grasp-with-the-Unitree-D1 (C++ SDK grasping demos)
 - SofiaAbal/tfg_go2_arm PR #23 (D1-550 driver: enable mode 80000, home funcode 7)
 - Robot-Learning-Group/d1t-teleop (pure Python, `unitree_sdk2py` + cyclonedds, hardware-verified)

@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Mock hardware: commanded positions are echoed back as the state, so
+       MoveIt and RViz behave as if a perfect arm followed every trajectory.
+       A real-arm plugin (D1 JSON over DDS) would replace this block. -->
+  <xacro:macro name="d1_joint" params="name initial">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"><param name="initial_value">${initial}</param></state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="d1_ros2_control" params="use_mock_hardware">
+    <ros2_control name="D1System" type="system">
+      <hardware>
+        <plugin>mock_components/GenericSystem</plugin>
+      </hardware>
+      <xacro:d1_joint name="Joint1" initial="0.0"/>
+      <xacro:d1_joint name="Joint2" initial="0.0"/>
+      <xacro:d1_joint name="Joint3" initial="0.0"/>
+      <xacro:d1_joint name="Joint4" initial="0.0"/>
+      <xacro:d1_joint name="Joint5" initial="0.0"/>
+      <xacro:d1_joint name="Joint6" initial="0.0"/>
+      <xacro:d1_joint name="Joint_L" initial="0.0"/>
+      <xacro:d1_joint name="Joint_R" initial="0.0"/>
+    </ros2_control>
+  </xacro:macro>
+</robot>

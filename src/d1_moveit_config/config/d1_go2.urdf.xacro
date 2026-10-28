@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!--
+  Unitree D1-550 on the Go2's back, for MoveIt.
+  world = ground under the robot. The Go2 is a fixed, standing body made of
+  two collision boxes (trunk, and the space its legs sweep), so planning keeps
+  the arm off the dog. Mount and standing height match gazebo/sim/build_model.py:
+  trunk origin 0.29 m up, D1 base 0.057 m above the trunk origin.
+-->
+<robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="use_mock_hardware" default="true"/>
+
+  <link name="world"/>
+
+  <!-- Go2 trunk (Unitree trunk collision box 0.3762 x 0.0935 x 0.114) -->
+  <link name="go2_trunk">
+    <visual><geometry><box size="0.3762 0.0935 0.114"/></geometry>
+      <material name="go2_grey"><color rgba="0.35 0.35 0.38 1"/></material></visual>
+    <collision><geometry><box size="0.3762 0.0935 0.114"/></geometry></collision>
+  </link>
+  <joint name="world_to_go2_trunk" type="fixed">
+    <parent link="world"/><child link="go2_trunk"/>
+    <origin xyz="0 0 0.29" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Space the legs and hips occupy while standing (ground up to the trunk) -->
+  <link name="go2_legs">
+    <visual><geometry><box size="0.60 0.31 0.25"/></geometry>
+      <material name="go2_legs_grey"><color rgba="0.35 0.35 0.38 0.35"/></material></visual>
+    <collision><geometry><box size="0.60 0.31 0.25"/></geometry></collision>
+  </link>
+  <joint name="go2_trunk_to_legs" type="fixed">
+    <parent link="go2_trunk"/><child link="go2_legs"/>
+    <origin xyz="0 0 -0.165" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The arm itself, unchanged from the D1-550 description -->
+  <xacro:include filename="$(find d1_550_description)/urdf/d1_550_description.urdf"/>
+  <joint name="go2_to_d1" type="fixed">
+    <parent link="go2_trunk"/><child link="base_link"/>
+    <origin xyz="0 0 0.057" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Tool / camera frame between the fingertips, x pointing out of the gripper -->
+  <link name="tool0"/>
+  <joint name="link6_to_tool0" type="fixed">
+    <parent link="Empty_Link6"/><child link="tool0"/>
+    <origin xyz="0.10 -0.0004 0.0031" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:include filename="$(find d1_moveit_config)/config/d1_go2.ros2_control.xacro"/>
+  <xacro:d1_ros2_control use_mock_hardware="$(arg use_mock_hardware)"/>
+</robot>

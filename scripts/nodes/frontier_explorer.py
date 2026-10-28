@@ -31,10 +31,29 @@ Communication:
 
   Optional spin-on-goal rotates the robot 360 degrees after each
   successful goal, for tour capture.
+
+Frontier choice (phase 2):
+  * Distance is the path distance: one BFS over traversable cells
+    (cost <= traversable_max_cost) from the robot per selection, so a
+    frontier behind a wall scores by the way round, and unreachable
+    frontiers are dropped.
+  * The goal is snapped near the centroid to a cell clear of walls and
+    unknown space (goal_clearance_m, goal_unknown_clearance_m).
+  * The goal faces the frontier, so the robot arrives looking at the
+    unknown area instead of along its path.
+  * While driving, the goal is dropped as soon as its frontier has been
+    seen (no frontier cells left near it) and the next one is chosen:
+    the LiDAR usually clears a frontier long before the robot gets there.
+  * Abandoned goals are blacklisted by position for frontier_blacklist_s,
+    for good after frontier_max_attempts.
+
+Nothing blocks the executor: the stop burst and the spin-on-goal run from
+a 20 Hz timer, so TF, map updates and STOP are handled during them.
 """
 import math
 import signal
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
@@ -48,7 +67,16 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Bool, String
 from action_msgs.msg import GoalStatus, GoalStatusArray
+from action_msgs.srv import CancelGoal
 from tf2_ros import Buffer, TransformListener
+
+try:
+    from scipy.ndimage import distance_transform_edt, label
+except ImportError:  # wall clearance checks are skipped without scipy
+    distance_transform_edt = label = None
+
+# OccupancyGrid value of a lethal costmap cell (an obstacle seen by the lidar).
+LETHAL = 100
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +93,12 @@ DEFAULTS = {
     'stop_topic':       '/cmd_vel',
 
     # Frontier detection
+    # Cells up to this cost count as free space on a frontier edge. 0 alone
+    # missed doorways: inflation from the door frame leaves only a 1-2 cell
+    # strip at cost 0, under min_frontier_size, so the rooms behind looked
+    # explored. 98 = anything below inscribed (99), where the robot centre
+    # may stand. Goals are still snapped to cost-0 cells clear of walls.
+    'frontier_max_cost':     98,
     'min_frontier_size':     4,
     # Ignore frontiers closer than this. Must exceed goal_xy_tolerance, or a
     # goal counts as reached the moment it is sent and the robot never moves.
@@ -78,10 +112,27 @@ DEFAULTS = {
     # is skipped. Keyed in world coordinates because the rolling costmap
     # origin moves, so pixel keys do not survive between ticks.
     'frontier_blacklist_radius_m': 0.5,
+    # After this many abandoned goals at the same frontier it is skipped for
+    # good. Until then a blacklisted frontier still counts as unexplored, so
+    # exploration is not declared complete while one is only waiting out
+    # frontier_blacklist_s (rooms were left unvisited that way).
+    'frontier_max_attempts': 3,
+    # Path distance: cells up to this cost count as traversable for the BFS
+    # from the robot. Matches frontier_max_cost, so a doorway frontier is
+    # reachable; Nav2's planner still decides the actual path.
+    'traversable_max_cost':  98,
+    # Drop the active goal once no frontier cell is left within this radius
+    # of its frontier, and choose the next one.
+    'frontier_gone_radius':  0.6,
+    'replan_on_explored':    True,
 
     # Goal tracking
     'goal_xy_tolerance':     0.35,
     'goal_timeout_s':        60.0,
+    # Added per metre of straight-line distance to the goal: a fixed 60 s
+    # abandoned a 9.7 m goal that needs 30 s+ at 0.3 m/s plus turns.
+    # progress_timeout_s still catches a robot that stops moving.
+    'goal_timeout_per_m':    4.0,
     'progress_timeout_s':    20.0,
     'progress_min_m':        0.15,
     # Nav2 actions that go2_goal_pose_nav drives. Their status topics tell
@@ -99,6 +150,39 @@ DEFAULTS = {
     'unstick_distance':      0.3,
     'unstick_speed':         0.1,
     'unstick_timeout_s':     6.0,
+    # > 0 when go2_stuck_recovery.py runs (wifi_nav.sh sets it): after a
+    # controller abort, keep the goal this long for its step-back and retry
+    # instead of blacklisting the frontier at once. 0 = abandon at once.
+    'recovery_wait_s':       0.0,
+
+    # Wall clearance. Distances are to lethal costmap cells (real obstacles).
+    # Robot footprint in base_link, same as go2_nav2/config/go2_footprint.yaml.
+    'footprint_front':       0.36,
+    'footprint_back':        0.45,
+    'footprint_half_width':  0.20,
+    # A frontier's goal is moved off the frontier into known free space, to
+    # the nearest cell within goal_search_radius_m that is at least
+    # goal_clearance_m from any wall and goal_unknown_clearance_m from
+    # unknown space. A goal right on the frontier can sit next to a wall the
+    # lidar has not seen yet. Frontiers with no such cell are skipped.
+    'goal_clearance_m':          0.6,
+    'goal_unknown_clearance_m':  0.3,
+    'goal_search_radius_m':      1.5,
+    # Unknown pockets of at most this many cells inside scanned space are
+    # gaps between lidar rings, not unexplored space: they are treated as
+    # free for frontiers and clearances. Without this a fresh, speckled map
+    # has hundreds of fake frontiers and no cell far enough from "unknown"
+    # (the sim start had 1 valid goal cell; 2219 after filling). 0 = off.
+    'unknown_hole_max_cells':    16,
+    # While driving: if a newly seen wall comes within this of the goal,
+    # cancel the Nav2 leg and pick another frontier.
+    'goal_unsafe_clearance_m':   0.4,
+    # Nav2's rotation shim turns in place when a new path starts more than
+    # turn_threshold_rad off the robot's heading. Turning sweeps the
+    # footprint's far corner (~0.53 m), so when the robot is closer than
+    # turn_clearance_m to a wall, prefer frontiers that need no such turn.
+    'turn_clearance_m':          0.6,
+    'turn_threshold_rad':        0.8,
 
     # Blind lead-in
     'blind_enable':          False,
@@ -127,12 +211,102 @@ DEFAULTS = {
 }
 
 
+def clearance_maps(grid, res):
+    """Distance in metres from every cell to the nearest wall (lethal cell)
+    and to the nearest unknown cell. inf where there is none."""
+    out = []
+    for blocked in (grid >= LETHAL, grid == -1):
+        if blocked.any():
+            out.append(distance_transform_edt(~blocked) * res)
+        else:
+            out.append(np.full(grid.shape, np.inf))
+    return out[0], out[1]
+
+
+def fill_lidar_gaps(grid, max_cells):
+    """Copy of grid with unknown pockets of <= max_cells cells set to free."""
+    if label is None or max_cells <= 0:
+        return grid
+    lab, n = label(grid == -1)
+    if n == 0:
+        return grid
+    sizes = np.bincount(lab.ravel())
+    small = sizes <= max_cells
+    small[0] = False
+    if not small.any():
+        return grid
+    out = grid.copy()
+    out[small[lab]] = 0
+    return out
+
+
+def snap_goal(grid, clear_wall, clear_unknown, ox, oy, res, x, y,
+              min_wall, min_unknown, radius):
+    """Nearest free cell to (x, y), within radius, that is at least min_wall
+    from walls and min_unknown from unknown space. World (x, y) or None."""
+    h, w = grid.shape
+    ci, cj = int((y - oy) / res), int((x - ox) / res)
+    r = int(math.ceil(radius / res))
+    i0, i1 = max(0, ci - r), min(h, ci + r + 1)
+    j0, j1 = max(0, cj - r), min(w, cj + r + 1)
+    if i0 >= i1 or j0 >= j1:
+        return None
+    ii, jj = np.mgrid[i0:i1, j0:j1]
+    d2 = (ii - ci) ** 2 + (jj - cj) ** 2
+    ok = ((grid[i0:i1, j0:j1] == 0)
+          & (clear_wall[i0:i1, j0:j1] >= min_wall)
+          & (clear_unknown[i0:i1, j0:j1] >= min_unknown)
+          & (d2 <= r * r))
+    if not ok.any():
+        return None
+    k = int(np.argmin(np.where(ok, d2, np.iinfo(d2.dtype).max)))
+    return (ox + (jj.flat[k] + 0.5) * res, oy + (ii.flat[k] + 0.5) * res)
+
+
+def bfs_distances(trav, start):
+    """Cells-to-start path length over traversable cells (4-connected), -1 if unreachable."""
+    h, w = trav.shape
+    dist = np.full(h * w, -1, dtype=np.int32)
+    flat = trav.ravel()
+    s = start[0] * w + start[1]
+    if not flat[s]:
+        return dist.reshape(h, w)
+    dist[s] = 0
+    q = deque([s])
+    while q:
+        i = q.popleft()
+        d = dist[i] + 1
+        c = i % w
+        for j in ((i - 1) if c > 0 else -1, (i + 1) if c < w - 1 else -1, i - w, i + w):
+            if 0 <= j < h * w and flat[j] and dist[j] < 0:
+                dist[j] = d
+                q.append(j)
+    return dist.reshape(h, w)
+
+
+def nearest_true(mask, cell, radius):
+    """Closest True cell to `cell` within a square radius, or None."""
+    r0, c0 = cell
+    h, w = mask.shape
+    y0, y1 = max(0, r0 - radius), min(h, r0 + radius + 1)
+    x0, x1 = max(0, c0 - radius), min(w, c0 + radius + 1)
+    ys, xs = np.nonzero(mask[y0:y1, x0:x1])
+    if len(ys) == 0:
+        return None
+    k = int(np.argmin((ys + y0 - r0) ** 2 + (xs + x0 - c0) ** 2))
+    return (int(ys[k] + y0), int(xs[k] + x0))
+
+
+def angle_diff(a, b):
+    return abs((a - b + math.pi) % (2.0 * math.pi) - math.pi)
+
+
 @dataclass
 class Frontier:
-    cx: float
+    cx: float            # cluster centroid (world)
     cy: float
-    size: int
-    distance: float
+    size: int            # cells
+    distance: float      # path distance from the robot (m)
 
 
 class FrontierExplorer(Node):
@@ -152,13 +326,19 @@ class FrontierExplorer(Node):
         self.stop_topic = p('stop_topic')
 
         self.min_frontier_size = int(p('min_frontier_size'))
+        self.frontier_max_cost = int(p('frontier_max_cost'))
         self.min_goal_dist = float(p('min_goal_dist'))
         self.min_known_cells = int(p('min_known_cells'))
         self.blacklist_s = float(p('frontier_blacklist_s'))
         self.blacklist_radius = float(p('frontier_blacklist_radius_m'))
+        self.trav_max_cost = int(p('traversable_max_cost'))
+        self.frontier_gone_radius = float(p('frontier_gone_radius'))
+        self.replan_on_explored = bool(p('replan_on_explored'))
 
         self.goal_xy_tol = float(p('goal_xy_tolerance'))
         self.goal_timeout = float(p('goal_timeout_s'))
+        self.goal_timeout_per_m = float(p('goal_timeout_per_m'))
+        self.frontier_max_attempts = int(p('frontier_max_attempts'))
         self.progress_timeout = float(p('progress_timeout_s'))
         self.progress_min_m = float(p('progress_min_m'))
 
@@ -186,6 +366,18 @@ class FrontierExplorer(Node):
         self.unstick_distance = float(p('unstick_distance'))
         self.unstick_speed = float(p('unstick_speed'))
         self.unstick_timeout = float(p('unstick_timeout_s'))
+        self.recovery_wait = float(p('recovery_wait_s'))
+
+        self.fp_front = float(p('footprint_front'))
+        self.fp_back = float(p('footprint_back'))
+        self.fp_half_w = float(p('footprint_half_width'))
+        self.goal_clearance = float(p('goal_clearance_m'))
+        self.goal_unknown_clearance = float(p('goal_unknown_clearance_m'))
+        self.goal_search_radius = float(p('goal_search_radius_m'))
+        self.unknown_hole_max_cells = int(p('unknown_hole_max_cells'))
+        self.goal_unsafe_clearance = float(p('goal_unsafe_clearance_m'))
+        self.turn_clearance = float(p('turn_clearance_m'))
+        self.turn_threshold = float(p('turn_threshold_rad'))
 
         self.tick_hz = float(p('tick_hz'))
 
@@ -196,11 +388,20 @@ class FrontierExplorer(Node):
         self.origin_xy: Optional[Tuple[float, float]] = None
         # (x, y, expiry) in map_frame world coordinates
         self.blacklist: List[Tuple[float, float, float]] = []
+        self.attempts: List[List[float]] = []    # [x, y, abandoned count]
+        self.frontiers_waiting = 0               # skipped for a temporary blacklist
+        self.active_goal_timeout = 0.0
         self.empty_frontier_ticks = 0
         self.goals_sent = 0
         self.goals_succeeded = 0
         self.goals_failed = 0
+        self.replans = 0
         self.blind_attempts = 0
+
+        # Non-blocking stop burst and spin (driven by the 20 Hz timer)
+        self.stop_burst = 0
+        self.spin_until = 0.0
+        self.spin_rate = 0.0
 
         # Active goal tracking
         self.active_goal_xy: Optional[Tuple[float, float]] = None
@@ -218,11 +419,15 @@ class FrontierExplorer(Node):
         self.nav_seen_ids = set()
         self.leg_baseline_ids = set()
         self.leg_planner_seen = False
+        # Set after a controller abort while go2_stuck_recovery handles it
+        self.recovery_deadline = None
+        self.recoveries = 0
 
         # Stuck handling: no new goal before this time
         self.next_goal_time = 0.0
         self.unstick_start_xy: Optional[Tuple[float, float]] = None
         self.unstick_start_time = 0.0
+        self.unstick_reason = ''
 
         # Blind lead-in state
         self.blind_active = False
@@ -264,6 +469,12 @@ class FrontierExplorer(Node):
         # Separate publisher for emergency stop, on /cmd_vel, so it
         # overrides Nav2's controller output on /cmd_vel_nav.
         self.stop_pub = self.create_publisher(Twist, self.stop_topic, 10)
+        # Cancelling through the action servers is the only way to stop a
+        # leg go2_goal_pose_nav already started: it does not preempt on a new
+        # /goal_pose, and a zero Twist only pauses the controller.
+        self.cancel_clients = [
+            self.create_client(CancelGoal, f'{p(k)}/_action/cancel_goal')
+            for k in ('planner_action', 'controller_action') if p(k)]
 
         # TF
         self.tf_buffer = Buffer()
@@ -273,6 +484,8 @@ class FrontierExplorer(Node):
         self.create_timer(1.0 / self.tick_hz, self.tick)
         # The velocity smoother times out after ~1 s, so reverse at 10 Hz.
         self.create_timer(0.1, self.tick_unstick)
+        # Stop burst and spin-on-goal at 20 Hz
+        self.create_timer(0.05, self.fast_tick)
 
         self.get_logger().info(
             f'frontier_explorer ready: '
@@ -283,6 +496,9 @@ class FrontierExplorer(Node):
             f'min_goal_dist={self.min_goal_dist} '
             f'blacklist_radius={self.blacklist_radius} '
             f'unstick={self.unstick_enable} '
+            f'goal_clearance={self.goal_clearance} '
+            f'clearance_checks={distance_transform_edt is not None} '
+            f'gap_fill={self.unknown_hole_max_cells} '
             f'blind={self.blind_enable} coverage={self.coverage_enable} '
             f'return_to_init={self.return_to_init} '
             f'spin_on_goal={self.spin_on_goal}')
@@ -303,6 +519,10 @@ class FrontierExplorer(Node):
                 continue
             if kind == 'planner':
                 self.leg_planner_seen = True
+                if self.recovery_deadline is not None:
+                    self.recovery_deadline = None
+                    self.recoveries += 1
+                    self.get_logger().info('Stuck recovery re-sent the goal')
             elif not self.leg_planner_seen:
                 # Controller goal of an older leg that was still planning
                 self.leg_baseline_ids.add(gid)
@@ -313,6 +533,7 @@ class FrontierExplorer(Node):
                 # Planning done; wait for follow_path
                 self.leg_baseline_ids.add(gid)
                 continue
+            self.leg_baseline_ids.add(gid)
             self.on_leg_done(kind, st.status)
             return
 
@@ -331,9 +552,19 @@ class FrontierExplorer(Node):
                 f'(Nav2 succeeded, {dist:.2f} m off)')
             self.clear_active_goal()
             if self.spin_on_goal:
-                self.spin_360()
+                self.start_spin()
             return
         name = 'ABORTED' if status == GoalStatus.STATUS_ABORTED else 'CANCELED'
+        if (kind == 'controller' and status == GoalStatus.STATUS_ABORTED
+                and self.recovery_wait > 0):
+            # go2_stuck_recovery steps the dog back (or aside) and re-sends
+            # this goal: keep it and watch for the new leg.
+            self.recovery_deadline = time.time() + self.recovery_wait
+            self.leg_planner_seen = False
+            self.get_logger().warn(
+                f'Nav2 controller ABORTED for ({x:.2f}, {y:.2f}), {dist:.2f} m '
+                f'away — waiting {self.recovery_wait:.0f}s for stuck recovery')
+            return
         cost = self.cost_at(pose) if pose is not None else None
         stuck = (kind == 'planner' and cost is not None
                  and cost >= self.stuck_cost)
@@ -373,6 +604,8 @@ class FrontierExplorer(Node):
                 self.blind_attempts = 0
         else:
             self.get_logger().info('Exploration DISABLED — stopping robot')
+            self.stop_spin()
+            self.cancel_nav()
             self.emergency_stop()
             self.cancel_active_goal()
             self.stop_blind()
@@ -387,6 +620,8 @@ class FrontierExplorer(Node):
             return
         if self.map is None:
             return
+        if self.spinning():
+            return          # spin-on-goal in progress (fast_tick drives it)
 
         if self.blind_active:
             self.tick_blind()
@@ -410,27 +645,76 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     # Emergency stop
     # ------------------------------------------------------------------
-    def emergency_stop(self):
+    def emergency_stop(self, blocking=False):
         """Publish zero velocity on /cmd_vel (bypasses the smoother).
 
         Nav2's controller publishes on /cmd_vel_nav, which the smoother
-        relays to /cmd_vel. Publishing here at a high rate briefly
-        dominates the wire and brings the robot to a stop.
+        relays to /cmd_vel. Ten stops over 0.5 s briefly dominate the wire
+        and bring the robot to a stop. The first goes out now, the rest from
+        fast_tick, so the callback returns at once (blocking only at shutdown,
+        when no timer runs any more).
         """
         stop = Twist()
-        for _ in range(10):
-            self.stop_pub.publish(stop)
-            time.sleep(0.05)
+        if blocking:
+            for _ in range(10):
+                self.stop_pub.publish(stop)
+                time.sleep(0.05)
+            return
+        self.stop_pub.publish(stop)
+        self.stop_burst = 9
+
+    def fast_tick(self):
+        """20 Hz: remaining stop burst, then spin-on-goal velocity."""
+        if self.stop_burst > 0:
+            self.stop_burst -= 1
+            self.stop_pub.publish(Twist())
+            return
+        if self.spin_until:
+            if time.time() < self.spin_until and self.enabled:
+                twist = Twist()
+                twist.angular.z = self.spin_rate
+                self.cmd_vel_pub.publish(twist)
+            else:
+                self.stop_spin()
+                self.get_logger().info('spin_360: complete')
 
     # ------------------------------------------------------------------
     # Unstick: reverse out of lethal space
     # ------------------------------------------------------------------
-    def start_unstick(self, pose):
+    def start_unstick(self, pose, reason='in lethal space'):
+        """Reverse a little, if the strip behind the robot is free."""
+        if not self.body_strip_free(-self.fp_back - self.unstick_distance - 0.05,
+                                    -self.fp_back):
+            self.get_logger().warn(
+                f'UNSTICK ({reason}): wall behind the robot, not reversing',
+                throttle_duration_sec=10.0)
+            return False
         self.unstick_start_xy = pose
         self.unstick_start_time = time.time()
+        self.unstick_reason = reason
         self.get_logger().info(
-            f'UNSTICK: reversing up to {self.unstick_distance} m at '
+            f'UNSTICK ({reason}): reversing up to {self.unstick_distance} m at '
             f'{self.unstick_speed} m/s')
+        return True
+
+    def body_strip_free(self, x0, x1):
+        """True if no wall lies in the body-frame strip x0..x1 (|y| within
+        the footprint half width). True when it cannot be checked."""
+        pose = self.get_robot_pose_yaw()
+        grid = self.to_numpy(self.map) if self.map is not None else None
+        if pose is None or grid is None:
+            return True
+        info = self.map.info
+        step = info.resolution / 2.0
+        bx, by = np.meshgrid(np.arange(x0, x1 + 1e-6, step),
+                             np.arange(-self.fp_half_w, self.fp_half_w + 1e-6, step))
+        c, s_ = math.cos(pose[2]), math.sin(pose[2])
+        wx = pose[0] + c * bx - s_ * by
+        wy = pose[1] + s_ * bx + c * by
+        j = ((wx - info.origin.position.x) / info.resolution).astype(int)
+        i = ((wy - info.origin.position.y) / info.resolution).astype(int)
+        inside = (i >= 0) & (i < grid.shape[0]) & (j >= 0) & (j < grid.shape[1])
+        return not bool(np.any(grid[i[inside], j[inside]] >= LETHAL))
 
     def tick_unstick(self):
         if self.unstick_start_xy is None:
@@ -443,7 +727,9 @@ class FrontierExplorer(Node):
         cost = self.cost_at(pose) if pose is not None else None
         if (pose is None or travelled >= self.unstick_distance
                 or elapsed >= self.unstick_timeout
-                or (cost is not None and cost < self.stuck_cost)):
+                or (cost is not None and cost < self.stuck_cost
+                    and self.unstick_reason == 'in lethal space')
+                or not self.body_strip_free(-self.fp_back - 0.1, -self.fp_back)):
             self.cmd_vel_pub.publish(Twist())
             self.unstick_start_xy = None
             self.next_goal_time = time.time() + 1.0
@@ -459,6 +745,10 @@ class FrontierExplorer(Node):
     # Phase 1: Blind lead-in
     # ------------------------------------------------------------------
     def start_blind_step(self, robot_pose):
+        if not self.body_strip_free(self.fp_front, self.fp_front + self.blind_step_distance):
+            self.get_logger().warn('BLIND step skipped: wall ahead')
+            self.blind_attempts += 1
+            return
         self.blind_active = True
         self.blind_start_xy = robot_pose
         self.blind_start_time = time.time()
@@ -482,7 +772,8 @@ class FrontierExplorer(Node):
                                pose[1] - self.blind_start_xy[1])
 
         if (travelled >= self.blind_step_distance
-                or elapsed >= self.blind_step_timeout):
+                or elapsed >= self.blind_step_timeout
+                or not self.body_strip_free(self.fp_front, self.fp_front + 0.15)):
             self.get_logger().info(
                 f'BLIND step done: {travelled:.2f} m in {elapsed:.1f}s')
             self.blind_attempts += 1
@@ -517,6 +808,7 @@ class FrontierExplorer(Node):
         grid = self.to_numpy(self.map)
         if grid is None:
             return
+        grid = fill_lidar_gaps(grid, self.unknown_hole_max_cells)
 
         known_cells = int(np.count_nonzero(grid != -1))
 
@@ -546,12 +838,25 @@ class FrontierExplorer(Node):
             self.empty_frontier_ticks = 0
             frontiers.sort(
                 key=lambda f: f.size / max(f.distance, 0.5), reverse=True)
-            best = frontiers[0]
+            choice = self.choose_safe_goal(frontiers, grid, robot_pose)
+            if choice is None:
+                if self.unstick_start_xy is not None:
+                    return  # backing off a wall before turning
+                self.get_logger().info(
+                    f'No frontier has a goal clear of walls '
+                    f'({len(frontiers)} candidates)',
+                    throttle_duration_sec=5.0)
+                return
+            best, gx, gy = choice
             self.get_logger().info(
                 f'FRONTIER: ({best.cx:.2f}, {best.cy:.2f}) '
-                f'size={best.size} dist={best.distance:.2f}m '
+                f'size={best.size} path={best.distance:.2f}m '
+                f'goal=({gx:.2f}, {gy:.2f}) '
                 f'({len(frontiers)} candidates)')
-            self.publish_goal(best.cx, best.cy, tag=(best.cx, best.cy))
+            # Face the frontier on arrival (along the path if the goal is on it).
+            yaw = (math.atan2(best.cy - gy, best.cx - gx)
+                   if math.hypot(best.cx - gx, best.cy - gy) > 0.1 else None)
+            self.publish_goal(gx, gy, tag=(best.cx, best.cy), yaw=yaw)
             return
 
         # No frontiers
@@ -571,11 +876,64 @@ class FrontierExplorer(Node):
                     return
 
         # PHASE 4: Nothing left to do
+        if self.frontiers_waiting:
+            self.empty_frontier_ticks = 0
+            self.get_logger().info(
+                f'{self.frontiers_waiting} frontier(s) blacklisted for now; '
+                f'waiting to retry before finishing',
+                throttle_duration_sec=10.0)
+            return
         if self.empty_frontier_ticks >= 5:
             self.get_logger().info('Exploration complete')
             self.state = 'RETURNING' if self.return_to_init else 'DONE'
             self.empty_frontier_ticks = 0
             self.publish_status()
+
+    def choose_safe_goal(self, frontiers, grid, robot_pose):
+        """First frontier (in score order) with a goal clear of walls.
+
+        Returns (frontier, goal_x, goal_y) or None. Without scipy the
+        frontier centroid is used as before.
+        """
+        if distance_transform_edt is None:
+            f = frontiers[0]
+            return f, f.cx, f.cy
+        info = self.map.info
+        res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+        clear_wall, clear_unknown = clearance_maps(grid, res)
+        pose = self.get_robot_pose_yaw()
+        tight = False
+        if pose is not None:
+            ri, rj = int((pose[1] - oy) / res), int((pose[0] - ox) / res)
+            if 0 <= ri < grid.shape[0] and 0 <= rj < grid.shape[1]:
+                tight = clear_wall[ri, rj] < self.turn_clearance
+        safe, turning = [], []
+        for f in frontiers:
+            g = snap_goal(grid, clear_wall, clear_unknown, ox, oy, res, f.cx, f.cy,
+                          self.goal_clearance, self.goal_unknown_clearance,
+                          self.goal_search_radius)
+            if g is None:
+                continue
+            if math.hypot(g[0] - robot_pose[0], g[1] - robot_pose[1]) < self.min_goal_dist:
+                continue
+            if tight and pose is not None and angle_diff(
+                    math.atan2(g[1] - pose[1], g[0] - pose[0]), pose[2]) > self.turn_threshold:
+                turning.append((f, g[0], g[1]))
+                continue
+            safe.append((f, g[0], g[1]))
+            break
+        if safe:
+            return safe[0]
+        if turning:
+            # Every option needs a turn in place next to a wall. Back off
+            # first if allowed, otherwise accept the turn.
+            if self.unstick_enable and self.start_unstick(robot_pose, reason='too close to turn'):
+                return None
+            self.get_logger().warn(
+                'Close to a wall and every frontier needs a turn in place',
+                throttle_duration_sec=10.0)
+            return turning[0]
+        return None
 
     # ------------------------------------------------------------------
     # Phase 4: Return to origin
@@ -606,7 +964,9 @@ class FrontierExplorer(Node):
     # ------------------------------------------------------------------
     # Goal publishing and tracking
     # ------------------------------------------------------------------
-    def publish_goal(self, x, y, tag=None):
+    def publish_goal(self, x, y, tag=None, yaw=None):
+        """Send a goal. tag = frontier centroid for frontier goals (re-plan
+        and blacklist use it). yaw None = face along robot -> goal."""
         if self.active_goal_xy is not None:
             return
 
@@ -615,7 +975,12 @@ class FrontierExplorer(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.pose.position.x = x
         msg.pose.position.y = y
-        msg.pose.orientation.w = 1.0
+        pose = self.get_robot_pose()
+        if yaw is None:
+            yaw = math.atan2(y - pose[1], x - pose[0]) if pose is not None else 0.0
+        dist = math.hypot(x - pose[0], y - pose[1]) if pose is not None else 0.0
+        msg.pose.orientation.z = math.sin(yaw / 2.0)
+        msg.pose.orientation.w = math.cos(yaw / 2.0)
 
         self.leg_baseline_ids = set(self.nav_seen_ids)
         self.leg_planner_seen = False
@@ -624,16 +989,26 @@ class FrontierExplorer(Node):
         self.active_goal_xy = (x, y)
         self.active_goal_tag = tag
         self.active_goal_start = time.time()
+        self.active_goal_timeout = self.goal_timeout + self.goal_timeout_per_m * dist
         self.active_goal_last_progress_xy = None
         self.active_goal_last_progress_time = time.time()
 
-        self.get_logger().info(f'Goal sent: ({x:.2f}, {y:.2f})')
+        self.get_logger().info(
+            f'Goal sent: ({x:.2f}, {y:.2f}) {dist:.1f} m, '
+            f'timeout {self.active_goal_timeout:.0f}s')
 
     def tick_active_goal(self):
         pose = self.get_robot_pose()
         if pose is None:
             return
         now = time.time()
+
+        if self.recovery_deadline is not None:
+            if now > self.recovery_deadline:
+                self.abandon_goal('stuck recovery did not retry')
+            else:
+                self.active_goal_last_progress_time = now
+            return
 
         dist = math.hypot(pose[0] - self.active_goal_xy[0],
                           pose[1] - self.active_goal_xy[1])
@@ -644,7 +1019,25 @@ class FrontierExplorer(Node):
                 f'{self.active_goal_xy[1]:.2f})')
             self.clear_active_goal()
             if self.spin_on_goal:
-                self.spin_360()
+                self.start_spin()
+            return
+
+        # Frontier already seen from here: choose the next one now instead
+        # of walking all the way to a place that is no longer unknown.
+        # go2_goal_pose_nav does not preempt on a new /goal_pose, so cancel.
+        # Not next to a wall (a doorway): stopped there, the next goal needs a
+        # turn in place, which RPP refuses ("collision ahead"); the current
+        # goal is clear of walls, so keep driving to it.
+        if self.replan_on_explored and self.active_goal_tag is not None \
+                and self.frontier_explored(self.active_goal_tag) \
+                and self.room_to_turn(self.turn_clearance):
+            self.replans += 1
+            self.get_logger().info(
+                f'Frontier at ({self.active_goal_tag[0]:.2f}, '
+                f'{self.active_goal_tag[1]:.2f}) explored before arrival: re-planning')
+            self.cancel_nav()
+            self.clear_active_goal()
+            self.publish_status()
             return
 
         if self.active_goal_last_progress_xy is None:
@@ -658,47 +1051,122 @@ class FrontierExplorer(Node):
                 self.active_goal_last_progress_xy = pose
                 self.active_goal_last_progress_time = now
 
-        if now - self.active_goal_last_progress_time > self.progress_timeout:
-            self.get_logger().warn('No progress — abandoning goal')
-            self.blacklist_tag()
-            self.goals_failed += 1
-            self.clear_active_goal()
+        wall = self.goal_wall_clearance()
+        if wall is not None and wall < self.goal_unsafe_clearance:
+            self.abandon_goal(f'wall {wall:.2f} m from the goal')
             return
 
-        if now - self.active_goal_start > self.goal_timeout:
-            self.get_logger().warn('Goal timeout — abandoning')
-            self.blacklist_tag()
-            self.goals_failed += 1
-            self.clear_active_goal()
+        if now - self.active_goal_last_progress_time > self.progress_timeout:
+            self.abandon_goal('no progress')
             return
+
+        if now - self.active_goal_start > self.active_goal_timeout:
+            self.abandon_goal('goal timeout')
+            return
+
+    def abandon_goal(self, reason):
+        """Give up on the active goal and stop Nav2 from still driving it."""
+        self.get_logger().warn(f'{reason} — abandoning goal')
+        self.cancel_nav()
+        self.blacklist_tag()
+        self.goals_failed += 1
+        self.clear_active_goal()
+
+    def goal_wall_clearance(self):
+        """Distance from the active goal to the nearest wall, or None."""
+        if distance_transform_edt is None or self.map is None:
+            return None
+        info = self.map.info
+        res = info.resolution
+        gi = int((self.active_goal_xy[1] - info.origin.position.y) / res)
+        gj = int((self.active_goal_xy[0] - info.origin.position.x) / res)
+        r = int(math.ceil((self.goal_unsafe_clearance + res) / res))
+        grid = self.to_numpy(self.map)
+        if grid is None or not (0 <= gi < grid.shape[0] and 0 <= gj < grid.shape[1]):
+            return None  # goal outside the rolling costmap: nothing to check
+        win = grid[max(0, gi - r):gi + r + 1, max(0, gj - r):gj + r + 1]
+        ys, xs = np.nonzero(win >= LETHAL)
+        if len(xs) == 0:
+            return None
+        ys = ys + max(0, gi - r) - gi
+        xs = xs + max(0, gj - r) - gj
+        return float(np.min(np.hypot(xs, ys))) * res
+
+    def cancel_nav(self):
+        """Cancel every Nav2 planner/controller goal (go2_goal_pose_nav's leg).
+
+        A zero goal ID and zero stamp means "all goals" in the action protocol.
+        The request goes out immediately; the response is not awaited.
+        """
+        for cli in self.cancel_clients:
+            if cli.service_is_ready():
+                cli.call_async(CancelGoal.Request())
 
     def blacklist_tag(self):
-        """Blacklist the active frontier goal (tag is its world x, y)."""
-        if self.active_goal_tag is not None:
-            bx, by = self.active_goal_tag
+        """Blacklist the active frontier goal (tag is its world x, y):
+        for frontier_blacklist_s, or for good after frontier_max_attempts
+        abandoned goals there."""
+        if self.active_goal_tag is None:
+            return
+        bx, by = self.active_goal_tag
+        r2 = self.blacklist_radius ** 2
+        entry = next((a for a in self.attempts
+                      if (a[0] - bx) ** 2 + (a[1] - by) ** 2 < r2), None)
+        if entry is None:
+            entry = [bx, by, 0]
+            self.attempts.append(entry)
+        entry[2] += 1
+        if entry[2] >= self.frontier_max_attempts:
+            self.blacklist.append((bx, by, math.inf))
+            self.get_logger().info(
+                f'Blacklisted ({bx:.2f}, {by:.2f}) for good '
+                f'({entry[2]} abandoned goals)')
+        else:
             self.blacklist.append((bx, by, time.time() + self.blacklist_s))
             self.get_logger().info(
-                f'Blacklisted ({bx:.2f}, {by:.2f}) for {self.blacklist_s:.0f}s')
+                f'Blacklisted ({bx:.2f}, {by:.2f}) for {self.blacklist_s:.0f}s '
+                f'(attempt {entry[2]}/{self.frontier_max_attempts})')
 
-    def is_blacklisted(self, x, y):
+    def blacklist_expiry(self, x, y):
+        """Latest expiry of a blacklist entry covering (x, y), or None."""
         r2 = self.blacklist_radius ** 2
-        return any((x - bx) ** 2 + (y - by) ** 2 < r2
-                   for bx, by, _ in self.blacklist)
+        hits = [t for bx, by, t in self.blacklist
+                if (x - bx) ** 2 + (y - by) ** 2 < r2]
+        return max(hits) if hits else None
+
+    def frontier_explored(self, centroid):
+        """True if no frontier cell is left within frontier_gone_radius."""
+        grid = self.to_numpy(self.map)
+        if grid is None:
+            return False
+        grid = fill_lidar_gaps(grid, self.unknown_hole_max_cells)
+        res = self.map.info.resolution
+        ox, oy = self.map.info.origin.position.x, self.map.info.origin.position.y
+        c, r = int((centroid[0] - ox) / res), int((centroid[1] - oy) / res)
+        rad = max(1, int(self.frontier_gone_radius / res))
+        h, w = grid.shape
+        y0, y1, x0, x1 = max(0, r - rad), min(h, r + rad + 1), max(0, c - rad), min(w, c + rad + 1)
+        if y0 >= y1 or x0 >= x1:
+            return False     # off the current map: cannot tell
+        # Pad by one so the window's own unknown border counts.
+        win = grid[max(0, y0 - 1):min(h, y1 + 1), max(0, x0 - 1):min(w, x1 + 1)]
+        return not self.frontier_mask(win).any()
 
     def clear_active_goal(self):
         self.active_goal_xy = None
         self.active_goal_tag = None
         self.active_goal_last_progress_xy = None
+        self.recovery_deadline = None
 
     # ------------------------------------------------------------------
     # Spin-on-goal capture
     # ------------------------------------------------------------------
-    def spin_360(self, rate=None):
-        """Rotate 360 degrees in place for tour capture.
+    def start_spin(self, rate=None):
+        """Rotate 360 degrees in place for tour capture (non-blocking).
 
-        Publishes continuous Twist on /cmd_vel_nav for the duration
-        required to complete one full revolution at the given rate.
-        Honours spin_rate_rad_s parameter when rate is None.
+        fast_tick publishes the Twist on /cmd_vel_nav at 20 Hz for one
+        revolution at `rate` (spin_rate_rad_s when None); tick() picks no
+        new goal meanwhile, and STOP ends the spin at once.
         """
         if rate is None:
             rate = self.spin_rate_rad_s
@@ -706,20 +1174,44 @@ class FrontierExplorer(Node):
             self.get_logger().warn('spin_360: rate must be > 0, skipping')
             return
 
+        corner = math.hypot(max(self.fp_front, self.fp_back), self.fp_half_w)
+        if not self.room_to_turn(corner):
+            self.get_logger().warn('spin_360: too close to a wall, skipping')
+            return
+
         duration = 2.0 * math.pi / rate
         self.get_logger().info(
             f'spin_360: starting, rate={rate:.2f} rad/s, '
             f'duration={duration:.1f}s')
+        self.spin_rate = rate
+        self.spin_until = time.time() + duration
 
-        t0 = time.time()
-        twist = Twist()
-        twist.angular.z = rate
-        while time.time() - t0 < duration:
-            self.cmd_vel_pub.publish(twist)
-            time.sleep(0.1)
-        self.cmd_vel_pub.publish(Twist())
+    def spinning(self):
+        return self.spin_until > 0.0
 
-        self.get_logger().info('spin_360: complete')
+    def stop_spin(self):
+        if self.spin_until:
+            self.spin_until = 0.0
+            self.cmd_vel_pub.publish(Twist())
+
+    def room_to_turn(self, radius):
+        """True if no wall is within radius of the robot (or unknown)."""
+        pose = self.get_robot_pose()
+        grid = self.to_numpy(self.map) if self.map is not None else None
+        if pose is None or grid is None:
+            return True
+        info = self.map.info
+        res = info.resolution
+        ci = int((pose[1] - info.origin.position.y) / res)
+        cj = int((pose[0] - info.origin.position.x) / res)
+        r = int(math.ceil(radius / res))
+        if not (0 <= ci < grid.shape[0] and 0 <= cj < grid.shape[1]):
+            return True
+        win = grid[max(0, ci - r):ci + r + 1, max(0, cj - r):cj + r + 1]
+        ys, xs = np.nonzero(win >= LETHAL)
+        ys = ys + max(0, ci - r) - ci
+        xs = xs + max(0, cj - r) - cj
+        return not bool(np.any(np.hypot(xs, ys) * res < radius))
 
     def cancel_active_goal(self):
         if self.active_goal_xy is not None:
@@ -791,22 +1283,26 @@ class FrontierExplorer(Node):
         w, h = occ.info.width, occ.info.height
         return np.array(occ.data, dtype=np.int8).reshape(h, w)
 
-    def detect_frontiers(self, grid, robot_xy):
-        free = (grid == 0)
-        unknown = (grid == -1)
-
+    def frontier_mask(self, grid):
+        """Free cells (cost <= frontier_max_cost) next to unknown (-1)."""
+        free = (grid >= 0) & (grid <= self.frontier_max_cost)
         # Use np.pad instead of np.roll to avoid wrap-around.
         # np.roll treats the top row as adjacent to the bottom row,
         # which creates phantom frontiers at the map boundaries.
-        padded = np.pad(unknown, 1, mode='constant', constant_values=False)
+        padded = np.pad(grid == -1, 1, mode='constant', constant_values=False)
         unknown_d = (
             padded[:-2, 1:-1] | padded[2:, 1:-1] |
             padded[1:-1, :-2] | padded[1:-1, 2:])
-        frontier_mask = free & unknown_d
+        return free & unknown_d
+
+    def detect_frontiers(self, grid, robot_xy):
+        """Reachable frontiers, scored later by size / path distance."""
+        frontier_mask = self.frontier_mask(grid)
 
         now = time.time()
         self.blacklist = [b for b in self.blacklist if b[2] > now]
 
+        self.frontiers_waiting = 0
         ys, xs = np.where(frontier_mask)
         if len(xs) == 0:
             return []
@@ -814,6 +1310,16 @@ class FrontierExplorer(Node):
         res = self.map.info.resolution
         ox = self.map.info.origin.position.x
         oy = self.map.info.origin.position.y
+
+        # Path distance from the robot: one BFS per selection. If the robot
+        # stands in an inflated cell, start from the nearest traversable one.
+        trav = (grid >= 0) & (grid <= self.trav_max_cost)
+        h, w = grid.shape
+        rc = (min(max(int((robot_xy[1] - oy) / res), 0), h - 1),
+              min(max(int((robot_xy[0] - ox) / res), 0), w - 1))
+        if not trav[rc]:
+            rc = nearest_true(trav, rc, max(2, int(0.5 / res)))
+        reach = bfs_distances(trav, rc) if rc is not None else None
 
         used = np.zeros_like(frontier_mask, dtype=bool)
         frontiers = []
@@ -841,12 +1347,21 @@ class FrontierExplorer(Node):
             cxw = px.mean() * res + ox + res / 2
             cyw = py.mean() * res + oy + res / 2
 
-            if self.is_blacklisted(cxw, cyw):
+            expiry = self.blacklist_expiry(cxw, cyw)
+            if expiry is not None:
+                if expiry != math.inf:
+                    self.frontiers_waiting += 1
                 continue
 
-            dist = math.hypot(cxw - robot_xy[0], cyw - robot_xy[1])
-            if dist < self.min_goal_dist:
+            if math.hypot(cxw - robot_xy[0], cyw - robot_xy[1]) < self.min_goal_dist:
                 continue
+            if reach is None:
+                dist = math.hypot(cxw - robot_xy[0], cyw - robot_xy[1])
+            else:
+                d = [reach[y, x] for x, y in cluster_pts if reach[y, x] >= 0]
+                if not d:
+                    continue          # unreachable
+                dist = min(d) * res
             frontiers.append(Frontier(cxw, cyw, len(cluster_pts), dist))
 
         return frontiers
@@ -861,6 +1376,17 @@ class FrontierExplorer(Node):
             return (t.transform.translation.x, t.transform.translation.y)
         except Exception:
             return None
+
+    def get_robot_pose_yaw(self):
+        try:
+            t = self.tf_buffer.lookup_transform(
+                self.map_frame, self.robot_frame, rclpy.time.Time())
+        except Exception:
+            return None
+        q = t.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        return (t.transform.translation.x, t.transform.translation.y, yaw)
 
     def cost_at(self, world_xy):
         """Costmap value (0-100, -1 unknown) at a world point, or None."""
@@ -880,6 +1406,8 @@ class FrontierExplorer(Node):
             f'goals_sent={self.goals_sent} '
             f'succeeded={self.goals_succeeded} '
             f'failed={self.goals_failed} '
+            f'replans={self.replans} '
+            f'recoveries={self.recoveries} '
             f'blind_attempts={self.blind_attempts}')
         self.status_pub.publish(msg)
 
@@ -905,9 +1433,11 @@ def main(args=None):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         node.stop_blind()
+        node.stop_spin()
+        node.cancel_nav()
         if node.unstick_start_xy is not None:
             node.cmd_vel_pub.publish(Twist())
-        node.emergency_stop()
+        node.emergency_stop(blocking=True)
         node.get_logger().info(
             f'Stopped. goals sent={node.goals_sent} '
             f'reached={node.goals_succeeded} abandoned={node.goals_failed}')
