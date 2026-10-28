@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # start_arm.sh — launch the D1 arm over the bridged Ethernet, or over Wi-Fi
 # when the arm is plugged into the Go2 (--robot <Go2 IP> / ARM_ROBOT: the
-# robot's arm_bridge_wifi.py, see docs/d1arm.md).
+# robot's arm_bridge_wifi.py, see docs/hardware/d1arm.md).
 #
 # Uses the verified config: iface=enp0s8, domain=0, MULTICAST discovery.
 # Do NOT pass --peer to the underlying scripts — unicast breaks on this arm.

@@ -1,8 +1,8 @@
 # Go2 3D navigation — lab fixes for go2-nav2-wifi
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Troubleshooting](troubleshooting.md) · [3D twin](3d_nav.md)
+[← Back to README](../../README.md) · [Status](../STATUS.md) · [Troubleshooting](../troubleshooting.md) · [3D twin](../ai_and_vision/3d_nav.md)
 
-Script: [`scripts/tools/apply-lab-nav-fixes.sh`](../scripts/tools/apply-lab-nav-fixes.sh).
+Script: [`scripts/tools/apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh).
 `wifi_nav.sh` and `wifi_3d_nav.sh` assume these fixes are applied.
 
 Fixes for two problems with `./mapping.sh --3d --nav` on our Unitree Go2 Edu:

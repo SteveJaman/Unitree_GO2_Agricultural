@@ -40,12 +40,15 @@ Foxglove is the optional alternative (`--foxglove`).
 | `--resume` after a battery swap | **Implemented (pending physical test)** |
 | Dashboard performance mode (software renderer), Go2 model with live leg joints | **Implemented (pending physical test)**: measured against synthetic data in software WebGL (2026-10-27) |
 | Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
-| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
+| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
 | D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
 | D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Moved on the robot over Wi-Fi (2026-10-27)**: power, enable, joint 0 +20°, home, fold. Found and fixed: the bridge's auto-lock re-enabled an enabled arm, which drives it to its last target. Open: `power 0` does not switch motor power off over the bridge |
+| Drive modes `--drive hybrid` (default) / `diff` / `omni` ([drive modes](navigation/drive_modes.md)): MPPI reverse + sidestep, stuck recovery in every session | **Implemented (pending physical test)**: sim comparison of all three, 9 trials (2026-10-28, [results](navigation/locomotion_comparison.md)); on the real dog MPPI loads and recovery is ready, but no movement test yet |
+| MoveIt 2 for the D1 arm (`arm_moveit.sh`, [d1arm.md](hardware/d1arm.md#moveit-2-cartesian-planning-arm_moveitsh)): Cartesian goals, collision-free plans around the Go2, plant-inspection demo | **Implemented (pending physical test)**: runs on ros2_control mock hardware only; driving the real arm needs a trajectory bridge (not written) |
+| Unity sim (`sim_explore.sh`, [unity.md](simulation/unity.md)): explorer + the real go2_nav2 config in the CMU Unity sim, on the host | **Implemented (pending physical test)**: explorer runs in the sim (2026-10-16, -22); the same explorer parameters still need the robot |
 | VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
 
-Test plan: checks 17–37 under [Pending verification](#pending-verification-needs-robot),
+Test plan: checks 17–54 under [Pending verification](#pending-verification-needs-robot),
 and the [Next session plan](#next-session-plan).
 
 ---
@@ -60,6 +63,7 @@ has been verified on the robot yet except where noted.
 ```text
 scripts/
 ├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
+│                arm_moveit.sh (MoveIt 2), sim_explore.sh (Unity sim),
 │                go2_net.sh (sourced: IP detection / robot discovery)
 ├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
 │                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
@@ -75,7 +79,7 @@ Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scrip
 
 - CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
-- Docs: [`setup.md`](setup.md), [`architecture.md`](architecture.md), [`3d_nav.md`](3d_nav.md), [`explorer.md`](explorer.md), [`scripts.md`](scripts.md), [`d1arm.md`](d1arm.md), [`camera.md`](camera.md), [`tour.md`](tour.md), [`troubleshooting.md`](troubleshooting.md), [`LAB-NAV-FIXES.md`](LAB-NAV-FIXES.md), [`development.md`](development.md), [`roadmap.md`](roadmap.md)
+- Docs, by folder: [`setup/`](setup/) (setup, scripts, development), [`navigation/`](navigation/) (explorer, drive modes, locomotion comparison, tour, lab nav fixes), [`ai_and_vision/`](ai_and_vision/) (3D twin, camera, fusion), [`hardware/`](hardware/) (D1 arm, MoveIt), [`simulation/`](simulation/) (Gazebo, Unity); [`architecture.md`](architecture.md), [`troubleshooting.md`](troubleshooting.md), [`roadmap.md`](roadmap.md) at the top. Reorganised into folders on 2026-10-28
 - README cut to a short landing page (2026-10-23); details moved into the docs above
 
 ### Navigation — verified working
@@ -111,7 +115,7 @@ Code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
 The robot sends JPEG frames over Wi-Fi ([`go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh));
 [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py) decodes them to
 `/camera/image_raw` (frame `front_camera_optical`). Launches automatically
-via `wifi_nav.sh` unless `--no-camera`. See [camera.md](camera.md).
+via `wifi_nav.sh` unless `--no-camera`. See [camera.md](ai_and_vision/camera.md).
 
 ### DHCP networking — code complete, untested on robot (2026-10-18)
 
@@ -153,7 +157,7 @@ Verified config: `enp0s8`, DDS domain 0, **multicast** discovery (unicast
 
 ### Gazebo simulation — code complete, untested in Gazebo (2026-10-18)
 
-[`gazebo/`](../gazebo/README.md): Go2 + D1 from the official Unitree models, Gazebo Harmonic,
+[`gazebo/`](../gazebo/) ([docs](simulation/gazebo.md)): Go2 + D1 from the official Unitree models, Gazebo Harmonic,
 `wifi_nav.sh --sim [--arm]`. The robot side (lidar odom/cloud, cmd_vel TCP :17999,
 camera, D1 controller) is simulated; the laptop side is the real one.
 
@@ -171,7 +175,7 @@ container runs RTAB-Map (LiDAR, TF odometry from Point-LIO), rosbridge `:9090`
 with the web dashboard `:3000` (foxglove_bridge `:8765` with `--foxglove`) and
 [`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)
 (`/clicked_point` → nearest safe floor → `/goal_pose`). It copies the session's DDS settings, and
-the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](3d_nav.md).
+the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](ai_and_vision/3d_nav.md).
 
 Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
 the `go2-3d:local` image build, RTAB-Map on live data, the dashboard on the
@@ -322,6 +326,11 @@ relay is unconfirmed.
 | 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
 | 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
 | 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
+| 50 | Drive `omni` | `wifi_3d_nav.sh --no-explore --drive omni`, remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
+| 51 | Drive `hybrid` recovery | default drive, explorer next to a wall until a leg aborts | `/tmp/stuck_recovery.log`: steps back or aside 0.3 m, goal re-sent |
+| 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the VM | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
+| 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |
+| 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
 
 ---
 
@@ -329,7 +338,7 @@ relay is unconfirmed.
 
 | Item | Blocker |
 |---|---|
-| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
+| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](navigation/tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
 | D435i on the arm's end | USB-C extension cable not yet arrived |
@@ -349,7 +358,7 @@ in ~5 min (the 10.9 GB VM swaps) and reads one image in ~2 min (627 tokens at
 request times out (`Ollama not reachable … timed out` in `vlm.log`), so
 `/vlm_decision` stays silent and BLOCKED → dock can never trigger. YOLO is
 fine (0.2–0.8 s per frame). Fix: Ollama on a GPU host (`TWIN_VLM_URL`, see
-[3d_nav.md](3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
+[3d_nav.md](ai_and_vision/3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
 
 ### D1 arm not answering — resolved (2026-10-27)
 
@@ -362,7 +371,7 @@ reports state and angles over Wi-Fi through the bridge.
 The robot sends 5 fps; the VM's UDP sockets overflow (Ubuntu default
 `rmem_max` 208 KB, `RcvbufErrors` growing) and drop most frames. Effects:
 dashboard "Camera unavailable", RTAB-Map camera mode starved (empty map),
-YOLO and the VLM idle. Fix: [setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup);
+YOLO and the VLM idle. Fix: [setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup);
 `wifi_nav.sh` now warns.
 
 ### Relay on the wrong DDS; best-effort readers — fixed (2026-10-27)
@@ -479,7 +488,7 @@ ros2 topic echo /explore/status            # watch goals_sent
 ./scripts/runtime/wifi_3d_nav.sh --resume
 ```
 
-Work through checks 17–49 above (see [3d_nav.md](3d_nav.md)). Keep the
+Work through checks 17–54 above (see [3d_nav.md](ai_and_vision/3d_nav.md)). Keep the
 handheld remote as the emergency stop.
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`

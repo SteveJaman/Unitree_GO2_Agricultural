@@ -1,6 +1,6 @@
 # Camera–LiDAR Fusion: Calibration and Overlay Check
 
-[← Back to README](../README.md) · [Camera](camera.md) · [3D Nav](3d_nav.md) · [Roadmap](roadmap.md#milestone-3--camera-pipeline)
+[← Back to README](../../README.md) · [Camera](camera.md) · [3D Nav](3d_nav.md) · [Roadmap](../roadmap.md#milestone-3--camera-pipeline)
 
 Before camera data can improve collision avoidance or mapping, a camera pixel
 must map to the right LiDAR point. That takes two things:
@@ -15,7 +15,7 @@ must map to the right LiDAR point. That takes two things:
 The **overlay check** projects the LiDAR points onto the camera image. When
 both calibrations are right, the points land on the objects they hit.
 
-![LiDAR overlay in simulation: wrong camera pitch (top) vs correct (bottom)](images/lidar_overlay_sim.png)
+![LiDAR overlay in simulation: wrong camera pitch (top) vs correct (bottom)](../images/lidar_overlay_sim.png)
 
 *Simulation. Top: camera pitched 0.1 rad (5.7°) wrong, so points float above
 the beds into the sky. Bottom: the same scene after correcting it live with
@@ -65,7 +65,7 @@ printing, because printers scale.
    ```
 
    If the RMS error is under 1 px, the result is installed as
-   [`config/camera/front_camera.yaml`](../config/camera/). Each run's views and
+   [`config/camera/front_camera.yaml`](../../config/camera/). Each run's views and
    `undistorted_preview.png` go to `config/camera/runs/<date>/`, which git
    ignores. In the preview, straight edges should look straight.
 
@@ -136,7 +136,7 @@ legs, a box) about 1–3 m away. Stand still while you tune. Once it lines up,
 write down the offsets: they are the camera mount correction (roadmap 3.4),
 the input to the fusion steps below.
 
-Other node parameters ([`go2_lidar_overlay.py`](../scripts/nodes/go2_lidar_overlay.py)):
+Other node parameters ([`go2_lidar_overlay.py`](../../scripts/nodes/go2_lidar_overlay.py)):
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -153,7 +153,7 @@ Other node parameters ([`go2_lidar_overlay.py`](../scripts/nodes/go2_lidar_overl
 
 `--sim` tests the whole chain without the robot. The Gazebo camera is mounted
 exactly at the URDF `front_camera` pose, and its intrinsics are known exactly
-([`config/camera/sim_front_camera.yaml`](../config/camera/sim_front_camera.yaml)),
+([`config/camera/sim_front_camera.yaml`](../../config/camera/sim_front_camera.yaml)),
 so the correct overlay needs zero offsets. It can't test the lens calibration
 (the sim has no checkerboard), only the projection.
 
@@ -189,7 +189,7 @@ SIM_GUI=0 SIM_RENDER_ENGINE=ogre ./scripts/runtime/wifi_nav.sh --sim --no-explor
 
 The LiDAR misses **glass**, **thin chair and table legs**, **dark surfaces**
 and the area **just in front of the sensor**. The camera sees them but has no
-depth. [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py)
+depth. [`go2_camera_obstacles.py`](../../scripts/nodes/go2_camera_obstacles.py)
 (in `go2-3d`) closes that gap at about 1–2 Hz:
 
 1. It undistorts the frame and runs **Depth Anything V2-Small** (ONNX, CPU,
@@ -202,7 +202,7 @@ depth. [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py)
 
 `wifi_nav.sh` adds a **`camera` source** to the obstacle layer of the Nav2
 costmaps (planner and controller), using
-[`nav2_camera_source.py`](../scripts/tools/nav2_camera_source.py) on
+[`nav2_camera_source.py`](../../scripts/tools/nav2_camera_source.py) on
 go2-nav2-wifi's `lidar3d_planner.yaml`. It is **marking only**: LiDAR rays
 that pass through glass can't clear what the camera marked. In any session
 without `--camera-obstacles` the source is removed again, and the file

@@ -46,7 +46,7 @@ Windows. The terminal prints the address.
 - bigger UDP receive buffers on the VM (one `sysctl` file), or camera
   frames and LiDAR clouds get dropped.
 
-All of it is in **[docs/setup.md](docs/setup.md)**.
+All of it is in **[docs/setup/setup.md](docs/setup/setup.md)**.
 
 Other entry points:
 
@@ -87,33 +87,40 @@ Other entry points:
   walks, and only stuck recovery steps back or sidesteps), `--drive diff`
   (forward arcs, the original setup; recovery only steps back) or
   `--drive omni` (Nav2 walks it backwards and sideways during normal driving
-  too). [Comparison with sim results](docs/locomotion_comparison.md).
-- **Simulation:** Go2 + D1 in Gazebo Harmonic for testing without hardware.
+  too). [Comparison with sim results](docs/navigation/locomotion_comparison.md).
+- **MoveIt 2 for the arm:** `arm_moveit.sh` plans collision-free arm motion to
+  a camera pose (Cartesian goals, IK + OMPL) around the dog and a plant, with a
+  plant-inspection demo. Mock hardware for now.
+- **Simulation:** Go2 + D1 in Gazebo Harmonic, and the explorer + Nav2 in the
+  CMU Unity sim, for testing without hardware.
 
 ## Documentation
 
-| Doc | Contents |
-|---|---|
-| [Setup](docs/setup.md) | One-time workstation setup, everyday commands, flags and overrides |
-| [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
-| [3D Digital Twin & AI](docs/3d_nav.md) | Live 3D mapping, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, `--resume`, export and mesh |
-| [Explorer](docs/explorer.md) | Frontier explorer phases, parameters, manual launch |
-| [Exploration runbook](docs/exploration.md) | Run auto-explore on the robot or in the sim, fixes so far, known issues |
-| [Scripts](docs/scripts.md) | Every runtime script, ROS node and tool |
-| [D1-T arm](docs/d1arm.md) | Arm protocol, commands, joint limits, calibration |
-| [Camera](docs/camera.md) | Go2 camera relay, RViz display, who uses the feed |
-| [Camera + LiDAR fusion](docs/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
-| [Omni navigation](docs/omni_nav.md) | `--drive omni`: full Go2 mobility (MPPI reverse + sidestep), stuck recovery |
-| [Locomotion comparison](docs/locomotion_comparison.md) | `--drive diff` vs `hybrid` vs `omni`: sim results with plots, prior use, how to test both in the sim and on the dog |
-| [Waypoint tour](docs/tour.md) | RViz waypoint mode |
-| [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes, collision tuning, diagnostics |
-| [Lab nav fixes](docs/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |
-| [Development](docs/development.md) | Repository layout, lint hooks, legacy code, external projects |
-| [Status](docs/STATUS.md) | Current state and the robot test checklist |
-| [Roadmap](docs/roadmap.md) | Milestones and what is next |
-| [Simulation](gazebo/README.md) | Gazebo setup, what is simulated, limits, the rooms world |
-| [Unity sim](docs/simulation.md) | Test the explorer + Nav2 in the CMU Unity sim (no robot) |
-| [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations and rooms |
+All guides are in [`docs/`](docs/), grouped by topic. Status, roadmap and
+troubleshooting cover every area and sit at its top level.
+
+| Area | Doc | Contents |
+|---|---|---|
+| Overview | [Status](docs/STATUS.md) | Current state, current goals and the robot test checklist |
+| | [Roadmap](docs/roadmap.md) | Milestones and what is next |
+| | [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
+| | [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes (incl. the Go2 Wi-Fi dongle), collision tuning, diagnostics |
+| Setup | [Setup](docs/setup/setup.md) | One-time workstation setup, everyday commands, flags and overrides |
+| | [Scripts](docs/setup/scripts.md) | Every runtime script, ROS node and tool |
+| | [Development](docs/setup/development.md) | Repository layout, lint hooks, legacy code, external projects |
+| Navigation | [Explorer](docs/navigation/explorer.md) | Frontier auto-explore: running it, goal choice, parameters, fixes and sim results, known issues |
+| | [Drive modes](docs/navigation/drive_modes.md) | **New:** `--drive hybrid` (default) / `diff` / `omni`: MPPI reverse + sidestep, stuck recovery |
+| | [Locomotion comparison](docs/navigation/locomotion_comparison.md) | `diff` vs `hybrid` vs `omni`: sim results with plots, how to test them in the sim and on the dog |
+| | [Drift and shudder](docs/navigation/drift-and-shudder.md) | Why the dog drifts or steps in place while standing, and the fixes |
+| | [Waypoint tour](docs/navigation/tour.md) | RViz waypoint mode |
+| | [Lab nav fixes](docs/navigation/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |
+| AI and vision | [3D Digital Twin & AI](docs/ai_and_vision/3d_nav.md) | The one command `wifi_3d_nav.sh`: live 3D map, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, export and mesh |
+| | [Camera](docs/ai_and_vision/camera.md) | Go2 camera relay, RViz display, who uses the feed |
+| | [Camera + LiDAR fusion](docs/ai_and_vision/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
+| Hardware | [D1-T arm](docs/hardware/d1arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and **new:** MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
+| Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms world |
+| | [Unity sim](docs/simulation/unity.md) | **New:** the explorer + Nav2 in the CMU Unity sim on the host (`sim_explore.sh`, no robot) |
+| Config | [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations, rooms and survey reports |
 
 ## System Requirements
 
@@ -125,8 +132,7 @@ Other entry points:
   - the upstream [`go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi)
     clone in `~/files/go2-nav2-wifi`.
 - **Ollama** with `llava:7b`, for the VLM. `wifi_3d_nav.sh` starts `ollama serve` and pulls the model
-  when needed. A
-  host with a GPU is much faster.
+  when needed. A host with a GPU is much faster.
 - **Hardware:** Unitree Go2 EDU (Jetson). D1-T arm and a RealSense camera are
   optional.
 - **Viewer:** any modern browser with WebGL (Chrome, Edge, Firefox).

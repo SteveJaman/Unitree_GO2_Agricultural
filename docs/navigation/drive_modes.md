@@ -1,6 +1,6 @@
-# Full Go2 Mobility: Omnidirectional Navigation (`--drive omni`)
+# Drive modes: `--drive diff | hybrid | omni`
 
-[← Back to README](../README.md) · [3D Nav](3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../../README.md) · [3D Nav](../ai_and_vision/3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](../troubleshooting.md)
 
 Both launchers take `--drive diff|hybrid|omni`. All three stay supported; pick one per session:
 
@@ -41,9 +41,9 @@ to Unitree's `Move()`, and so does the simulator.
 
 ## How it is wired
 
-- **[`config/nav2/go2_omni.yaml`](../config/nav2/go2_omni.yaml):** all the
+- **[`config/nav2/go2_omni.yaml`](../../config/nav2/go2_omni.yaml):** all the
   settings: lattice file, MPPI critics and limits, smoother limits.
-- **[`scripts/tools/nav2_omni.py`](../scripts/tools/nav2_omni.py):** run by
+- **[`scripts/tools/nav2_omni.py`](../../scripts/tools/nav2_omni.py):** run by
   `wifi_nav.sh`. With `--omni` it copies that file to go2-nav2-wifi's
   `go2_nav2/config/go2_omni.yaml` and adds small hooks, tagged
   `# go2-omni`, to `lidar3d_planning.launch.py` and
@@ -53,7 +53,7 @@ to Unitree's `Move()`, and so does the simulator.
   `wifi_nav.sh --omni` installs `ros-humble-nav2-mppi-controller` into the
   container the first time (this needs internet). If the install fails, the
   session continues forward-only and prints a warning.
-- **[`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)**
+- **[`go2_stuck_recovery.py`](../../scripts/nodes/go2_stuck_recovery.py)**
   runs in **every** session; turn it off with `--no-recovery`. It watches
   `follow_path`. When a leg is aborted, it checks the local costmap for a
   free, known patch behind the dog, and with `hybrid` or `omni` also to its

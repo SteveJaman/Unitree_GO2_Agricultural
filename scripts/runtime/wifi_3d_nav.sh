@@ -331,7 +331,7 @@ do_export() {
             -o "/data/${name}_mesh.ply" --max-triangles "${TWIN_MESH_TRIANGLES}" ${TWIN_MESH_ARGS:-}
     echo "[3d] Mesh ready: ${dir}/${name}_mesh.ply"
     echo "[3d] View it: dashboard -> 3D Scan (http://<VM IP>:${TWIN_WEB_PORT}) during a session,"
-    echo "     or without the robot: $0 --view   (docs/3d_nav.md#presentation-mesh)"
+    echo "     or without the robot: $0 --view   (docs/ai_and_vision/3d_nav.md#presentation-mesh)"
 }
 
 # Dashboard + saved meshes without a robot or session (presentations).
@@ -596,7 +596,7 @@ if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
         TWIN_CAMERA_INFO_FILE="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
     fi
     [ -f "${TWIN_CAMERA_INFO_FILE}" ] || die "--fusion / --camera-obstacles need a camera calibration: ${TWIN_CAMERA_INFO_FILE} not found.
-       Run ./scripts/tools/calibrate_camera.sh with a session up (docs/camera_lidar_fusion.md)."
+       Run ./scripts/tools/calibrate_camera.sh with a session up (docs/ai_and_vision/camera_lidar_fusion.md)."
     for f in go2_fusion_camera.py go2_lidar_overlay.py go2_camera_obstacles.py; do
         [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
     done

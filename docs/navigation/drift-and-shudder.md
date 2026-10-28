@@ -1,6 +1,6 @@
 # Drift and shudder during navigation and exploration
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../../README.md) · [Status](../STATUS.md) · [Troubleshooting](../troubleshooting.md)
 
 Symptom (October 2026): during navigation and exploration, the Go2 sometimes
 walks into walls. Its pose seems to change as the controller drives it, it

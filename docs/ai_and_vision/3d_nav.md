@@ -1,8 +1,8 @@
 # 3D Digital Twin Navigation (RTAB-Map + YOLO + Web Dashboard)
 
-[← Back to README](../README.md) · [Roadmap](roadmap.md) · [Tour](tour.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../../README.md) · [Roadmap](../roadmap.md) · [Tour](../navigation/tour.md) · [Troubleshooting](../troubleshooting.md)
 
-[`scripts/runtime/wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) runs the
+[`scripts/runtime/wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) runs the
 normal 2D session and adds a live, dense 3D map of the building on top of it.
 When the Go2 camera publishes, the map is coloured from it. By default (turn
 it off with `--no-ai`):
@@ -61,13 +61,13 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   `RMW_IMPLEMENTATION` and the CycloneDDS config from a running session
   node, so it sees exactly the topics RViz sees. This also works with `--sim`.
 - **The web dashboard is the main interface.**
-  - **Served from `go2-3d`:** the dashboard ([`twin/webapp`](../twin/webapp/))
+  - **Served from `go2-3d`:** the dashboard ([`twin/webapp`](../../twin/webapp/))
     is built into the image, so the VM needs no Node.js. `go2-3d` serves it on
     port 3000 and runs rosbridge on 9090.
   - **Point clouds** are requested in CBOR (binary) and throttled (map every
     2 s).
   - **Camera images** are sent as 640 px JPEGs at 5 Hz, made by
-    [`image_compressor.py`](../twin/image_compressor.py) only while a browser
+    [`image_compressor.py`](../../twin/image_compressor.py) only while a browser
     watches. A raw 720p frame through rosbridge would be ~2.7 MB.
   - **Foxglove** stays available as an alternative (`--foxglove`).
 - **The camera is optional, detected at start.** In the default `auto` mode,
@@ -76,7 +76,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
     loop closures), and YOLO and the VLM start (unless `--no-ai`).
   - **No frame:** for example the Jetson camera backend is down
-    ([STATUS](STATUS.md#blocked-by-hardware)). The map stays LiDAR-only, so a
+    ([STATUS](../STATUS.md#blocked-by-hardware)). The map stays LiDAR-only, so a
     missing camera never stops mapping.
 
 ---
@@ -89,7 +89,7 @@ publishes no `camera_info`. `go2-3d` fills the gaps:
 | Piece | What it does |
 |---|---|
 | Static TF `front_camera → front_camera_optical` | The relay stamps images `front_camera_optical` (z forward, x right, y down). Its parent is the URDF's x-forward `front_camera` link (0.327, 0, 0.043) m, so only the rotation is added; `front_camera` itself is never re-published. Without that URDF link, `base_link → front_camera_optical` from `TWIN_CAMERA_TF="x y z yaw pitch roll"`; `none` disables it |
-| [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py) | `/camera/camera_info` with every frame. Pinhole intrinsics from `TWIN_CAMERA_HFOV_DEG` (120° default, 68.75° with `--sim`) |
+| [`go2_camera_info.py`](../../scripts/nodes/go2_camera_info.py) | `/camera/camera_info` with every frame. Pinhole intrinsics from `TWIN_CAMERA_HFOV_DEG` (120° default, 68.75° with `--sim`) |
 | `pointcloud_to_depthimage` (rtabmap_util) | Projects `/lidar3d/registered` into the camera → sparse depth image `/camera/lidar_depth` |
 | RTAB-Map `camera` mode | RGB + LiDAR depth + scan cloud. `/rtabmap/cloud_map` is coloured; the LiDAR still does the registration |
 
@@ -102,7 +102,7 @@ field of view, or fx/fy/cx/cy on `go2_camera_info.py`, and the real mount in
 `/camera/camera_info` and `go2_camera_info.py` is skipped; `--fusion` also
 undistorts the image ([below](#camera--lidar-fusion---fusion)).
 
-**YOLO11s** ([`twin/yolo_node.py`](../twin/yolo_node.py), started by `--ai`)
+**YOLO11s** ([`twin/yolo_node.py`](../../twin/yolo_node.py), started by `--ai`)
 runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
 
 | Topic | Content |
@@ -189,7 +189,7 @@ TF, calibration ─────►   LiDAR into    ──► /twin/depth/image  
 - **Logs:** `fusion_camera.log` reports RGB-D frames and LiDAR depth pixels
   per frame every 10 s; `overlay.log` the overlay.
 
-![Fused map in simulation after 2.3 m along the crop row](images/fusion_map_sim.png)
+![Fused map in simulation after 2.3 m along the crop row](../images/fusion_map_sim.png)
 
 *Top-down view of `/rtabmap/cloud_map` in `--sim --fusion` after driving
 2.3 m: tan path, brown bed edges and green tree rows from the camera;
@@ -199,7 +199,7 @@ white is LiDAR-only.*
 
 `wifi_nav.sh` adds three displays to the session's RViz layouts
 (`lidar3d_planning.rviz`, `lidar3d_navigation.rviz` in go2-nav2-wifi), once,
-via [`scripts/tools/rviz_add_camera.py`](../scripts/tools/rviz_add_camera.py):
+via [`scripts/tools/rviz_add_camera.py`](../../scripts/tools/rviz_add_camera.py):
 
 | Display | Topic | Shows |
 |---|---|---|
@@ -265,7 +265,7 @@ Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
 | `--fusion` | **Calibrated camera + LiDAR fusion** instead of `--camera`: the image is undistorted with the lens calibration, so colours line up; also publishes `/camera/lidar_overlay`. YOLO and the VLM run on it too. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
-| `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [omni_nav.md](omni_nav.md) and [locomotion_comparison.md](locomotion_comparison.md) |
+| `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [drive_modes.md](../navigation/drive_modes.md) and [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
 | `--foxglove` | Also start foxglove_bridge on `:8765`, see [Alternative visualization](#alternative-visualization-foxglove) |
@@ -309,7 +309,7 @@ turns it off). Each part can be left out (`--no-yolo`, `--no-vlm`,
 
 ### Auto-localization (`--ai`, `--resume`)
 
-[`auto_localize.py`](../scripts/nodes/auto_localize.py) runs once at session
+[`auto_localize.py`](../../scripts/nodes/auto_localize.py) runs once at session
 start. It publishes the dock pose (x=0, y=0, yaw=0 in `lidar3d_map`) as
 `geometry_msgs/PoseWithCovarianceStamped` on `/initialpose`, then exits, so
 nobody has to click "2D Pose Estimate" after a reboot at the dock.
@@ -327,7 +327,7 @@ nobody has to click "2D Pose Estimate" after a reboot at the dock.
 
 ### Battery manager
 
-[`battery_manager.py`](../scripts/nodes/battery_manager.py) runs inside
+[`battery_manager.py`](../../scripts/nodes/battery_manager.py) runs inside
 `go2-lidar3d`, because it needs the Unitree messages. It reads `bms_state.soc`
 from `/lf/lowstate`, the copy the Wi-Fi relay forwards, or from `/lowstate`.
 
@@ -346,7 +346,7 @@ is no battery, so it stays idle.
 
 ### VLM reasoning (Ollama)
 
-[`vlm_reasoning_node.py`](../scripts/nodes/vlm_reasoning_node.py) sends the
+[`vlm_reasoning_node.py`](../../scripts/nodes/vlm_reasoning_node.py) sends the
 newest camera frame to an Ollama server (`llava:7b` by default) with the
 prompt *"…Do you see a hydroponic station? Or is the path ahead blocked by a
 desk?…"*.
@@ -408,7 +408,7 @@ While a session runs, open a second terminal:
 2. The terminal prints its `lidar3d_map` coordinates and asks for a label,
    such as `Dock` or `Hydroponic_Station`. Enter skips the point.
 
-Labels are saved to [`config/semantic_locations.json`](../config/), with
+Labels are saved to [`config/semantic_locations.json`](../../config/), with
 `x, y, z`, the frame and the time. When the TF exists, the same point is also
 stored in `rtabmap_map`. Reusing a label replaces the old entry.
 
@@ -418,7 +418,7 @@ Notes:
   `/clicked_point`, so every labelled click is also a goal. To label without
   driving, publish on `/label_point` instead (with Foxglove's Publish tool,
   `--foxglove`), and run the node with `-p topic:=/label_point` (see
-  [`save_location.py`](../scripts/nodes/save_location.py)).
+  [`save_location.py`](../../scripts/nodes/save_location.py)).
 - **`lidar3d_map` coordinates hold only if the dog starts each session from
   the same spot.**
 
@@ -430,7 +430,7 @@ Like a robot vacuum, the twin splits the mapped floor into rooms, which you
 can name, merge and drive to. It runs in every session (`TWIN_ROOMS=1`).
 
 **Segmentation**
-([`twin/room_segmentation_node.py`](../twin/room_segmentation_node.py),
+([`twin/room_segmentation_node.py`](../../twin/room_segmentation_node.py),
 every 10 s when `/global_costmap/costmap` changed):
 
 1. Free space is every known cell with cost < 50.
@@ -468,7 +468,7 @@ them):
      safe-floor snapping as a tap;
   3. it drops the pin.
 
-**Saved** in [`config/semantic_rooms.json`](../config/) by the node: IDs,
+**Saved** in [`config/semantic_rooms.json`](../../config/) by the node: IDs,
 labels, polygons, goals, areas and merges. It is reloaded at the next start,
 and `--view` shows it offline. Like the other saved coordinates, it lines up
 with a later session only if the dog starts at the same dock.
@@ -507,7 +507,7 @@ This is the default (`TWIN_SURVEY_AUTO=1`). With `--manual`, `--no-explore`,
 of the bottom-left panel) starts and stops it from the dashboard, and
 stopping it there also ends an automatic survey.
 
-[`twin/survey_manager.py`](../twin/survey_manager.py) conducts the existing
+[`twin/survey_manager.py`](../../twin/survey_manager.py) conducts the existing
 nodes through these steps:
 
 | Step | What happens | Ends when |
@@ -543,7 +543,7 @@ person typed in the dashboard is **never overwritten**. Auto-named rooms show
 battery is back, the survey continues the step it was in (a room being
 scanned is visited again first).
 
-**Output** (in [`config/`](../config/)):
+**Output** (in [`config/`](../../config/)):
 
 - `survey_report.json`: per room the name, the reason (`objects (1 bed)`,
   `vlm` or `no evidence`), the type score, the objects found, the VLM answers
@@ -626,7 +626,7 @@ as frosted-glass panels, and no topic names or frame IDs are shown:
   (`go2_joint_state_bridge`, from `/lf/lowstate`), smoothed between
   messages; without joint data it holds the standing pose. The meshes are
   decimated to ~23k triangles (`twin/webapp/public/go2/`, made by
-  [`build_go2_model.py`](../scripts/tools/build_go2_model.py)). Its pose is
+  [`build_go2_model.py`](../../scripts/tools/build_go2_model.py)). Its pose is
   smoothed (exponential lerp/slerp of the TF pose, about 100 ms), so it glides
   instead of stepping; jumps over 2 m snap.
 - **The goal:** the waypoint pin (glowing red orb on a beam, pulsing ring)
@@ -642,7 +642,7 @@ Mouse: left-drag orbit, right-drag pan, wheel zoom.
 
 | Style | What it is | Performance |
 |---|---|---|
-| **Solid** (default) | The live `/rtabmap/cloud_map` through a **voxel grid filter** ([`voxelize`](../twin/webapp/src/ros/pointcloud.js)): one cube per occupied cell, mean colour, drawn as one instanced mesh, lit by sky + sun lights, casting shadows onto the scanned floor. | The voxel size starts at 6 cm (*Auto*) and grows until at most 80k voxels remain (~1M triangles, one draw call). Fixed sizes: *High* 5 cm, *Medium* 10 cm, *Low* 20 cm |
+| **Solid** (default) | The live `/rtabmap/cloud_map` through a **voxel grid filter** ([`voxelize`](../../twin/webapp/src/ros/pointcloud.js)): one cube per occupied cell, mean colour, drawn as one instanced mesh, lit by sky + sun lights, casting shadows onto the scanned floor. | The voxel size starts at 6 cm (*Auto*) and grows until at most 80k voxels remain (~1M triangles, one draw call). Fixed sizes: *High* 5 cm, *Medium* 10 cm, *Low* 20 cm |
 | **3D Scan** | A real triangle mesh exported after a run (below), in the light blue/grey surface material or its real colours, with shadows. Works without the robot. | Decimated to 300k triangles at export |
 | **Points** | The raw cloud | |
 
@@ -660,7 +660,7 @@ and `Mesh/DecimationFactor` are not RTAB-Map parameters.)
 ./scripts/runtime/wifi_3d_nav.sh --view            # no robot needed: dashboard on :3000 -> 3D Scan
 ```
 
-[`export_tour.py`](../scripts/tools/export_tour.py) (run inside the image) does:
+[`export_tour.py`](../../scripts/tools/export_tour.py) (run inside the image) does:
 
 1. outlier removal;
 2. 2 cm voxel downsample;
@@ -676,18 +676,18 @@ Real results depend on scan coverage: walk the dog slowly, past every wall.
 Tune with `TWIN_MESH_ARGS="--depth 10"` (finer) or `"--max-gap 0.15"` (fill
 more holes).
 
-The source is in [`twin/webapp`](../twin/webapp/):
+The source is in [`twin/webapp`](../../twin/webapp/):
 
-- [`App.jsx`](../twin/webapp/src/App.jsx): layout, waypoint, dock logic.
-- [`Scene.jsx`](../twin/webapp/src/Scene.jsx): the three.js scene.
-- [`MapMenu.jsx`](../twin/webapp/src/MapMenu.jsx).
-- [`StatusBar.jsx`](../twin/webapp/src/StatusBar.jsx).
-- [`VlmBadge.jsx`](../twin/webapp/src/VlmBadge.jsx).
-- [`ControlPanel.jsx`](../twin/webapp/src/ControlPanel.jsx).
-- [`CameraFeed.jsx`](../twin/webapp/src/CameraFeed.jsx).
-- [`RosProvider.jsx`](../twin/webapp/src/RosProvider.jsx): connection,
+- [`App.jsx`](../../twin/webapp/src/App.jsx): layout, waypoint, dock logic.
+- [`Scene.jsx`](../../twin/webapp/src/Scene.jsx): the three.js scene.
+- [`MapMenu.jsx`](../../twin/webapp/src/MapMenu.jsx).
+- [`StatusBar.jsx`](../../twin/webapp/src/StatusBar.jsx).
+- [`VlmBadge.jsx`](../../twin/webapp/src/VlmBadge.jsx).
+- [`ControlPanel.jsx`](../../twin/webapp/src/ControlPanel.jsx).
+- [`CameraFeed.jsx`](../../twin/webapp/src/CameraFeed.jsx).
+- [`RosProvider.jsx`](../../twin/webapp/src/RosProvider.jsx): connection,
   reconnect, `useTopic` / `usePublisher`.
-- [`src/ros/`](../twin/webapp/src/ros/): TF tree, PointCloud2 decoder, voxel
+- [`src/ros/`](../../twin/webapp/src/ros/): TF tree, PointCloud2 decoder, voxel
   filter.
 
 ### Click-to-go
@@ -728,7 +728,7 @@ land a little short of it, so look down from above for precise goals. Each
 click replaces the current goal.
 
 Node parameters (see
-[`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)):
+[`go2_click_to_goal.py`](../../scripts/nodes/go2_click_to_goal.py)):
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -786,7 +786,7 @@ camera images. The database also opens in
 | `TWIN_STOP_TIMEOUT` | `60` | Seconds RTAB-Map gets to save on stop |
 
 The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
-5 cm 3D grid) are in [`twin/start_inside.sh`](../twin/start_inside.sh).
+5 cm 3D grid) are in [`twin/start_inside.sh`](../../twin/start_inside.sh).
 
 ---
 
@@ -801,7 +801,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
 | Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
 | Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
-| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the VM's UDP buffers are too small: [troubleshooting](troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
+| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the VM's UDP buffers are too small: [troubleshooting](../troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
 | Map stays empty in camera mode; `rtabmap.log` repeats `Did not receive data` | RTAB-Map waits for camera + LiDAR depth together; the camera is too slow or missing. Same UDP buffer fix; `--lidar-only` maps without the camera |
 | No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
 | Merge refused | The two rooms don't touch; merge through the room between them first |
@@ -870,7 +870,7 @@ If the 3D panel shows *"Error creating WebGL context"*, see
 
 ### Import the layout
 
-[`config/foxglove_layout.json`](../config/foxglove_layout.json) contains a
+[`config/foxglove_layout.json`](../../config/foxglove_layout.json) contains a
 3D panel and an Image panel side by side:
 
 | Panel | Pre-configured |
@@ -953,7 +953,7 @@ never get a working WebGL context. Use one of these instead.
    the Foxglove desktop app on Windows ([download](https://foxglove.dev/download)),
    where it uses the real GPU. Connect to `ws://<VM IP>:8765` (the IP in the
    READY block) instead of `localhost`, and import
-   [`config/foxglove_layout.json`](../config/foxglove_layout.json). This needs the VM on
+   [`config/foxglove_layout.json`](../../config/foxglove_layout.json). This needs the VM on
    **bridged** networking. On NAT, add a port-forwarding rule for TCP `8765`
    (VM Settings → Network → Advanced → Port Forwarding) and connect to
    `ws://localhost:8765` on Windows. This also takes the rendering load off
@@ -987,7 +987,7 @@ never get a working WebGL context. Use one of these instead.
   gives dense depth.
 - **Doors and glass.** These need a custom-trained YOLO model; COCO has neither class.
 - **YOLO on the Jetson.** Inference runs on the VM's CPU at 2 Hz; the Jetson GPU
-  would be much faster. See [roadmap](roadmap.md#milestone-4--rtab-map-reconstruction).
+  would be much faster. See [roadmap](../roadmap.md#milestone-4--rtab-map-reconstruction).
 - **Room polygons follow the costmap.** Furniture splits or dents rooms. The
   door width is a single global setting; tune it per building.
 - **Room types are COCO-limited.** The survey can recognise bedrooms,
@@ -997,7 +997,7 @@ never get a working WebGL context. Use one of these instead.
   points at the database; a later run reuses it with `--resume` (mapping
   continues).
 - **Waypoint queue in the dashboard.** Each click replaces the current goal.
-  For a queued route, use the RViz waypoint panel ([Tour](tour.md)).
+  For a queued route, use the RViz waypoint panel ([Tour](../navigation/tour.md)).
 - **Costmap in the dashboard.** Not drawn; use RViz or Foxglove
   (`--foxglove`). Named locations are drawn.
 - **Live mesh.** The live view is voxels. A triangle mesh exists only after

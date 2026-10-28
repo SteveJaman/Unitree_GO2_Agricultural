@@ -14,7 +14,7 @@
 #
 # NAV_COMPARE_DIR defaults to ~/files/go2-nav2-wifi/ws/log/nav_compare.
 # sim_trial.sh wraps this for unattended Gazebo runs. See
-# docs/locomotion_comparison.md for the test protocol.
+# docs/navigation/locomotion_comparison.md for the test protocol.
 # ---------------------------------------------------------------------------
 set -eo pipefail
 

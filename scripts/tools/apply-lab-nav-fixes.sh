@@ -168,5 +168,5 @@ Done. Next:
   1. Stand the dog up FIRST (the map frame is fixed from the floor at startup).
   2. ./mapping.sh --3d --plan   -> check RViz model matches the real dog (no motion)
   3. ./mapping.sh --3d --nav    -> 2D Goal Pose 1-2 m ahead; keep the handheld remote as e-stop
-See LAB-NAV-FIXES.md (shared with this script) for checks, teleop and troubleshooting.
+See docs/navigation/LAB-NAV-FIXES.md (in this repo) for checks, teleop and troubleshooting.
 DONE

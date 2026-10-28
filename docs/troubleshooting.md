@@ -24,7 +24,7 @@ Sections are self-contained. Search for the error message you see.
 | `ros2: command not found` on host | ROS runs inside Docker | Use `go2sh` or `docker exec -u root go2-lidar3d bash -lc '…'` |
 | `Invalid frame ID "lidar3d_map"` | Session not up, or Point-LIO not forwarding | Check `mapping.sh --3d --nav` log; check Jetson relay |
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
-| Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [gazebo/README.md](../gazebo/README.md#troubleshooting), `./gazebo/test_sim.sh` |
+| Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [docs/simulation/gazebo.md](simulation/gazebo.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](../scripts/tools/test_explore.sh) |
 | Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | VM UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
 | Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
@@ -34,7 +34,7 @@ Sections are self-contained. Search for the error message you see.
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
-| Foxglove 3D panel: `Error creating WebGL context` | VirtualBox has no GPU acceleration (not a code error) | Enable 3D Acceleration + 128 MB video memory, install `virtualbox-guest-utils`, or use Foxglove on Windows / RViz. See [3d_nav.md](3d_nav.md#webgl--hardware-acceleration-error) |
+| Foxglove 3D panel: `Error creating WebGL context` | VirtualBox has no GPU acceleration (not a code error) | Enable 3D Acceleration + 128 MB video memory, install `virtualbox-guest-utils`, or use Foxglove on Windows / RViz. See [3d_nav.md](ai_and_vision/3d_nav.md#webgl--hardware-acceleration-error) |
 
 ---
 
@@ -401,7 +401,7 @@ controller aborts every new goal with `RegulatedPurePursuitController detected
 collision ahead!` because it can't turn in place first. The explorer then
 blacklists those frontiers. Drive it clear with 2D Goal Pose and click START
 again, or try `EXPLORE_UNSTICK_ENABLE=true`. Details and the planned fix:
-[exploration.md → Known issue](exploration.md#known-issue-stuck-next-to-an-obstacle).
+[explorer.md → Known issue](navigation/explorer.md#known-issue-stuck-next-to-an-obstacle).
 
 ### Explorer `state=EXPLORING`, `goals_sent=0`
 
@@ -511,12 +511,12 @@ Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
 [`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py),
 [`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) and
 [`start_arm.sh`](../scripts/runtime/start_arm.sh). Protocol and runbook:
-[d1arm.md](d1arm.md).
+[d1arm.md](hardware/d1arm.md).
 
 The arm is wired to the VM's `enp0s8` (VM `192.168.123.99`, arm `.100`, DDS
 domain 0, multicast discovery), or plugged into the Go2 and reached over
 Wi-Fi through the robot's bridge (`--robot <ip>` / `--arm-wifi`, see
-[d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
+[d1arm.md](hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
 in its troubleshooting table). Wired, the arm scripts run with the VM's
 `python3` and the pip `cyclonedds` package; don't source ROS in that shell.
 
@@ -603,7 +603,7 @@ Compare the raw telemetry to what you commanded (angles are **degrees**):
 
 ## Camera
 
-Full camera setup: [camera.md](camera.md). Relay code:
+Full camera setup: [camera.md](ai_and_vision/camera.md). Relay code:
 [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py).
 
 ### Relay crashes on start
@@ -665,7 +665,7 @@ sysctl net.core.rmem_max             # 212992 = the Ubuntu default, too small
 A 73 KB frame is ~50 UDP packets; one lost packet loses the frame. The same
 overflow starves RTAB-Map in camera mode (`Did not receive data`), so the map
 stays empty and YOLO and the VLM get no images. Raise the buffers once (see
-[setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)), then restart
+[setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup)), then restart
 the session:
 
 ```bash
@@ -708,7 +708,7 @@ go2sh
 rviz2 -d ~/files/Unitree_GO2_Agricultural/config/tour.rviz
 ```
 
-If [`config/tour.rviz`](../config/tour.rviz) doesn't exist, see [tour.md](tour.md) for how to save it.
+If [`config/tour.rviz`](../config/tour.rviz) doesn't exist, see [tour.md](navigation/tour.md) for how to save it.
 
 ### `rqt_reconfigure` shows no costmap nodes
 
@@ -728,7 +728,7 @@ If empty, the session isn't fully up. Wait longer, or check the
 ## Simulation
 
 Gazebo simulation problems (startup, rendering, `simarm0`, arm emulator): see
-[gazebo/README.md → Troubleshooting](../gazebo/README.md#troubleshooting).
+[docs/simulation/gazebo.md → Troubleshooting](simulation/gazebo.md#troubleshooting).
 `./gazebo/test_sim.sh` checks every simulated topic, motion and the arm.
 
 ---
@@ -741,7 +741,7 @@ connecting, empty
 YOLO obstacles ignored by Nav2, Ollama unreachable, no battery data, `--resume`
 maps not joined, CPU load, unsaved map, Foxglove
 *"Error creating WebGL context"* in a VirtualBox VM): see
-[3d_nav.md → Troubleshooting](3d_nav.md#troubleshooting). Logs are in
+[3d_nav.md → Troubleshooting](ai_and_vision/3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
 `click_to_goal.log`, `yolo.log`, `vlm.log`, `battery.log`, `camera_info.log`,
 `lidar_depth.log`, `rosbridge.log`, `web.log`, `image_compressor.log`) and
@@ -838,7 +838,7 @@ If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 6. **`wifi_nav.sh --arm` skipped the arm?** Read `go2-nav2-wifi/ws/log/arm.log`.
    A preflight failure there means the address or ping check failed; run
    `./scripts/runtime/start_arm.sh --check`. See also
-   [Arm — calibration](setup.md#arm--calibration-once).
+   [Arm — calibration](setup/setup.md#arm--calibration-once).
 
 ---
 

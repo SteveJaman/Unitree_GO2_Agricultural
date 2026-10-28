@@ -1,10 +1,10 @@
 # Setup and Everyday Use
 
-[← Back to README](../README.md) · [Architecture](architecture.md) · [3D twin](3d_nav.md) · [D1 arm](d1arm.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../../README.md) · [Architecture](../architecture.md) · [3D twin](../ai_and_vision/3d_nav.md) · [D1 arm](../hardware/d1arm.md) · [Troubleshooting](../troubleshooting.md)
 
 Everything needed on a new workstation, then the everyday commands for
 navigation and the arm. The 3D digital twin has its own one-time steps
-(image build, Ollama): [3d_nav.md → One-time setup](3d_nav.md#one-time-setup).
+(image build, Ollama): [3d_nav.md → One-time setup](../ai_and_vision/3d_nav.md#one-time-setup).
 
 ---
 
@@ -16,7 +16,7 @@ git clone https://github.com/dancher00/go2-nav2-wifi ~/files/go2-nav2-wifi
 git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree_GO2_Agricultural
 
 # 2. Apply lab fixes (RPP + velocity smoother + correct lidar mount),
-#    see docs/LAB-NAV-FIXES.md. Run it from the go2-nav2-wifi clone:
+#    see docs/navigation/LAB-NAV-FIXES.md. Run it from the go2-nav2-wifi clone:
 cd ~/files/go2-nav2-wifi
 bash ~/files/Unitree_GO2_Agricultural/scripts/tools/apply-lab-nav-fixes.sh
 
@@ -58,7 +58,7 @@ That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
 
 Every session: dog standing at the dock, then
 `./scripts/runtime/wifi_3d_nav.sh` and open `http://<VM IP>:3000`.
-Details: [3d_nav.md](3d_nav.md).
+Details: [3d_nav.md](../ai_and_vision/3d_nav.md).
 
 ## Navigation — every session
 
@@ -81,7 +81,7 @@ terminal to end. The physical remote is the emergency stop.
 
 ## Navigation — what the script does automatically
 
-1. Detects the VM's Wi-Fi IP on `enp0s3` and discovers the robot's IP (see [Network](architecture.md#network))
+1. Detects the VM's Wi-Fi IP on `enp0s3` and discovers the robot's IP (see [Network](../architecture.md#network))
 2. Kills stale processes on the VM **and** on the Jetson
 3. Cleans up partial runs on the robot
 4. Recreates the container if it was created for an old host or robot IP.
@@ -127,7 +127,7 @@ firmware. If the arm doesn't reply to ping, cold-boot the VM.
 ## Arm — calibration (once)
 
 The folded pose lives in `FOLDED_ANGLES` in
-[`scripts/nodes/d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py)
+[`scripts/nodes/d1_arm_calibration.py`](../../scripts/nodes/d1_arm_calibration.py)
 (degrees: joints 0–5, then the gripper).
 
 ```bash
@@ -163,7 +163,7 @@ stays holding instead.
 
 With the arm plugged into the Go2 instead of `enp0s8`, use
 `./scripts/runtime/wifi_nav.sh --arm-wifi`: same fold, over Wi-Fi through the
-robot's bridge ([d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2)).
+robot's bridge ([d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)).
 
 To run the arm on its own:
 
@@ -178,7 +178,7 @@ cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/start_arm.sh enable sleep 2 joint 0 20 sleep 3 release
 ```
 
-See [D1-T Arm Control](d1arm.md) for every command.
+See [D1-T Arm Control](../hardware/d1arm.md) for every command.
 
 ## Navigation — flags
 
@@ -186,11 +186,11 @@ See [D1-T Arm Control](d1arm.md) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
-| `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
-| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [omni_nav.md](omni_nav.md) |
+| `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
+| `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [drive_modes.md](../navigation/drive_modes.md) |
 | `--no-recovery` | Turn off the stuck recovery (on by default: an aborted leg backs the dog up 0.3 m and retries) |
 | `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |
-| `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/tour.md](tour.md) |
+| `--no-explore` | Manual waypoint mode (2D Goal Pose only) — see [docs/navigation/tour.md](../navigation/tour.md) |
 | `--no-camera` | Skip the camera relay |
 | `--nav` | Manual waypoint mode, camera on |
 | `--plan` | Preview only — no motion, no explore, no camera |

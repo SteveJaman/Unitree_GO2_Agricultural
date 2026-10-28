@@ -1,7 +1,7 @@
 <!-- markdownlint-disable-file MD025 -- "Phase" sections are top-level on purpose -->
 # Roadmap
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](tour.md) · [Camera](camera.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](navigation/tour.md) · [Camera](ai_and_vision/camera.md) · [Troubleshooting](troubleshooting.md)
 
 Two phases. Phase 1 is autonomous navigation and 3D tour capture. Phase 2
 is the D1-T arm and crop-scanning pipeline. Each phase has its own success
@@ -35,7 +35,7 @@ Everything else depends on this. Do not skip.
 | 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
 | 0.5 | DHCP-proof networking: host IP auto-detect, robot discovery, stale-container recreate | ✅ code ([`go2_net.sh`](../scripts/runtime/go2_net.sh)), ⏳ verify on robot |
 | 0.6 | Container `numpy<1.25` pin (fixes `numpy.dtype size changed`) | ✅ auto-handled by `wifi_nav.sh` |
-| 0.7 | Gazebo simulation of Go2 + D1 for off-robot testing | ✅ code ([`gazebo/`](../gazebo/README.md)), ⏳ first run on the VM (`gazebo/test_sim.sh`) |
+| 0.7 | Gazebo simulation of Go2 + D1 for off-robot testing | ✅ code ([`gazebo/`](../gazebo/), [docs](simulation/gazebo.md)), ⏳ first run on the VM (`gazebo/test_sim.sh`) |
 
 **Blocker:** if 0.1–0.2 fail, nothing downstream matters. `wifi_nav.sh`
 now SSHes into the Jetson and clears the port before every launch. Manual
@@ -44,7 +44,7 @@ fallback documented in [troubleshooting.md](troubleshooting.md).
 ## Milestone 1 — Visual waypoint system (RViz)
 
 No new code. Configuration only. Code-complete; needs a running RViz to
-save the layout. Step-by-step guide: [tour.md](tour.md).
+save the layout. Step-by-step guide: [tour.md](navigation/tour.md).
 
 | # | Task | Status |
 |---|---|---|
@@ -94,13 +94,13 @@ Required for reconstruction. Currently blocked by hardware.
 |---|---|---|
 | 3.1 | Fix the camera backend on Jetson | ⏳ hardware |
 | 3.2 | Verify image reaches VM | ⏳ |
-| 3.3 | Intel RealSense D435i | ✅ camera in hand, ZeroMQ sender / receiver written ([scripts](scripts.md)); ⏳ mount (on the arm first: [G.3](#current-goals-advisor-week-of-2026-10-22)) |
-| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](camera_lidar_fusion.md)), ⏳ run on robot |
+| 3.3 | Intel RealSense D435i | ✅ camera in hand, ZeroMQ sender / receiver written ([scripts](setup/scripts.md)); ⏳ mount (on the arm first: [G.3](#current-goals-advisor-week-of-2026-10-22)) |
+| 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](ai_and_vision/camera_lidar_fusion.md)), ⏳ run on robot |
 
 **Note:** the camera works live. The robot sends its JPEG frames over Wi-Fi
 (`scripts/robot/go2_camera_wifi.sh`, using the Jetson's `go2_camera_jpeg_cli`
 backend), and `go2_camera_relay.py` decodes them to `/camera/image_raw`.
-See [camera.md](camera.md).
+See [camera.md](ai_and_vision/camera.md).
 
 **Blocker if no RealSense:** built-in camera + LiDAR gives sparse color
 only. Enough to prototype, not enough for a real-estate quality tour.
@@ -148,7 +148,7 @@ The pipeline that produces the dense 3D tour.
 | 4.29 | Unitree Go2 model in the dashboard with leg joints from `/joint_states` | ✅ rendered and animated against synthetic joint data, ⏳ verify on robot |
 | 4.30 | Camera reliability over Wi-Fi: optical frame for YOLO/RTAB-Map, wait for the late robot camera, UDP buffer check | ✅ written (2026-10-27); ⏳ re-test after raising the VM's UDP buffers |
 
-**3D session:** [`docs/3d_nav.md`](3d_nav.md). `wifi_nav.sh` is unchanged;
+**3D session:** [`docs/ai_and_vision/3d_nav.md`](ai_and_vision/3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.
 
 **Compute risk:** RTAB-Map is heavier than Point-LIO. If the VM struggles,
@@ -193,7 +193,7 @@ Polish for repeated use.
 | 7.2 | Session logs archived per run | ⏳ |
 | 7.3 | Explorer failure recovery | ⏳ |
 | 7.4 | Config file for tour settings | ⏳ |
-| 7.5 | README section on running a tour | ✅ [`docs/tour.md`](tour.md) written |
+| 7.5 | README section on running a tour | ✅ [`docs/navigation/tour.md`](navigation/tour.md) written |
 
 ---
 
@@ -245,7 +245,7 @@ a colour + depth capture is saved at each pose (12.3–12.4).
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
 `rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1
 single joint, 2 all joints, 5 enable (`mode` 80000) / release (`mode` 0),
-7 home. Full table: [d1arm.md](d1arm.md).
+7 home. Full table: [d1arm.md](hardware/d1arm.md).
 
 **Network:** the arm is wired to the VM's `enp0s8` (VM `192.168.123.99`,
 arm `.100`, DDS domain 0, multicast discovery). It is kept separate from the Go2's Wi-Fi DDS on `enp0s3`
@@ -305,7 +305,7 @@ Hardware work.
 | 11.5 | Calibrate camera extrinsics to arm end effector | ⏳ |
 
 **Open question:** what sensor model is the hyperspectral camera? The ROS 2
-interface depends entirely on the answer. Document in [camera.md](camera.md)
+interface depends entirely on the answer. Document in [camera.md](ai_and_vision/camera.md)
 once known.
 
 ## Milestone 12 — Scan routine

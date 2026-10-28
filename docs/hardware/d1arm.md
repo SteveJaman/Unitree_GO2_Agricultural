@@ -1,5 +1,7 @@
 # Unitree D1 arm: setup and control runbook
 
+[← Back to README](../../README.md) · [Scripts](../setup/scripts.md) · [Gazebo sim](../simulation/gazebo.md) · [Troubleshooting → D1-T Arm](../troubleshooting.md#d1-t-arm) · [Roadmap](../roadmap.md)
+
 Controls a Unitree D1 / D1-T arm over DDS directly from the VM host (no
 container). Protocol source: Unitree "D1 Mechanical Arm Services Interface" doc,
 cross-checked against working open-source drivers (see References).
@@ -8,6 +10,22 @@ cross-checked against working open-source drivers (see References).
 Or plug the arm into the Go2 and control it over Wi-Fi: see
 [Arm over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2).
 Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
+
+## Two ways to move the arm
+
+| | Direct joint control | MoveIt 2 planning |
+|---|---|---|
+| Entry point | [`start_arm.sh`](../../scripts/runtime/start_arm.sh) → `d1_arm_control.py` | [`arm_moveit.sh`](../../scripts/runtime/arm_moveit.sh) → [`d1_moveit_config`](../../src/d1_moveit_config/) |
+| You give | Joint angles in degrees (`joint 1 30`, `joints …`), or poses taught by hand | Where the **gripper** should be: a position and orientation in space |
+| Who works out the joints | You do | MoveIt: inverse kinematics (KDL), then a collision-free path (OMPL) |
+| Collisions | Only the joint limits are checked: it can hit the dog or a plant | Plans around the Go2's body and the objects in the planning scene |
+| Drives | **The real arm**: wired, or over Wi-Fi through the Go2 | **Mock hardware only** for now: the arm moves in RViz, not for real |
+| Use it for | Bring-up, calibration, fold, Teach & Playback scans | Designing scan viewpoints around a plant, checking reach, planning |
+
+Direct control is what moves the real arm today. MoveIt is the planning side:
+it answers "can the camera reach that viewpoint, and how, without hitting
+anything?". Connecting it to the real arm is the open step (see
+[From plan to the real arm](#from-plan-to-the-real-arm)).
 
 ## Files
 
@@ -23,6 +41,8 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 | `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
 | `scripts/robot/unitree_arm/` | One-message ROS 2 package (`ArmString`) the bridge is built with on the robot |
+| `scripts/runtime/arm_moveit.sh` | **MoveIt 2:** builds the MoveIt package and the D1 description, starts RViz + `move_group` on mock hardware; `--inspect` runs the plant-inspection demo |
+| `src/d1_moveit_config/` | MoveIt 2 config for the D1-550 on the Go2: URDF + SRDF, kinematics, joint limits, controllers, launch, `inspect_plant.py` |
 
 `./scripts/runtime/wifi_nav.sh --arm` runs `start_arm.sh fold` in the
 background, alongside navigation; `--arm-wifi` does the same with the arm
@@ -90,7 +110,7 @@ workstation:
 D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi, TCP 18100──► laptop D1Arm
 ```
 
-- **Bridge (robot):** [`arm_bridge_wifi.py`](../scripts/robot/arm_bridge_wifi.py)
+- **Bridge (robot):** [`arm_bridge_wifi.py`](../../scripts/robot/arm_bridge_wifi.py)
   talks to the arm with the robot's ROS 2 Foxy (`rclpy`, message
   `unitree_arm/ArmString` = DDS `unitree_arm::msg::dds_::ArmString_`) on
   `eth0`, multicast, as on the workstation. It loads Unitree's CycloneDDS
@@ -100,7 +120,7 @@ D1 arm ──eth0, DDS domain 0──► arm_bridge_wifi.py (Jetson) ──Wi-Fi
   out.
 - **Why TCP:** arm traffic is small JSON at 10 Hz. TCP needs no DDS discovery
   over Wi-Fi and loses nothing (see the camera's Wi-Fi DDS problems in
-  [troubleshooting](troubleshooting.md#camera)).
+  [troubleshooting](../troubleshooting.md#camera)).
 - **Laptop:** `D1Arm` (`d1_arm_control.py`) takes `--robot <Go2 Wi-Fi IP>` or
   `ARM_ROBOT`. Every arm script follows it unchanged: the control CLI, `fold`,
   `read`, offset calibration, `teach_arm.py`, `play_arm.py`. `cyclonedds` is
@@ -316,39 +336,132 @@ Sim differences:
 - Gripper 0–65° maps to 0–30 mm of finger travel.
 
 The official D1 URDF limits are ±134.6° / ±89.95°, slightly inside the ±135° / ±90°
-used here, so a ±90° target is clamped by 0.05°. See [gazebo/README.md](../gazebo/README.md).
+used here, so a ±90° target is clamped by 0.05°. See [docs/simulation/gazebo.md](../simulation/gazebo.md).
 
-## MoveIt 2 and plant inspection
+## MoveIt 2: Cartesian planning (`arm_moveit.sh`)
 
-[`src/d1_moveit_config`](../src/d1_moveit_config/) is a MoveIt 2 setup for the
-D1-550 on the Go2's back. It plans collision-free arm motion (IK, OMPL) and
-runs on ros2_control **mock hardware**: the arm moves in RViz, not for real.
+[`src/d1_moveit_config`](../../src/d1_moveit_config/) is a MoveIt 2 setup for
+the D1-550 on the Go2's back. Instead of joint angles, you give MoveIt a target
+for the gripper (a position and an orientation in space). MoveIt solves the
+inverse kinematics and plans a collision-free motion to it. It runs on
+ros2_control **mock hardware**: commanded positions are echoed back as the
+state, so the arm moves in RViz exactly as planned, and the real arm is never
+touched.
 
-One-time install:
+### Install and run
+
+One-time, on the host (no Docker):
 
 ```bash
 sudo apt install ros-humble-moveit ros-humble-ros2-control ros-humble-ros2-controllers
+git clone https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM ~/files/unitree-D1-550-Robot-ARM   # d1_550_description
 ```
-
-Run:
 
 ```bash
-./scripts/runtime/arm_moveit.sh              # RViz + MoveIt; drag the marker, Plan & Execute
+./scripts/runtime/arm_moveit.sh              # build if needed, then RViz + MoveIt
 ./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
+./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
+./scripts/runtime/arm_moveit.sh --no-rviz    # headless (move_group + controllers only)
 ```
 
-`arm_moveit.sh` builds `d1_550_description` from
-`~/files/unitree-D1-550-Robot-ARM` (override with `D1_ARM_DIR`) together with
-`d1_moveit_config`. It uses ROS domain 78, localhost only, so nothing reaches
-the robot.
+What `arm_moveit.sh` does:
 
-**Model.** `world` is the ground under a standing Go2. The trunk (0.29 m up)
-and the space its legs occupy are collision boxes, so plans keep the arm off
-the dog. The D1 base sits 0.057 m above the trunk origin, matching
-`gazebo/sim/build_model.py`. `tool0` is between the fingertips, with x pointing
-out of the gripper: a wrist camera would look along it.
+1. Checks for ROS 2 Humble, MoveIt, ros2_control and the controllers, and
+   prints the `apt install` line if one is missing.
+2. Builds `d1_550_description` (from `D1_ARM_DIR`, default
+   `~/files/unitree-D1-550-Robot-ARM`) and `d1_moveit_config` into this repo's
+   `install/`, the first time or with `--build`.
+3. Isolates DDS: `ROS_DOMAIN_ID=78` (`ARM_ROS_DOMAIN_ID`),
+   `ROS_LOCALHOST_ONLY=1`, no `CYCLONEDDS_URI`. Nothing it publishes can reach
+   the robot (domain 64) or the arm (domain 0).
+4. Launches [`demo.launch.py`](../../src/d1_moveit_config/launch/demo.launch.py):
+   `robot_state_publisher`, `move_group` (OMPL), `ros2_control` with the
+   `arm_controller` and `gripper_controller` trajectory controllers, and RViz.
 
-**Inspection demo** ([`inspect_plant.py`](../src/d1_moveit_config/scripts/inspect_plant.py)):
+To use the same ROS graph from another terminal:
+
+```bash
+export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1
+source /opt/ros/humble/setup.bash && source install/setup.bash
+ros2 run d1_moveit_config inspect_plant.py --ros-args -p plan_only:=true
+```
+
+### Planning in RViz
+
+In the **MotionPlanning** panel, with planning group `arm`:
+
+1. Drag the interactive marker at the gripper (`tool0`) to where the camera
+   should be, and rotate it to where it should look.
+2. **Plan**: MoveIt solves IK for that pose and searches a collision-free
+   path. The preview animates the motion; a red arm means no valid plan.
+3. **Execute**: the mock arm follows the trajectory.
+
+Named states: `home` for the arm (all joints 0: upper arm vertical, forearm
+forward), `open` / `closed` for the gripper (group `gripper`).
+
+### Cartesian goals vs joint control
+
+With direct control you command joints, for example `joint 1 30` or
+`joints 0 -30 30 0 20 0 0`. The resulting camera position depends on all six
+angles together. Nothing checks the arm against the dog's body or the plant;
+only the joint limits are enforced.
+
+With MoveIt you command the **end effector** in Cartesian space:
+
+- **Goal:** a position for `tool0` (within 1 cm in `inspect_plant.py`) and an
+  orientation (its x axis, the camera's view direction, within ~9°; roll about
+  it is free).
+- **IK:** the KDL solver
+  ([`kinematics.yaml`](../../src/d1_moveit_config/config/kinematics.yaml),
+  5 ms resolution, 50 ms timeout) finds joint angles that reach it.
+- **Path:** OMPL searches a joint-space path from the current pose that avoids
+  every collision object: the Go2 trunk, the space its legs occupy, and
+  anything added to the planning scene (the bed and plant in the demo).
+- **Timing:** the trajectory is time-parameterised from
+  [`joint_limits.yaml`](../../src/d1_moveit_config/config/joint_limits.yaml),
+  scaled to 30 % by default because the arm rides on a walking robot.
+
+So the **end point** is Cartesian, but the path between poses is planned in
+joint space and is not a straight line. MoveIt's straight-line
+`compute_cartesian_path` (for example a linear sweep along a leaf row) is not
+used yet.
+
+| Units and names | Direct control | MoveIt |
+|---|---|---|
+| Arm joints | `0`–`5` | `Joint1`–`Joint6` |
+| Gripper | joint `6`, servo degrees | `Joint_L` / `Joint_R`, finger travel in metres (0–0.033) |
+| Angles | degrees | radians |
+| Limits | ±135, ±90, ±90, ±135, ±90, ±135 | from the D1-550 URDF (±134.6° / ±89.95°) |
+
+The joint order matches; the signs have **not** yet been checked against the
+firmware (the URDF's `Joint1` axis is −z).
+
+### Model
+
+- **`world`** is the ground under a standing Go2.
+- **The Go2** is two fixed collision boxes: the trunk, 0.29 m up, and the space
+  its legs occupy. Plans keep the arm off the dog.
+- **The D1 base** sits 0.057 m above the trunk origin, matching
+  `gazebo/sim/build_model.py`.
+- **`tool0`** is between the fingertips, 0.10 m past `Empty_Link6`, with x
+  pointing out of the gripper: a wrist camera would look along it.
+
+| File | Role |
+|---|---|
+| [`d1_go2.urdf.xacro`](../../src/d1_moveit_config/config/d1_go2.urdf.xacro) | Go2 boxes + the unchanged D1-550 URDF + `tool0` |
+| [`d1_go2.ros2_control.xacro`](../../src/d1_moveit_config/config/d1_go2.ros2_control.xacro) | `mock_components/GenericSystem`; the block a real-arm plugin would replace |
+| [`d1_go2.srdf`](../../src/d1_moveit_config/config/d1_go2.srdf) | Groups `arm` (`base_link` → `tool0`) and `gripper`, named states, disabled collision pairs |
+| [`kinematics.yaml`](../../src/d1_moveit_config/config/kinematics.yaml) | KDL IK solver |
+| [`joint_limits.yaml`](../../src/d1_moveit_config/config/joint_limits.yaml) | Velocity / acceleration limits, 0.3 default scaling |
+| [`moveit_controllers.yaml`](../../src/d1_moveit_config/config/moveit_controllers.yaml), [`ros2_controllers.yaml`](../../src/d1_moveit_config/config/ros2_controllers.yaml) | `FollowJointTrajectory` controllers for the arm and gripper |
+| [`demo.launch.py`](../../src/d1_moveit_config/launch/demo.launch.py) | MoveIt demo launch (OMPL pipeline) |
+| [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py) | Plant-inspection demo |
+
+### Plant-inspection demo (`--inspect`)
+
+[`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py) is
+also the example to copy for planning from code (the `MoveGroup` action with
+position + orientation constraints):
 
 1. Adds a raised bed (0.3 m) and a plant (0.3 m stem, 0.17 m canopy) to the
    planning scene, 0.5 m to the right of the dog. These are the same sizes as
@@ -357,23 +470,49 @@ out of the gripper: a wrist camera would look along it.
    5 directions (−50° to +50°) × 2 heights (level and 30° above), ordered as a
    sweep.
 3. For each one, asks MoveIt for a collision-free move with `tool0` pointing at
-   the canopy centre (within ~9°, roll free), holds for `dwell_s`, then moves on.
-   Unreachable viewpoints are skipped. Arrows in RViz show each viewpoint:
-   green reached, red not.
+   the canopy centre, holds for `dwell_s`, then moves on. Unreachable
+   viewpoints are skipped. Arrows in RViz (`/inspect_plant/markers`) show each
+   viewpoint: green reached, red not.
 4. Returns to `home`.
 
-Parameters: `plant_x`, `plant_y`, `standoff`, `azimuths_deg`, `elevations_deg`,
-`dwell_s`, `plan_only`, and `image_topic` (saves a frame per viewpoint to
-`~/plant_inspection/`). For example:
+| Parameter | Default | Meaning |
+|---|---|---|
+| `plant_x`, `plant_y` | `0.10`, `-0.50` | Plant position in `world` (x forward, y left) |
+| `bed_height` | `0.30` | Raised-bed height (m) |
+| `canopy_radius` | `0.17` | Canopy sphere radius (m); centre 0.38 m above the bed |
+| `standoff` | `0.10` | Camera distance from the canopy surface (m) |
+| `azimuths_deg` | `[-50, -25, 0, 25, 50]` | Viewpoint directions around the plant, 0 = facing the dog |
+| `elevations_deg` | `[0, 30]` | Viewpoint heights, 0 = level with the canopy centre |
+| `dwell_s` | `1.5` | Pause at each viewpoint (the capture moment) |
+| `plan_only` | `false` | Plan each move without executing it |
+| `planning_time` | `5.0` | Seconds per plan (5 attempts) |
+| `velocity_scaling` | `0.3` | Speed and acceleration scaling |
+| `image_topic` / `image_dir` | *(none)* / `~/plant_inspection` | Save a frame from this topic at each viewpoint |
 
 ```bash
 ros2 run d1_moveit_config inspect_plant.py --ros-args -p plant_x:=0.2 -p plan_only:=true
 ```
 
-**Not done yet:** driving the real arm. That needs a ros2_control hardware
-plugin, or a `FollowJointTrajectory` bridge, that sends MoveIt's trajectories
-as D1 JSON commands (funcode 2, degrees). Check the joint sign conventions
-against the firmware first: the URDF's Joint1 axis is −z.
+This is the MoveIt counterpart of the
+[advisor goal](../roadmap.md#current-goals-advisor-week-of-2026-10-22) to scan
+the fake plant from left, front and right. On the real arm the same goal uses
+Teach & Playback for now.
+
+### From plan to the real arm
+
+Not done yet. MoveIt's trajectories need to reach the D1 as JSON commands
+(funcode 2, all joints, degrees). Either:
+
+- **A ros2_control hardware plugin** in place of `mock_components/GenericSystem`
+  in `d1_go2.ros2_control.xacro`, writing positions to `rt/arm_Command` and
+  reading `rt/arm_Feedback`; or
+- **A `FollowJointTrajectory` bridge** that takes the `arm_controller`
+  trajectory and streams it through `D1Arm` (`d1_arm_control.py`), so it would
+  also work over Wi-Fi.
+
+Before that, check the joint signs and zero offsets against the firmware
+(`start_arm.sh feedback` at known poses), and keep MoveIt's velocity scaling
+low: the arm is on a walking robot.
 
 ## Troubleshooting
 
@@ -390,6 +529,10 @@ against the firmware first: the URDF's Joint1 axis is −z.
 | `--arm-wifi`: "not built on the robot yet" | the one-time build is missing | `ssh unitree@<robot-ip> 'bash ~/go2-agri-arm/arm_bridge_wifi.sh --build'` |
 | `--robot`: "bridge not reachable" | bridge not running, or another laptop IP | on the robot: `tail /tmp/arm_bridge_wifi.log`; it accepts only `GO2_HOST_IP` |
 | Bridge exits at once, `exit 139` / segfault | Foxy's stock CycloneDDS instead of Unitree's | `robot-source-unitree-ros.sh` must sit next to the bridge in `~/go2-agri-arm` (`wifi_nav.sh --arm-wifi` copies it) |
+| `arm_moveit.sh`: `moveit_ros_move_group missing` (or another package) | MoveIt / ros2_control not installed | `sudo apt install ros-humble-moveit ros-humble-ros2-control ros-humble-ros2-controllers` |
+| `arm_moveit.sh`: `D1 description not found` | the D1-550 description repo is elsewhere | `D1_ARM_DIR=<path> ./scripts/runtime/arm_moveit.sh` |
+| MoveIt: Plan fails / viewpoint marked red | pose out of reach, or every IK solution collides | move the target closer to the arm, loosen the orientation, or raise `planning_time` |
+| MoveIt topics invisible from another terminal | different DDS domain | `export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1` first |
 | `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |
 
 ## Arm roadmap
@@ -400,11 +543,12 @@ against the firmware first: the URDF's Joint1 axis is −z.
 | 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
 | 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Verified on the robot (2026-10-27): state, `joint`, `home`, `fold` over Wi-Fi; `power 0` open |
 | 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
+| 3b. MoveIt 2 planning | Cartesian goals, collision-free plans around the Go2 and the plant (`arm_moveit.sh`) | Implemented on mock hardware (pending physical test); real-arm bridge pending |
 | 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
-| 5. Scan routine | Move the camera through a plant-scanning path | Pending (`run` sequence files are the building block) |
+| 5. Scan routine | Move the camera through a plant-scanning path | Teach & Playback on the real arm; `inspect_plant.py` viewpoints in MoveIt |
 | 6. AI autonomy | Model commands both the dog and the arm | Long-term |
 
-See [docs/roadmap.md](roadmap.md) for the overall project roadmap.
+See [docs/roadmap.md](../roadmap.md) for the overall project roadmap.
 
 ## References
 

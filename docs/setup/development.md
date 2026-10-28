@@ -1,6 +1,6 @@
 # Development
 
-[← Back to README](../README.md) · [Scripts](scripts.md) · [Status](STATUS.md) · [Roadmap](roadmap.md)
+[← Back to README](../../README.md) · [Scripts](scripts.md) · [Status](../STATUS.md) · [Roadmap](../roadmap.md)
 
 Repository layout, lint hooks, archived code and external projects.
 
@@ -8,7 +8,7 @@ Repository layout, lint hooks, archived code and external projects.
 
 ## Repository Structure
 
-> Code blocks can't contain clickable links. Use the [Documentation](../README.md#documentation)
+> Code blocks can't contain clickable links. Use the [Documentation](../../README.md#documentation)
 > section above, or browse the folders directly on GitHub.
 
 ```text
@@ -27,21 +27,31 @@ Unitree_GO2_Agricultural/
 │   ├── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
 │   └── semantic_locations.json       # named points from --save-location (created on first save)
 ├── docs/
-│   ├── setup.md                      # one-time setup, everyday commands, flags
+│   ├── STATUS.md                     # current state, current goals, robot test checklist
+│   ├── roadmap.md                    # milestones
 │   ├── architecture.md               # scope, data flow, network / DDS
-│   ├── 3d_nav.md                     # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
-│   ├── explorer.md                   # frontier explorer
-│   ├── scripts.md                    # scripts reference
-│   ├── d1arm.md                      # D1 arm runbook
-│   ├── camera.md                     # live camera setup
-│   ├── camera_lidar_fusion.md        # camera calibration + LiDAR overlay check, --fusion
-│   ├── omni_nav.md                   # --omni: full Go2 mobility, stuck recovery
-│   ├── tour.md                       # waypoint mode setup
 │   ├── troubleshooting.md            # problems, fixes, collision tuning
-│   ├── LAB-NAV-FIXES.md              # lab fixes for upstream go2-nav2-wifi
-│   ├── development.md                # this file
-│   ├── STATUS.md                     # current state, robot test checklist
-│   └── roadmap.md                    # milestones
+│   ├── setup/
+│   │   ├── setup.md                  # one-time setup, everyday commands, flags
+│   │   ├── scripts.md                # scripts reference
+│   │   └── development.md            # this file
+│   ├── navigation/
+│   │   ├── explorer.md               # frontier explorer: run, goal choice, parameters, fixes, results
+│   │   ├── drive_modes.md            # --drive hybrid | diff | omni, stuck recovery
+│   │   ├── locomotion_comparison.md  # drive-mode trials (sim), how to test on the dog
+│   │   ├── drift-and-shudder.md      # pose drift / shudder investigation
+│   │   ├── tour.md                   # waypoint mode setup
+│   │   └── LAB-NAV-FIXES.md          # lab fixes for upstream go2-nav2-wifi
+│   ├── ai_and_vision/
+│   │   ├── 3d_nav.md                 # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
+│   │   ├── camera.md                 # live camera setup
+│   │   └── camera_lidar_fusion.md    # camera calibration + LiDAR overlay check, --fusion
+│   ├── hardware/
+│   │   └── d1arm.md                  # D1 arm runbook: direct control, Wi-Fi, Teach & Playback, MoveIt 2
+│   ├── simulation/
+│   │   ├── gazebo.md                 # Gazebo Harmonic: Go2 + D1
+│   │   └── unity.md                  # CMU Unity sim: explorer + Nav2
+│   └── images/                       # figures used by the docs
 ├── scripts/
 │   ├── runtime/                      # shell entry points
 │   │   ├── wifi_nav.sh               # main orchestrator
@@ -49,6 +59,8 @@ Unitree_GO2_Agricultural/
 │   │   ├── wifi_mapping.sh           # mapping-only wrapper
 │   │   ├── start_rtabmap.sh          # older manual RTAB-Map launcher
 │   │   ├── start_arm.sh              # D1-T arm entry point (preflight, fold, control)
+│   │   ├── arm_moveit.sh             # MoveIt 2 for the arm on mock hardware, --inspect demo
+│   │   ├── sim_explore.sh            # CMU Unity sim + go2_nav2 + explorer, on the host
 │   │   └── go2_net.sh                # shared IP detection / robot discovery
 │   ├── nodes/                        # ROS 2 Python nodes
 │   │   ├── frontier_explorer.py      # custom explorer
@@ -81,7 +93,7 @@ Unitree_GO2_Agricultural/
 │       ├── apply-lab-nav-fixes.sh    # one-time upstream go2-nav2-wifi fixes
 │       ├── diag_arm.sh               # D1 arm diagnostic
 │       └── calibrate_arm.py          # D1 arm per-joint offset calibration
-├── gazebo/                           # Gazebo simulation (Go2 + D1), see gazebo/README.md
+├── gazebo/                           # Gazebo simulation (Go2 + D1), see docs/simulation/gazebo.md
 │   ├── setup_gazebo.sh / run_sim.sh / test_sim.sh
 │   ├── docker/Dockerfile             # go2-sim:local (Humble + Gazebo Harmonic)
 │   ├── sim/                          # model builder, robot bridge, D1 emulator
@@ -100,11 +112,14 @@ Unitree_GO2_Agricultural/
 │       ├── src/ros/quality.js        # performance mode (software renderer detection)
 │       └── public/go2/               # decimated go2_description meshes (build_go2_model.py)
 ├── src/
-│   └── go2_explore_panel/            # RViz panel with Auto Explore toggle
+│   ├── go2_explore_panel/            # RViz panel with Auto Explore toggle
+│   ├── d1_moveit_config/             # MoveIt 2 for the D1 on the Go2 (arm_moveit.sh), inspect_plant.py
+│   ├── go2_sim_bridge/               # CMU Unity sim adapter + launch (sim_explore.sh)
+│   └── go2_vlm/                      # VLM answers -> Nav2 keepout mask + speed limit
 └── cmu-legacy/                       # archived CMU-stack code, not used
 ```
 
-Folders: [`config/`](../config/) · [`docs/`](./) · [`scripts/`](../scripts/) · [`twin/`](../twin/) · [`src/go2_explore_panel/`](../src/go2_explore_panel/) · [`cmu-legacy/`](../cmu-legacy/)
+Folders: [`config/`](../../config/) · [`docs/`](../) · [`scripts/`](../../scripts/) · [`twin/`](../../twin/) · [`src/go2_explore_panel/`](../../src/go2_explore_panel/) · [`cmu-legacy/`](../../cmu-legacy/)
 
 ---
 
@@ -123,9 +138,9 @@ Hooks cover: Python (ruff), shell (shellcheck), C++ (clang-format), Markdown
 (markdownlint), and general hygiene (trailing whitespace, EOF newline, large
 files). To skip once: `git commit --no-verify`.
 
-Session notes live in [docs/STATUS.md](STATUS.md).
+Session notes live in [docs/STATUS.md](../STATUS.md).
 
-The Markdown rules are in [`.markdownlint.jsonc`](../.markdownlint.jsonc).
+The Markdown rules are in [`.markdownlint.jsonc`](../../.markdownlint.jsonc).
 Lint the docs by hand with:
 
 ```bash
@@ -137,8 +152,8 @@ npx markdownlint-cli2 README.md "docs/*.md"
 ## Legacy
 
 Earlier work based on the CMU `autonomy_stack_go2` running over Ethernet or
-the Unity simulation is archived under [`cmu-legacy/`](../cmu-legacy/) for reference. It is not
-part of the active pipeline. See [`cmu-legacy/README.md`](../cmu-legacy/README.md).
+the Unity simulation is archived under [`cmu-legacy/`](../../cmu-legacy/) for reference. It is not
+part of the active pipeline. See [`cmu-legacy/README.md`](../../cmu-legacy/README.md).
 
 ---
 

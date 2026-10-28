@@ -1,6 +1,6 @@
-# Simulation: frontier explorer in the CMU Unity sim
+# Unity simulation: frontier explorer in the CMU Unity sim
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Roadmap](roadmap.md)
+[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [Explorer](../navigation/explorer.md) · [Status](../STATUS.md) · [Roadmap](../roadmap.md)
 
 Test `frontier_explorer.py` and the go2-nav2-wifi Nav2 config without the robot.
 Everything runs on the host, without Docker.
@@ -12,7 +12,7 @@ Everything runs on the host, without Docker.
 
 ## What runs
 
-```
+```text
 autonomy_stack_go2 (CMU)          go2_sim_bridge            go2-nav2-wifi (unmodified)
 ────────────────────────          ──────────────            ──────────────────────────
 Unity Model.x86_64                                          lidar3d_planning.launch.py
@@ -26,8 +26,8 @@ vehicleSimulator ──── /state_estimation ──► TF lidar3d_map→base_
 - Nav2 runs from the real launch files (`GO2_LIDAR3D_NAV=1` profile: footprint
   and Smac lattice planner), so a result in sim carries over to the robot.
 - Explorer parameters are in
-  [`explorer_sim.yaml`](../src/go2_sim_bridge/config/explorer_sim.yaml). They
-  match what [`wifi_nav.sh`](../scripts/runtime/wifi_nav.sh) passes. When you
+  [`explorer_sim.yaml`](../../src/go2_sim_bridge/config/explorer_sim.yaml). They
+  match what [`wifi_nav.sh`](../../scripts/runtime/wifi_nav.sh) passes. When you
   change one, change the other.
 - CMU's own local planner, terrain analysis and RViz are **not** started.
 - The sim camera is republished on `/camera/image/raw` (useful for VLM work).
@@ -54,6 +54,7 @@ this repo's `install/`. That repo's `ws/install` is built in Docker with a
 `/ws` prefix, so the host cannot use it.
 
 Prerequisites:
+
 - ROS 2 Humble and `ros-humble-navigation2`
 - `~/files/autonomy_stack_go2` built, with the Unity environment unzipped
   (see its README)
@@ -77,6 +78,7 @@ Prerequisites:
   failed.
 
 Explorer issues the sim exposed, now fixed in `frontier_explorer.py`:
+
 1. **Blacklist was ineffective.** An abandoned frontier `(0.58, 2.03)` was
    picked again 20 s later, even though `frontier_blacklist_s` is 30. The key
    was the centroid pixel, the check looked at the first 10 cluster pixels,
@@ -188,7 +190,7 @@ footprint against lethal costmap cells at 5 Hz:
 
 | File | Role |
 |---|---|
-| [`cmu_bridge.py`](../src/go2_sim_bridge/go2_sim_bridge/cmu_bridge.py) | Topic/TF adapter |
-| [`cmu_unity_sim.launch.py`](../src/go2_sim_bridge/launch/cmu_unity_sim.launch.py) | Sim side only (Unity, endpoint, vehicleSimulator, bridge) |
-| [`sim_explore.launch.py`](../src/go2_sim_bridge/launch/sim_explore.launch.py) | Sim + go2_nav2 + explorer + RViz |
-| [`sim_explore.sh`](../scripts/runtime/sim_explore.sh) | Checks, build, isolated DDS, launch |
+| [`cmu_bridge.py`](../../src/go2_sim_bridge/go2_sim_bridge/cmu_bridge.py) | Topic/TF adapter |
+| [`cmu_unity_sim.launch.py`](../../src/go2_sim_bridge/launch/cmu_unity_sim.launch.py) | Sim side only (Unity, endpoint, vehicleSimulator, bridge) |
+| [`sim_explore.launch.py`](../../src/go2_sim_bridge/launch/sim_explore.launch.py) | Sim + go2_nav2 + explorer + RViz |
+| [`sim_explore.sh`](../../scripts/runtime/sim_explore.sh) | Checks, build, isolated DDS, launch |

@@ -1,10 +1,10 @@
 # Architecture and Network
 
-[← Back to README](../README.md) · [Setup](setup.md) · [Scripts](scripts.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../README.md) · [Setup](setup/setup.md) · [Scripts](setup/scripts.md) · [Troubleshooting](troubleshooting.md)
 
 How the Go2, the laptop VM and the D1-T arm fit together, and how the
 network is found and kept apart. For the 3D digital twin (RTAB-Map, web
-dashboard, AI nodes) see [3d_nav.md](3d_nav.md#architecture).
+dashboard, AI nodes) see [3d_nav.md](ai_and_vision/3d_nav.md#architecture).
 
 ---
 
@@ -20,7 +20,7 @@ Two integrated capabilities:
 
 The two systems are independent today. Integration — an AI model commanding
 both the dog and the arm — is the long-term goal. First steps toward it are
-in the [3D Digital Twin](3d_nav.md) session:
+in the [3D Digital Twin](ai_and_vision/3d_nav.md) session:
 
 - a live 3D map;
 - YOLO obstacles;
@@ -106,7 +106,7 @@ Key facts:
   the arm's DDS stays on the Go2's internal network; only TCP crosses Wi-Fi.
 - **Never re-enable an enabled arm.** Enable-all sent to an already enabled
   D1 drives it back to its last multi-joint target (found 2026-10-27); see
-  [d1arm.md](d1arm.md#arm-over-wi-fi-plugged-into-the-go2).
+  [d1arm.md](hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2).
 
 ---
 

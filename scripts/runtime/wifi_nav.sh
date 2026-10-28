@@ -17,7 +17,7 @@
 #           too, and the planner uses omnidirectional lattice moves:
 #           config/nav2/go2_omni.yaml, scripts/tools/nav2_omni.py.
 #   --diff / --hybrid / --omni are short for these.
-# Comparison and how to test both: docs/locomotion_comparison.md
+# Comparison and how to test both: docs/navigation/locomotion_comparison.md
 # Every session runs go2_stuck_recovery.py: when a leg is aborted (dog facing a
 # wall) it steps back (and aside with --omni) and retries; --no-recovery: off.
 #

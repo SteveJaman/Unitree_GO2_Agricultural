@@ -1,13 +1,13 @@
 # RViz Waypoint Mode and Tour Setup
 
-[← Back to README](../README.md) · [Roadmap](roadmap.md) · [Camera](camera.md) · [Troubleshooting](troubleshooting.md)
+[← Back to README](../../README.md) · [Roadmap](../roadmap.md) · [Camera](../ai_and_vision/camera.md) · [Troubleshooting](../troubleshooting.md)
 
 Setup guide to replace the single-goal "2D Goal Pose" tool with a queued
 waypoint system that draws a visible route on the map.
 
 The Nav2 RViz panel is already installed in the container. This guide
 wires it up in the RViz layout and saves it to
-[`config/tour.rviz`](../config/tour.rviz) so it loads automatically in
+[`config/tour.rviz`](../../config/tour.rviz) so it loads automatically in
 future sessions.
 
 ---
@@ -25,9 +25,9 @@ future sessions.
 
 ## Prerequisites
 
-- A running session: [`./scripts/runtime/wifi_nav.sh`](../scripts/runtime/wifi_nav.sh)
+- A running session: [`./scripts/runtime/wifi_nav.sh`](../../scripts/runtime/wifi_nav.sh)
   (or `wifi_nav.sh --sim` to build and test the layout against the
-  [Gazebo simulation](../gazebo/README.md) without the robot)
+  [Gazebo simulation](../simulation/gazebo.md) without the robot)
 - RViz window open with a live map and a valid TF tree
   (`lidar3d_map → base_link` resolving)
 - The `nav2_rviz_plugins` package installed (it is, by default, in the
@@ -96,7 +96,7 @@ planner routes the way it does.
 The relay publishes reliably. A Best Effort display loses most of the large
 raw frames.
 
-See [camera.md](camera.md) for the full camera setup.
+See [camera.md](../ai_and_vision/camera.md) for the full camera setup.
 
 ### 6. Save the config
 
@@ -158,7 +158,7 @@ immediately. Options:
 - **Physical remote** — the safest, always works
 - **Ctrl+C** in the terminal running `wifi_nav.sh` — stops everything
 - **STOP button** in the Go2 Explore panel
-  ([`src/go2_explore_panel/`](../src/go2_explore_panel/)) — publishes `Bool(false)`
+  ([`src/go2_explore_panel/`](../../src/go2_explore_panel/)) — publishes `Bool(false)`
   to `/explore/resume`, which stops the explorer but not an in-flight
   waypoint route
 
@@ -187,7 +187,7 @@ the diff.
 
 ## Helper script
 
-[`scripts/tools/save_rviz_config.sh`](../scripts/tools/save_rviz_config.sh) prints these exact steps in the
+[`scripts/tools/save_rviz_config.sh`](../../scripts/tools/save_rviz_config.sh) prints these exact steps in the
 terminal while RViz is open. Useful as a reminder if you forget the order:
 
 ```bash
@@ -202,7 +202,7 @@ RViz.
 ## Combining with the explorer
 
 Waypoint mode and the frontier explorer
-([`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py)) are independent:
+([`frontier_explorer.py`](../../scripts/nodes/frontier_explorer.py)) are independent:
 
 - **Waypoint mode** — you click, the robot goes to each point in order
 - **Explorer** — the robot picks its own frontiers and sends itself goals
@@ -232,22 +232,22 @@ Pick one per session.
 | Path line doesn't appear | Path display missing or wrong topic | Add Path on `/plan`; verify `/plan` publishes while a goal is active |
 | Waypoints don't persist on the map | Waypoint panel closed or reset | Re-add the panel; check **File → Save Config As** was done |
 | Robot doesn't start following | Panel didn't receive the click, or the BT navigator is inactive | Check `ros2 lifecycle get /bt_navigator` returns `active` |
-| All waypoints turn red at once | Planner rejected them (goal inside an inflated obstacle) | Move waypoints away from walls; run [`./scripts/tools/tune_costmap.sh --safe`](../scripts/tools/tune_costmap.sh) |
+| All waypoints turn red at once | Planner rejected them (goal inside an inflated obstacle) | Move waypoints away from walls; run [`./scripts/tools/tune_costmap.sh --safe`](../../scripts/tools/tune_costmap.sh) |
 | Saved `tour.rviz` doesn't load | Version mismatch or a plugin missing | Open RViz without `-d`, redo the setup, save again |
 
-More: [troubleshooting.md](troubleshooting.md#rviz--vm).
+More: [troubleshooting.md](../troubleshooting.md#rviz--vm).
 
 ---
 
 ## What's next after waypoints work
 
-Waypoint mode is [Milestone 1](roadmap.md#milestone-1--visual-waypoint-system-rviz) in the roadmap. Once a 3-waypoint
+Waypoint mode is [Milestone 1](../roadmap.md#milestone-1--visual-waypoint-system-rviz) in the roadmap. Once a 3-waypoint
 route executes cleanly, the next steps are:
 
-1. **[Milestone 2](roadmap.md#milestone-2--explorer-verification)** — verify the explorer produces goals on a live map
-2. **[Milestone 3](roadmap.md#milestone-3--camera-pipeline)** — camera backend fix on the Jetson
-3. **[Milestone 4](roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour). The live 3D version, with click-to-go goals in the web dashboard, is [`wifi_3d_nav.sh`](3d_nav.md)
-4. **[Milestone 5](roadmap.md#milestone-5--capture-automation)** — spin-on-goal capture (`-p spin_on_goal:=true`)
-5. **[Milestone 6](roadmap.md#milestone-6--end-to-end-autonomous-capture)** — one-command end-to-end tour capture
+1. **[Milestone 2](../roadmap.md#milestone-2--explorer-verification)** — verify the explorer produces goals on a live map
+2. **[Milestone 3](../roadmap.md#milestone-3--camera-pipeline)** — camera backend fix on the Jetson
+3. **[Milestone 4](../roadmap.md#milestone-4--rtab-map-reconstruction)** — RTAB-Map reconstruction (dense 3D tour). The live 3D version, with click-to-go goals in the web dashboard, is [`wifi_3d_nav.sh`](../ai_and_vision/3d_nav.md)
+4. **[Milestone 5](../roadmap.md#milestone-5--capture-automation)** — spin-on-goal capture (`-p spin_on_goal:=true`)
+5. **[Milestone 6](../roadmap.md#milestone-6--end-to-end-autonomous-capture)** — one-command end-to-end tour capture
 
-See [roadmap.md](roadmap.md) for the full list and status.
+See [roadmap.md](../roadmap.md) for the full list and status.

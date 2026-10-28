@@ -24,7 +24,7 @@
   <end_effector name="gripper" parent_link="Empty_Link6" group="gripper" parent_group="arm"/>
 
   <!-- Pairs that never need collision checking. Adjacent links, plus pairs
-       found never/always in contact by sampling (see docs/d1arm.md). -->
+       found never/always in contact by sampling (see docs/hardware/d1arm.md). -->
   <disable_collisions link1="go2_trunk" link2="go2_legs" reason="Adjacent"/>
   <disable_collisions link1="go2_trunk" link2="base_link" reason="Adjacent"/>
   <disable_collisions link1="go2_legs" link2="base_link" reason="Never"/>

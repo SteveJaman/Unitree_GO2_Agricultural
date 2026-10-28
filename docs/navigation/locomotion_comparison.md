@@ -1,6 +1,6 @@
 # Locomotion Comparison: `--drive diff` vs `hybrid` vs `omni`
 
-[← Back to README](../README.md) · [Omni navigation](omni_nav.md) · [Exploration](exploration.md) · [Scripts](scripts.md)
+[← Back to README](../../README.md) · [Drive modes](drive_modes.md) · [Explorer](explorer.md) · [Scripts](../setup/scripts.md)
 
 How Nav2 should move the Go2: like a two-wheeled robot (the original setup),
 or with what a quadruped can also do (walk backwards, sidestep). This page has
@@ -48,7 +48,7 @@ How `hybrid` is wired:
 
 - Nav2 runs exactly as in `diff`. Its velocity smoother clamps sideways speed
   to 0.
-- To sidestep, [`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)
+- To sidestep, [`go2_stuck_recovery.py`](../../scripts/nodes/go2_stuck_recovery.py)
   bypasses the smoother. It gets `cmd_topic:=/cmd_vel escape_delay_s:=1.5`
   and `allow_sidestep:=true`.
 - The 1.5 s delay lets the smoother finish braking after the abort. The
@@ -100,7 +100,7 @@ here means the original real-dog setup **plus** these fixes, not plain Nav2.
 
 | Change | Stock behaviour | Ours |
 |---|---|---|
-| **Stuck recovery** ([`go2_stuck_recovery.py`](../scripts/nodes/go2_stuck_recovery.py)) | After an abort ("collision ahead"), the dog stands there facing the wall | Checks the local costmap for known free space behind the dog, steps back 0.3 m at 0.12 m/s, then re-sends the goal (up to 2 tries) |
+| **Stuck recovery** ([`go2_stuck_recovery.py`](../../scripts/nodes/go2_stuck_recovery.py)) | After an abort ("collision ahead"), the dog stands there facing the wall | Checks the local costmap for known free space behind the dog, steps back 0.3 m at 0.12 m/s, then re-sends the goal (up to 2 tries) |
 | **Sidestep escape** (`hybrid`) | Impossible: the velocity smoother clamps `vy` to 0 | If the space behind is blocked, it tries left, then right. The command goes straight to `/cmd_vel`, 1.5 s after the abort |
 | **Inflation counts as free** for recovery (`free_threshold` 99, was 50) | In a doorway every cell is inflation, so recovery reported `no free space` every time | It still refuses inscribed and lethal cells and unknown space |
 | **Recovery on the stack's DDS setup** (`DDS_EXEC_ENV`) | Recovery never saw the aborts | It sees and handles them |
@@ -113,13 +113,13 @@ here means the original real-dog setup **plus** these fixes, not plain Nav2.
 | **Lidar mount from the official Go2 URDF** (`lidar3d_robot_viz.yaml`) | The shipped value came from another robot. On ours it tilted the body about 20° and turned the heading about 120°, so Nav2 steered on the wrong heading |
 | **Regulated Pure Pursuit instead of DWB**, behind a rotation shim (turns in place when more than 0.8 rad off the path) | DWB plans from the measured velocity, which is noisy over Wi-Fi (about ±0.1 m/s while standing still). RPP follows the path geometrically |
 | **Velocity smoother** (acceleration limits, deadband) | Smooth starts and stops. No stepping in place on tiny commands |
-| **Floor filter** ([`go2_floor_filter.py`](../scripts/nodes/go2_floor_filter.py)) | Fits the ground plane in each scan and removes floor points, so a slightly tilted floor is not marked as an obstacle |
-| **Camera obstacles** (`--camera-obstacles`, [`go2_camera_obstacles.py`](../scripts/nodes/go2_camera_obstacles.py)) | Adds glass, thin legs, dark surfaces and the area right in front of the dog (all missed by the lidar) to the costmap. Monocular depth is scaled to metres with the lidar |
-| **Safe click-to-goal** ([`go2_click_to_goal.py`](../scripts/nodes/go2_click_to_goal.py)) | A click on a wall or desk is moved to the nearest known free floor cell |
+| **Floor filter** ([`go2_floor_filter.py`](../../scripts/nodes/go2_floor_filter.py)) | Fits the ground plane in each scan and removes floor points, so a slightly tilted floor is not marked as an obstacle |
+| **Camera obstacles** (`--camera-obstacles`, [`go2_camera_obstacles.py`](../../scripts/nodes/go2_camera_obstacles.py)) | Adds glass, thin legs, dark surfaces and the area right in front of the dog (all missed by the lidar) to the costmap. Monocular depth is scaled to metres with the lidar |
+| **Safe click-to-goal** ([`go2_click_to_goal.py`](../../scripts/nodes/go2_click_to_goal.py)) | A click on a wall or desk is moved to the nearest known free floor cell |
 | **Stop on exit** | Ctrl+C sends a burst of zero commands, so the dog does not keep walking on its last command |
 
 Details: [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md),
-[camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2).
+[camera_lidar_fusion.md](../ai_and_vision/camera_lidar_fusion.md#camera-obstacles-for-nav2).
 
 ### Explorer: where to go
 
@@ -134,7 +134,7 @@ Details: [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md),
 | Frontiers scored by path length (upstream) | Frontiers behind walls were picked | Unreachable frontiers are dropped |
 | Goal faces the frontier, and the goal is dropped once its frontier is seen (upstream) | | The dog arrives looking into the unknown and wastes no time |
 
-Parameters: [exploration.md](exploration.md#parameters).
+Parameters: [explorer.md](explorer.md#parameters).
 
 ### Infrastructure that affects navigation
 
@@ -146,7 +146,7 @@ Parameters: [exploration.md](exploration.md#parameters).
   - the body stays upright;
   - the feet are frictionless, so slow turns move the dog;
   - the real-time factor is checked at start-up;
-  - the `agri_rooms` test world ([gazebo/README.md](../gazebo/README.md)).
+  - the `agri_rooms` test world ([docs/simulation/gazebo.md](../simulation/gazebo.md)).
 
 ### Built but off
 
@@ -168,7 +168,7 @@ Parameters: [exploration.md](exploration.md#parameters).
 - World: `agri_rooms` (a crop field, a corridor, three rooms), spawn
   (−4.5, 0), facing +x.
 - `wifi_nav.sh --sim --no-camera`, no 3D twin, real-time factor about 1.0.
-- 3 trials per mode, interleaved, run by [`sim_trial.sh`](../scripts/tools/nav_compare/sim_trial.sh).
+- 3 trials per mode, interleaved, run by [`sim_trial.sh`](../../scripts/tools/nav_compare/sim_trial.sh).
 - Each trial ends at "Exploration complete" (no trial hit the 600 s limit).
 
 ### Per mode (mean of 3)
@@ -216,24 +216,24 @@ dog arrives.
   before the other trials). Their area comes from the explorer log, and the
   path plots use another trial's map as background.
 
-Raw numbers: [`images/locomotion/trials.csv`](images/locomotion/trials.csv),
-[`images/locomotion/summary.md`](images/locomotion/summary.md).
+Raw numbers: [`images/locomotion/trials.csv`](../images/locomotion/trials.csv),
+[`docs/images/locomotion/summary.md`](../images/locomotion/summary.md).
 
 ### Plots
 
-![Paths over the final map](images/locomotion/trajectories.png)
+![Paths over the final map](../images/locomotion/trajectories.png)
 
 *diff and hybrid follow the corridor and turn into the rooms. omni's paths
 have long straight backward and sideways legs: the fans in the field
 (y = 0..2) are the dog crab-walking between rows.*
 
-![Command mix](images/locomotion/commands.png)
+![Command mix](../images/locomotion/commands.png)
 
 *Under omni, only half of the commands were mainly forward.*
 
-![Mapped area over time](images/locomotion/coverage.png)
+![Mapped area over time](../images/locomotion/coverage.png)
 
-![Goal outcomes per trial](images/locomotion/outcomes.png)
+![Goal outcomes per trial](../images/locomotion/outcomes.png)
 
 *omni had no Nav2 aborts, but it had "no progress" drops instead: MPPI keeps
 trying rather than aborting, and sometimes it gets nowhere. hybrid2's three
@@ -252,7 +252,7 @@ direction.*
    moved 0.16 m left, with no change in heading, starting 1.5 s
    after the abort. Its value is in the case `diff` cannot handle, a wall
    right behind the dog (both aborts in run B3 on
-   [exploration.md](exploration.md) were that case).
+   [explorer.md](explorer.md) were that case).
 3. **Default: hybrid.** It drives like `diff`, it keeps the lidar facing the
    path, and it needs no MPPI install. It only adds a short, slow, bounded
    escape.
@@ -268,7 +268,7 @@ direction.*
 ### Earlier runs
 
 - **2026-10-27**, one run each (see
-  [exploration.md](exploration.md#stuck-recovery-and---omni-with-this-explorer-2026-10-27)):
+  [explorer.md](explorer.md#stuck-recovery-and---omni-with-this-explorer-2026-10-27)):
   - `--no-recovery`: 21 aborts, stuck in a doorway.
   - With the recovery fixes: 2 aborts, all three rooms.
   - With `--omni`: 0 aborts, all three rooms, two no-progress drops.
@@ -279,7 +279,7 @@ direction.*
 
 ## How to test the drive modes
 
-The tools are in [`scripts/tools/nav_compare/`](../scripts/tools/nav_compare/):
+The tools are in [`scripts/tools/nav_compare/`](../../scripts/tools/nav_compare/):
 
 | Tool | What it does |
 |---|---|
@@ -334,7 +334,7 @@ the space behind the dog.
 
 - Raise the network buffers once per VM boot (needs sudo). Without this, the
   lidar arrives late and the dog doesn't move. See
-  [troubleshooting.md](troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map).
+  [troubleshooting.md](../troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map).
 
   ```bash
   printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=8388608\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf
@@ -401,6 +401,6 @@ dog walks backwards toward a person or a drop.
 
 ## Related
 
-- [omni_nav.md](omni_nav.md): how `omni` and stuck recovery are wired and tuned.
-- [exploration.md](exploration.md): the frontier explorer, and the earlier runs.
-- [scripts.md](scripts.md): every script, including `nav_compare/`.
+- [drive_modes.md](drive_modes.md): how `omni` and stuck recovery are wired and tuned.
+- [explorer.md](explorer.md): the frontier explorer, and the earlier runs.
+- [scripts.md](../setup/scripts.md): every script, including `nav_compare/`.

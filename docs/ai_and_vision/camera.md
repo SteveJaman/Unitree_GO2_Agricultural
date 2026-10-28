@@ -1,6 +1,6 @@
 # Live Camera
 
-[← Back to README](../README.md) · [Troubleshooting](troubleshooting.md#camera) · [Camera + LiDAR fusion](camera_lidar_fusion.md)
+[← Back to README](../../README.md) · [Troubleshooting](../troubleshooting.md#camera) · [Camera + LiDAR fusion](camera_lidar_fusion.md)
 
 The Go2's front camera reaches the laptop as colour `sensor_msgs/Image` on
 `/camera/image_raw`, in two hops:
@@ -12,12 +12,12 @@ go2_camera_jpeg_cli ─► go2_camera_wifi.py ──Wi-Fi──► go2_camera_re
                           960x540 JPEG, 5 fps, ~66 KB
 ```
 
-1. **On the robot:** [`scripts/robot/go2_camera_wifi.sh`](../scripts/robot/go2_camera_wifi.sh)
+1. **On the robot:** [`scripts/robot/go2_camera_wifi.sh`](../../scripts/robot/go2_camera_wifi.sh)
    reads the camera's own JPEG stream (from `~/bin/go2_camera_jpeg_cli`, built
    by go2-nav2-wifi's `robot-build-camera-cli.sh`), downscales it and
    publishes `sensor_msgs/CompressedImage` on the Wi-Fi DDS domain (64). About
    0.3 MB/s, stamped with the Jetson clock like the LiDAR.
-2. **On the laptop:** [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py)
+2. **On the laptop:** [`go2_camera_relay.py`](../../scripts/nodes/go2_camera_relay.py)
    decodes it to `/camera/image_raw` and, once the camera is calibrated, also
    publishes `/camera/camera_info`. Images are stamped
    `front_camera_optical` (z forward, x right, y down, the pinhole
@@ -26,7 +26,7 @@ go2_camera_jpeg_cli ─► go2_camera_wifi.py ──Wi-Fi──► go2_camera_re
 
 Each frame is ~50 UDP packets over Wi-Fi. With the Ubuntu default socket
 buffers the laptop drops most frames: raise them once
-([setup.md](setup.md#3d-digital-twin-and-ai--one-time-setup)).
+([setup.md](../setup/setup.md#3d-digital-twin-and-ai--one-time-setup)).
 
 Two details keep the feed reliable:
 
@@ -86,20 +86,20 @@ To use the camera together with the LiDAR, calibrate it once
 
 ## Who else uses the camera
 
-[`wifi_3d_nav.sh`](../scripts/runtime/wifi_3d_nav.sh) picks up
+[`wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) picks up
 `/camera/image_raw` automatically ([3d_nav.md](3d_nav.md#camera-fusion-and-yolo)):
 
 - **Map colour:** the LiDAR is projected into the image and RTAB-Map colours
   the 3D map. `--fusion` does this from the calibration instead (undistorted
   image, `/camera/lidar_overlay` check image).
 - **Intrinsics:** the calibrated relay's `/camera/camera_info` when there is
-  one; otherwise [`go2_camera_info.py`](../scripts/nodes/go2_camera_info.py)
+  one; otherwise [`go2_camera_info.py`](../../scripts/nodes/go2_camera_info.py)
   publishes approximate intrinsics there.
 - **With `--ai`:** YOLO11s publishes `/yolo/image` (boxes drawn) and the VLM
   sends frames to Ollama.
 - **`--camera-obstacles`:** monocular depth, scaled by the LiDAR, as a Nav2
   obstacle source (glass, table legs).
-- **Web dashboard:** [`image_compressor.py`](../twin/image_compressor.py)
+- **Web dashboard:** [`image_compressor.py`](../../twin/image_compressor.py)
   makes 640 px JPEG copies (`/twin/camera/compressed`,
   `/twin/yolo/compressed`) at 5 Hz, only while a browser watches.
 
@@ -108,7 +108,7 @@ and YOLO and the VLM stay off.
 
 ## See also
 
-- [Troubleshooting → Camera](troubleshooting.md#camera): no image, stutter
+- [Troubleshooting → Camera](../troubleshooting.md#camera): no image, stutter
 - [camera_lidar_fusion.md](camera_lidar_fusion.md): calibration, LiDAR overlay, `--fusion`
 - [3d_nav.md](3d_nav.md): camera fusion, YOLO and VLM in the 3D session
-- [roadmap.md](roadmap.md#milestone-3--camera-pipeline): camera pipeline milestone
+- [roadmap.md](../roadmap.md#milestone-3--camera-pipeline): camera pipeline milestone
