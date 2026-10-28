@@ -2,7 +2,20 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-27
+Last updated: 2026-10-28
+
+---
+
+## Current goals (week of 2026-10-22)
+
+From the weekly meeting with the advisor; tracked in the
+[roadmap](roadmap.md#current-goals-advisor-week-of-2026-10-22).
+
+| Goal | State |
+|---|---|
+| Scan an object with the RGBD camera (D435i) | **Tools written**: [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) stream colour + depth to the VM; first scan pending |
+| Arm rotates to scan the fake plant: left, front, right | **Tools written**: teach the three poses with [`teach_arm.py`](../scripts/tools/teach_arm.py), replay with [`play_arm.py`](../scripts/tools/play_arm.py); not yet done on the plant |
+| Mount the camera on the arm's end | **Blocked**: waiting for the USB-C extension cable |
 
 ---
 
@@ -319,7 +332,8 @@ relay is unconfirmed.
 | [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
-| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | Depth camera not yet purchased; LiDAR-only and Go2-camera fusion work without it |
+| D435i on the arm's end | USB-C extension cable not yet arrived |
+| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | D435i in hand and streaming tools written; not yet mounted or run with `--rgbd`. LiDAR-only and Go2-camera fusion work without it |
 
 ---
 

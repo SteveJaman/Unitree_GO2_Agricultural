@@ -94,7 +94,7 @@ Required for reconstruction. Currently blocked by hardware.
 |---|---|---|
 | 3.1 | Fix the camera backend on Jetson | ⏳ hardware |
 | 3.2 | Verify image reaches VM | ⏳ |
-| 3.3 | Mount Intel RealSense D435i (if available) | ⏳ hardware |
+| 3.3 | Intel RealSense D435i | ✅ camera in hand, ZeroMQ sender / receiver written ([scripts](scripts.md)); ⏳ mount (on the arm first: [G.3](#current-goals-advisor-week-of-2026-10-22)) |
 | 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](camera_lidar_fusion.md)), ⏳ run on robot |
 
 **Note:** the camera works live. The robot sends its JPEG frames over Wi-Fi
@@ -211,6 +211,20 @@ is captured for later plant-analysis research.
 4. Captured data is stored in a structured format for analysis
 5. The dog and arm can be commanded independently from the same terminal
 
+## Current goals (advisor, week of 2026-10-22)
+
+Near-term targets before the hyperspectral camera arrives. The RealSense
+D435i stands in for it: the same scan pattern, with colour + depth.
+
+| # | Goal | Builds on | Status |
+|---|---|---|---|
+| G.1 | Scan an object with the RGBD camera (D435i) | [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) (ZeroMQ → `/camera/color/*`, `/camera/aligned_depth_to_color/*`), then `wifi_3d_nav.sh --rgbd` or a point-cloud capture | ✅ streaming tools written, ⏳ first scan |
+| G.2 | Arm rotates to scan the fake plant from three positions: left, front, right | Teach & Playback (8.11): teach the three poses once, replay them; the first version of the scan routine (12.1) | ✅ tools written, ⏳ teach the three poses on the plant |
+| G.3 | Mount the camera on the arm's end | Milestone 11 with the D435i instead of the hyperspectral camera | ⏳ hardware: waiting for the USB-C extension cable |
+
+Done when the arm visits left / front / right with the D435i on its end and
+a colour + depth capture is saved at each pose (12.3–12.4).
+
 ## Milestone 8 — Arm foundation
 
 | # | Task | Status |
@@ -298,7 +312,7 @@ once known.
 
 | # | Task | Status |
 |---|---|---|
-| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ (a `start_arm.sh` command chain for now) |
+| 12.1 | Define a scan path (e.g. linear sweep over a plant) | ⏳ first path: left / front / right of the fake plant ([G.2](#current-goals-advisor-week-of-2026-10-22)) |
 | 12.2 | Play the path with waypoint interpolation | ⏳ smooth `glide` / sequence files were removed in the 2026-10-20 rework; re-add on top of the new `D1Arm` |
 | 12.3 | Trigger camera capture at each step | ⏳ |
 | 12.4 | Store captures with pose metadata | ⏳ |
