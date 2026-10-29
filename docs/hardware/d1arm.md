@@ -38,6 +38,7 @@ anything?". Connecting it to the real arm is the open step (see
 | `scripts/tools/teach_arm.py` | Plant scanning: guide the arm by hand in compliance mode, save scan poses to `config/arm_waypoints.json` |
 | `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
 | `scripts/nodes/orbit_scan.py` | Orbit scan: scan pose, base sweep −90° → +90° with the wrist counter-rotating to keep the camera on a table-top object |
+| `scripts/tools/release_arm.py` | Release the holding tension: ramps the stiffness down to 0 so the arm sinks slowly, `--now` at once, `--power-off` |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 | `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
@@ -303,6 +304,17 @@ should capture photo here]"* (with its name) and holds `--dwell` seconds (3).
 At the end it goes home again and **stays locked**; `--release` releases it at home (support
 it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
 locks the arm where it stopped.
+
+To take the holding tension off afterwards (or after teaching, which leaves
+the arm locked):
+
+```bash
+python3 scripts/tools/release_arm.py              # stiffness ramped to 0 over 3 s: the arm sinks slowly
+python3 scripts/tools/release_arm.py --power-off  # ... and motor power off
+```
+
+`--now` releases at once (the arm drops), `--ramp` / `--steps` tune the ramp.
+It asks first unless `--yes`.
 
 `config/arm_waypoints.json` is user data (git-ignored):
 
