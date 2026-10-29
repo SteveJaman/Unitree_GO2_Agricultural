@@ -3,13 +3,15 @@
 teach_arm.py
 
 Teach the D1 arm a home pose and plant-scan poses by hand (kinesthetic
-teaching). The arm goes into compliance mode (enable-all with a low
-stiffness, default 5000): it holds the camera's weight but yields to a push.
+teaching). By default the arm is fully free (enable-all mode 0, no
+stiffness) so it moves with no resistance; nothing holds it up, so keep a hand
+on it. --stiffness 5000 (or more) instead holds the camera's weight and yields
+to a push.
 Joint angles come from telemetry (address 2, funcode 1) and are saved to
 config/arm_waypoints.json; play_arm.py replays them.
 
 Workflow:
-    1. Power on, compliance mode (funcode 5, {"mode": 5000})
+    1. Power on, free (funcode 5, {"mode": 0}; --stiffness N for {"mode": N})
     2. HOME first: guide the arm to its rest / start pose, press Enter.
        play_arm.py starts and ends there (not at the factory zero pose).
        A file that already has a home keeps it (h re-records it, --new
@@ -24,7 +26,7 @@ powered: support it before `start_arm.sh release`, or run `start_arm.sh fold`.
 Usage:
     python3 scripts/tools/teach_arm.py                 # add poses (home kept if saved)
     python3 scripts/tools/teach_arm.py --new           # new home + new poses
-    python3 scripts/tools/teach_arm.py --stiffness 8000
+    python3 scripts/tools/teach_arm.py --stiffness 5000   # hold its weight, yield to a push
 """
 import argparse
 import json
@@ -44,7 +46,7 @@ except ImportError as e:
     sys.exit(f"cannot import d1_arm_control: {e}")
 
 WAYPOINTS = os.path.join(_repo, "config", "arm_waypoints.json")
-COMPLIANT = 5000   # stiffness: holds the camera's weight, yields to a hand
+FREE = 0           # stiffness 0: no resistance at all (the arm does not hold itself up)
 ARM_JOINTS = 6     # joints 0-5; joint 6 (gripper) is not taught
 
 
@@ -144,8 +146,9 @@ def main():
     ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.100"))
     ap.add_argument("--file", default=WAYPOINTS, help="waypoint file (default: %(default)s)")
     ap.add_argument("--new", action="store_true", help="replace the file's waypoints")
-    ap.add_argument("--stiffness", type=int, default=COMPLIANT,
-                    help="compliance mode value (default %(default)s; 80000 = locked)")
+    ap.add_argument("--stiffness", type=int, default=FREE,
+                    help="enable-all mode while teaching: 0 = free (default), "
+                         "5000 holds its weight and yields, 80000 = locked")
     ap.add_argument("--skip-preflight", action="store_true")
     args = ap.parse_args()
 
@@ -163,7 +166,11 @@ def main():
         time.sleep(1.5)
         arm.enable(args.stiffness)
         time.sleep(T_ENABLE)
-        print("Arm is compliant. You can now move it by hand.")
+        if args.stiffness == 0:
+            print("Arm is free (no stiffness): it moves with no resistance and does NOT hold "
+                  "itself up. Keep a hand on it.")
+        else:
+            print(f"Arm is compliant (stiffness {args.stiffness}). You can now move it by hand.")
         print(f"File: {args.file}")
         if data.get("home"):
             print(f"  HOME already saved: {fmt(data['home']['angles'])}  (h at the prompt re-records it)")

@@ -258,9 +258,11 @@ The scripts reject anything beyond them.
 
 Kinesthetic teaching for plant data collection: guide the arm by hand until
 the end camera frames a plant, save the pose, and let the arm replay the
-whole sweep later. Fully released (`mode 0`) the arm drops under the
-camera's weight, so teaching uses **compliance mode** (`funcode 5`,
-`{"mode": 5000}`): the motors hold the arm up but yield to a push.
+whole sweep later. By default the arm is **fully free** while teaching
+(`funcode 5`, `{"mode": 0}`): no resistance at all, so it is easy to place, but
+nothing holds it up either: **keep a hand on it**. `--stiffness 5000` uses
+compliance mode instead: the motors hold the arm (and camera) up but yield to
+a push.
 
 **1. Teach** (one hand on the arm, the other on the keyboard):
 
@@ -269,8 +271,8 @@ python3 scripts/tools/teach_arm.py          # add poses (a saved home is kept)
 python3 scripts/tools/teach_arm.py --new    # new home + new sweep
 ```
 
-1. The arm powers on and goes compliant: *"Arm is compliant. You can now
-   move it by hand."*
+1. The arm powers on and goes free: *"Arm is free (no stiffness) ... Keep a
+   hand on it."* (with `--stiffness N`: *"Arm is compliant"*)
 2. **HOME first:** move it to its home / rest pose and press **Enter**. The
    sweep starts and ends there. A file that already has a home keeps it.
 3. **Then each scan pose:** move it until the camera frames the plant and
@@ -284,8 +286,10 @@ python3 scripts/tools/teach_arm.py --new    # new home + new sweep
 5. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
    Ctrl+D lock it too, so it never drops.
 
-If the arm sags under the camera, raise `--stiffness` (e.g. 8000); if it is
-hard to push, lower it.
+If you want the arm to stay where you leave it while you reach for the
+keyboard, use `--stiffness 5000` (raise it if it sags, lower it if it is hard
+to push). Over Wi-Fi a dropped link leaves a free arm free (the bridge only
+stiffens a partly compliant one); quitting always locks it.
 
 **2. Play back:**
 
