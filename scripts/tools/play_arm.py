@@ -35,7 +35,7 @@ _repo = os.path.dirname(os.path.dirname(_here))
 sys.path.insert(0, os.path.join(_repo, "scripts", "nodes"))
 try:
     from d1_arm_control import (
-        D1Arm, ENABLE_FULL, FUNC_JOINTS, JOINT_LIMITS, preflight,
+        D1Arm, ENABLE_FULL, FUNC_JOINTS, JOINT_REACH, preflight,
         T_ENABLE, T_HOME, T_RELEASE, default_arm_iface,
     )
 except ImportError as e:
@@ -48,9 +48,11 @@ ARM_JOINTS = 6
 def check_pose(label, a):
     if len(a) != ARM_JOINTS:
         sys.exit(f"[!] {label}: {len(a)} angles, expected {ARM_JOINTS}")
-    bad = [f"joint {j} {v:+.1f}°" for j, v in enumerate(a) if abs(v) > JOINT_LIMITS[j]]
+    # Taught by hand: checked against the arm's reach, not the narrower spec.
+    bad = [f"joint {j} {v:+.1f}° (reach ±{JOINT_REACH[j]:.0f}°)"
+           for j, v in enumerate(a) if abs(v) > JOINT_REACH[j]]
     if bad:
-        sys.exit(f"[!] {label} beyond the joint limits: {', '.join(bad)}")
+        sys.exit(f"[!] {label} beyond the arm's reach: {', '.join(bad)}")
     return [float(v) for v in a]
 
 

@@ -40,7 +40,7 @@ _repo = os.path.dirname(os.path.dirname(_here))
 sys.path.insert(0, os.path.join(_repo, "scripts", "nodes"))
 try:
     from d1_arm_control import (
-        D1Arm, ENABLE_FULL, JOINT_LIMITS, preflight, T_ENABLE, default_arm_iface,
+        D1Arm, ENABLE_FULL, JOINT_REACH, preflight, T_ENABLE, default_arm_iface,
     )
 except ImportError as e:
     sys.exit(f"cannot import d1_arm_control: {e}")
@@ -72,31 +72,19 @@ def fmt(angles):
     return " ".join(f"{a:+7.1f}" for a in angles)
 
 
-# The arm's own rest pose can read a little past a command limit (the folded
-# pose has joint 2 at +91.8 deg, limit 90): up to this much is clamped, not refused.
-CLAMP_DEG = 5.0
-
-
 def capture(arm):
-    """Current joints if telemetry answers and they are (nearly) within the limits,
-    else None (says why). Readings up to CLAMP_DEG past a limit are clamped to it."""
+    """Current joints, saved exactly as measured, if telemetry answers and they
+    are within the arm's reach (JOINT_REACH: the published ranges + a margin,
+    since a hand-placed pose can go a little past them); else None (says why)."""
     angles = read_joints(arm)
     if angles is None:
         print("  [!] no joint telemetry (address 2, funcode 1): not saved, try again")
         return None
-    bad = [f"joint {j} {a:+.1f}° (limit ±{JOINT_LIMITS[j]:.0f}°)"
-           for j, a in enumerate(angles) if abs(a) > JOINT_LIMITS[j] + CLAMP_DEG]
+    bad = [f"joint {j} {a:+.1f}° (reach ±{JOINT_REACH[j]:.0f}°)"
+           for j, a in enumerate(angles) if abs(a) > JOINT_REACH[j]]
     if bad:
-        print(f"  [!] beyond the joint limits, not saved: {', '.join(bad)}")
+        print(f"  [!] beyond the arm's reach, not saved (telemetry glitch?): {', '.join(bad)}")
         return None
-    clamped = []
-    for j, a in enumerate(angles):
-        lim = JOINT_LIMITS[j]
-        if abs(a) > lim:
-            angles[j] = round(max(-lim, min(lim, a)), 2)
-            clamped.append(f"joint {j} {a:+.1f}° -> {angles[j]:+.1f}°")
-    if clamped:
-        print(f"  note: just past the limit, clamped: {', '.join(clamped)}")
     return angles
 
 

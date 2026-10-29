@@ -62,7 +62,15 @@ ADDR_CMD, ADDR_TELEM, ADDR_ACK = 1, 2, 3
 FUNC_JOINT, FUNC_JOINTS, FUNC_ENABLE_ALL, FUNC_POWER, FUNC_ZERO = 1, 2, 5, 6, 7
 ENABLE_FULL = 80000
 
+# Unitree's published D1 ranges (J1..J6 = joints 0-5), as in the D1 URDF: the
+# limit for anything computed (jog, sweep, IK scan, periscope, orbit).
 JOINT_LIMITS = {0: 135.0, 1: 90.0, 2: 90.0, 3: 135.0, 4: 90.0, 5: 135.0}
+# What the real arm reaches when placed by hand, a little past the published
+# ranges (its own calibrated fold reads joint 2 at +91.8; a taught pose had
+# joint 4 at +97.6). Hand-taught poses (teach_arm.py / play_arm.py) are
+# checked against this instead: the arm has physically been there.
+JOINT_REACH_MARGIN = 10.0
+JOINT_REACH = {j: lim + JOINT_REACH_MARGIN for j, lim in JOINT_LIMITS.items()}
 JOINT_NAMES = {
     0: "base",
     1: "shoulder",
