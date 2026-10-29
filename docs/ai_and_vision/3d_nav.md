@@ -600,6 +600,28 @@ wrist camera's view cone; **Orbit Scan** in the controls sweeps it around an
 object (layer toggle: ⚙ → *D1 arm + camera*). Details and the no-robot mock:
 [d1arm.md → The arm in the web dashboard](../hardware/d1arm.md#the-arm-in-the-web-dashboard).
 
+**Inspect (autonomous inspection).** Turn on the **◉ Inspect** chip and click an
+object. The click is raycast onto the map itself (voxels, 3D scan or points), so
+it gives the object's real 3D point, e.g. the top of a table, not the floor under
+it; a glowing marker shows what will be scanned. Then
+[`inspection_mission.py`](../../scripts/nodes/inspection_mission.py) (started with
+`--ai`; `--no-inspect` leaves it out):
+
+1. pauses the explorer and sends a Nav2 goal 0.45 m short of the object, on the
+   robot's side, snapped to safe floor like click-to-go, facing the object;
+2. once the dog is within 0.5 m of it (or stopped at the goal with the object
+   within 1 m), turns the point into `base_link` and asks the arm for an IK scan:
+   [`arm_ik_scanner.py`](../../scripts/nodes/arm_ik_scanner.py) aims the wrist camera
+   at the point and sweeps ±0.1 m across it
+   ([d1arm.md](../hardware/d1arm.md#ik-scan-start_armsh-scan));
+3. reports on `/inspection/status` (the status line under the controls, with
+   Cancel; `/inspection/command` `{"op":"cancel"}`).
+
+Inspect clicks go to `/inspect_point`, not `/clicked_point`, so one click never
+sends two competing goals. Tap-to-go clicks now carry the exact 3D point too.
+Log: `ws/log/3d/inspection.log`. Without the robot,
+`./scripts/tools/mock_arm_twin.sh` runs the whole loop with a fake dog and arm.
+
 **Performance mode.** A machine without 3D acceleration (`glxinfo -B`
 says `Accelerated: no`, e.g. no NVIDIA driver loaded) draws everything on the CPU. When the browser reports
 such a renderer (llvmpipe, SwiftShader, `LLVM`), the dashboard starts in

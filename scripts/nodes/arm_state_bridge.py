@@ -249,10 +249,13 @@ class ArmFeed:
 
 # ---------------------------------------------------------------- orbit runs
 class Orbit:
+    """The one arm job at a time the dashboard / mission can start: orbit or IK scan."""
+
     def __init__(self, args):
         self.args = args
         self.proc = None
         self.state = "idle"
+        self.job = None
 
     def poll(self):
         if self.proc and self.proc.poll() is not None:
@@ -261,16 +264,16 @@ class Orbit:
                 "done" if code == 0 else "stopped" if code in (130, -2) else "failed"
             )
             print(
-                f"[arm_state] orbit scan ended ({self.state}, exit {code})", flush=True
+                f"[arm_state] {self.job} ended ({self.state}, exit {code})", flush=True
             )
             self.proc = None
         return self.state
 
     def stop(self, wait=30.0):
-        """Ctrl+C a running scan (orbit_scan.py homes, then releases) and wait for it."""
+        """Ctrl+C a running job (the scan script homes, then releases) and wait for it."""
         if self.proc and self.proc.poll() is None:
             print(
-                "[arm_state] stopping the running orbit scan (homes, then releases)",
+                f"[arm_state] stopping the running {self.job} (homes, then releases)",
                 flush=True,
             )
             self.proc.send_signal(signal.SIGINT)
@@ -279,9 +282,27 @@ class Orbit:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
 
+    def _run(self, job, extra):
+        cmd = (
+            [START_ARM]
+            + (["--robot", self.args.robot] if self.args.robot else [])
+            + extra
+            + ["--yes"]
+        )
+        log = open(self.args.orbit_log, "a")
+        print(
+            f"[arm_state] {job}: {' '.join(cmd)} (log {self.args.orbit_log})",
+            flush=True,
+        )
+        self.proc = subprocess.Popen(
+            cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
+        )
+        self.job, self.state = job, "running"
+
     def command(self, text):
         try:
-            op = (json.loads(text) or {}).get("op")
+            msg = json.loads(text) or {}
+            op = msg.get("op")
         except (ValueError, AttributeError):
             return
         if self.args.no_commands:
@@ -291,25 +312,21 @@ class Orbit:
             )
             return
         if op == "orbit" and not self.proc:
-            cmd = (
-                [START_ARM]
-                + (["--robot", self.args.robot] if self.args.robot else [])
-                + ["orbit", "--yes"]
-            )
-            log = open(self.args.orbit_log, "a")
-            print(
-                f"[arm_state] dashboard: orbit scan ({' '.join(cmd)}), log {self.args.orbit_log}",
-                flush=True,
-            )
-            self.proc = subprocess.Popen(
-                cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
-            )
-            self.state = "running"
+            self._run("orbit", ["orbit"])
+        elif op == "scan_target" and not self.proc:
+            try:
+                target = [float(v) for v in msg.get("target", [])]
+            except (TypeError, ValueError):
+                target = []
+            if len(target) != 3 or any(abs(v) > 3.0 for v in target):
+                print(
+                    f"[arm_state] scan_target ignored: bad target {msg.get('target')!r}",
+                    flush=True,
+                )
+                return
+            self._run("scan", ["scan", "--target"] + [f"{v:.3f}" for v in target])
         elif op == "stop" and self.proc:
-            print(
-                "[arm_state] dashboard: stop the orbit scan (homes, then releases)",
-                flush=True,
-            )
+            print(f"[arm_state] stop the {self.job} (homes, then releases)", flush=True)
             self.proc.send_signal(signal.SIGINT)
 
 
@@ -462,6 +479,7 @@ def serve(args, host, port, feed, orbit):
                                     {
                                         "arm": feed.alive(),
                                         "orbit": orbit.poll(),
+                                        "job": orbit.job,
                                         "commands": not args.no_commands,
                                     }
                                 )

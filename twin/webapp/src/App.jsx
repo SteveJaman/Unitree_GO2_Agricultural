@@ -88,7 +88,12 @@ function Dashboard() {
     setShadows(q !== 'lite');
   };
   const [voxelSize, setVoxelSize] = useState('auto');
-  const [clickToGo, setClickToGo] = useState(true);
+  const [clickToGo, setClickToGoState] = useState(true);
+  // Inspect mode: clicks pick a 3D target for inspection_mission.py instead of a goal.
+  const [inspectMode, setInspectModeState] = useState(false);
+  const [inspectTarget, setInspectTarget] = useState(null);
+  const setClickToGo = (on) => { setClickToGoState(on); if (on) setInspectModeState(false); };
+  const setInspectMode = (on) => { setInspectModeState(on); if (on) setClickToGoState(false); };
   const [follow, setFollow] = useState(false);
   const [stats, setStats] = useState({});
   const [toast, setToast] = useState(null);
@@ -96,6 +101,8 @@ function Dashboard() {
   const meshes = useMeshes();
   const [meshFile, setMeshFile] = useState('');
   const sendClick = usePublisher('/clicked_point', 'geometry_msgs/msg/PointStamped');
+  const sendInspect = usePublisher('/inspect_point', 'geometry_msgs/msg/PointStamped');
+  const sendInspectCmd = usePublisher('/inspection/command', 'std_msgs/msg/String');
   const sendGoal = usePublisher('/goal_pose', 'geometry_msgs/msg/PoseStamped');
   const sendResume = usePublisher('/explore/resume', 'std_msgs/msg/Bool');
   const sendRoomCmd = usePublisher('/semantic_rooms/command', 'std_msgs/msg/String');
@@ -138,7 +145,7 @@ function Dashboard() {
     return () => { alive = false; clearInterval(id); };
   }, []);
   // Editing rooms takes over clicks from tap-to-go.
-  useEffect(() => { if (editing) setClickToGo(false); }, [editing]);
+  useEffect(() => { if (editing) { setClickToGoState(false); setInspectModeState(false); } }, [editing]);
 
   const askRoom = (id) => {
     if (!sendRoomAsk({ data: id })) return;
@@ -196,12 +203,30 @@ function Dashboard() {
     setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 3200);
   }
 
-  // Click on the floor: pin at once, go2_click_to_goal snaps it to safe
-  // floor and sends the Nav2 goal; the pin then glides to that goal.
-  const onPick = useStable(({ x, y }) => {
+  // Inspect: the exact 3D point under the cursor -> inspection_mission.py
+  // (walk there facing it, then the arm's IK scan).
+  const onInspect = ({ x, y, z, surface }) => {
+    const ok = sendInspect({
+      header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } },
+      point: { x, y, z },
+    });
+    if (!ok) { say('Not connected to the robot', 'warn'); return; }
+    setInspectTarget({ x, y, z });
+    say(surface ? `Inspecting the point at ${z.toFixed(2)} m` : 'Inspecting a point on the floor (no map surface there)');
+  };
+  const cancelInspect = () => {
+    sendInspectCmd({ data: JSON.stringify({ op: 'cancel' }) });
+    setInspectTarget(null);
+    say('Inspection cancelled');
+  };
+
+  // Click: the exact 3D point (map surface, else floor). go2_click_to_goal
+  // snaps it to safe floor and sends the Nav2 goal; the pin glides to it.
+  const onPick = useStable(({ x, y, z = 0, surface }) => {
+    if (inspectMode) { onInspect({ x, y, z, surface }); return; }
     const ok = sendClick({
       header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } },
-      point: { x, y, z: 0 },
+      point: { x, y, z },
     });
     if (!ok) { say('Not connected to the robot', 'warn'); return; }
     setWaypoint({ id: Date.now(), x, y });
@@ -239,9 +264,10 @@ function Dashboard() {
       {/* keyed: antialiasing is fixed when the WebGL context is created */}
       <Scene key={quality} quality={quality} fixedFrame={FIXED_FRAME} baseFrame={BASE_FRAME} layers={layers} view={view}
              meshUrl={meshUrl} textured={textured} shadows={shadows} voxelSize={voxelSize}
-             assets={ASSETS} clickToGo={clickToGo && connected} follow={follow}
+             assets={ASSETS} clickToGo={(clickToGo || inspectMode) && connected} follow={follow}
+             inspectTarget={inspectTarget}
              waypoint={waypoint} onPick={onPick} onGoal={onGoal} onStats={onStats}
-             rooms={rooms} roomsInteractive={connected && (editing || merging || !clickToGo)}
+             rooms={rooms} roomsInteractive={connected && (editing || merging || (!clickToGo && !inspectMode))}
              selectedRooms={selected} onRoomClick={onRoomClick} />
 
       <MapMenu view={view} setView={setView} meshes={meshes} meshFile={meshFile} setMeshFile={setMeshFile}
@@ -252,6 +278,7 @@ function Dashboard() {
       <VlmBadge />
       <ControlPanel connected={connected} onExplore={setExplore} onDock={returnToDock}
                     clickToGo={clickToGo} setClickToGo={setClickToGo} follow={follow} setFollow={setFollow}
+                    inspectMode={inspectMode} setInspectMode={setInspectMode} onCancelInspect={cancelInspect}
                     hasWaypoint={!!waypoint} onClearWaypoint={() => setWaypoint(null)}
                     rooms={rooms.rooms} onGoRoom={goToRoom} />
       <CameraFeed />

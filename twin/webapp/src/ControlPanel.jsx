@@ -7,7 +7,7 @@ import SurveyCard from './SurveyCard.jsx';
  */
 export default function ControlPanel({
   connected, onExplore, onDock, clickToGo, setClickToGo, follow, setFollow, hasWaypoint, onClearWaypoint,
-  rooms = [], onGoRoom,
+  rooms = [], onGoRoom, inspectMode, setInspectMode, onCancelInspect,
 }) {
   const [status] = useLatest('/explore/status', 'std_msgs/msg/String', { throttle: 500 });
   const exploring = /enabled=True/.test(status?.data || '');
@@ -31,6 +31,7 @@ export default function ControlPanel({
         <span className="action-icon">⌂</span> Return to Dock
       </button>
       <OrbitButton connected={connected} />
+      <InspectStatus onCancel={onCancelInspect} />
       {rooms.length > 0 && (
         <label className="room-go">
           <span className="action-icon">➜</span>
@@ -47,6 +48,10 @@ export default function ControlPanel({
         <button className={`chip ${clickToGo ? 'active' : ''}`} onClick={() => setClickToGo(!clickToGo)}
                 title="Click the floor to send the robot there">
           ⌖ Tap to go
+        </button>
+        <button className={`chip ${inspectMode ? 'active inspect' : ''}`} onClick={() => setInspectMode(!inspectMode)}
+                title="Click an object: the dog walks to it and the arm's camera scans it">
+          ◉ Inspect
         </button>
         <button className={`chip ${follow ? 'active' : ''}`} onClick={() => setFollow(!follow)}
                 title="Keep the camera on the robot">
@@ -68,26 +73,54 @@ function OrbitButton({ connected }) {
   let st = null;
   try { st = status ? JSON.parse(status.data) : null; } catch { st = null; }
   const running = st?.orbit === 'running';
+  const scanning = running && st?.job === 'scan';   // inspection_mission's IK scan, not ours
   const ready = connected && st?.arm && st?.commands !== false;
   const note = !connected ? 'Robot offline'
     : !st ? 'Arm bridge not running'
       : !st.arm ? 'Arm offline'
-        : st.commands === false ? 'Commands off' : running ? 'Sweeping ±90°'
+        : st.commands === false ? 'Commands off' : scanning ? 'Inspection scan' : running ? 'Sweeping ±90°'
           : st.orbit === 'done' ? 'Last scan complete' : st.orbit === 'failed' ? 'Last scan failed'
             : st.mock ? 'Simulated arm' : 'Sweep around the object';
   const onClick = () => {
+    if (scanning) return;   // cancel it from the inspection status instead
     if (running) { send({ data: JSON.stringify({ op: 'stop' }) }); return; }
     if (!st?.mock && !window.confirm('The D1 arm will sweep its base ±90° around the object. Is the space around the arm clear?')) return;
     send({ data: JSON.stringify({ op: 'orbit' }) });
   };
   return (
-    <button className={`action orbit ${running ? 'on' : ''}`} disabled={!ready && !running} onClick={onClick}
+    <button className={`action orbit ${running ? 'on' : ''}`} disabled={(!ready && !running) || scanning} onClick={onClick}
             title={note}>
       <span className="action-icon">{running ? '■' : '◠'}</span>
       <span className="orbit-text">
-        <span>{running ? 'Stop Orbit Scan' : 'Orbit Scan'}</span>
+        <span>{scanning ? 'Arm busy' : running ? 'Stop Orbit Scan' : 'Orbit Scan'}</span>
         <span className="orbit-sub">{note}</span>
       </span>
     </button>
+  );
+}
+
+const INSPECT_TEXT = {
+  navigating: 'Walking to the target', scanning: 'Arm scanning the target', done: 'Inspection complete',
+  failed: 'Inspection failed', unreachable: 'Target unreachable', timeout: 'Inspection timed out',
+};
+
+/** inspection_mission.py progress (/inspection/status), with Cancel while it runs. */
+function InspectStatus({ onCancel }) {
+  const [status] = useLatest('/inspection/status', 'std_msgs/msg/String', { throttle: 500 });
+  let st = null;
+  try { st = status ? JSON.parse(status.data) : null; } catch { st = null; }
+  if (!st || !INSPECT_TEXT[st.state]) return null;
+  const active = st.state === 'navigating' || st.state === 'scanning';
+  return (
+    <div className={`inspect-status ${st.state}`} title={st.note || ''}>
+      <span className="inspect-dot" />
+      <span className="inspect-text">
+        <span>{INSPECT_TEXT[st.state]}</span>
+        <span className="orbit-sub">
+          {st.state === 'navigating' && st.distance != null ? `${st.distance.toFixed(2)} m to go · ` : ''}{st.note}
+        </span>
+      </span>
+      {active && <button className="chip small" onClick={onCancel}>Cancel</button>}
+    </div>
   );
 }

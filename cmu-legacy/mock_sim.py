@@ -7,7 +7,9 @@ runs it): /d1_arm/joint_states at home, and on {"op": "orbit"} from
 scripts/nodes/orbit_scan.py: scan pose, base -90 -> +90 deg in 30 steps with
 the wrist counter-rotating, then home. /d1_arm/status reports it like
 scripts/nodes/arm_state_bridge.py. --tf also places the robot (lidar3d_map ->
-base_link) so the dashboard shows it without a session.
+base_link) and walks it to each /goal_pose (0.3 m/s, turning to face the goal's
+yaw on arrival), so the dashboard's Inspect mode and inspection_mission.py run
+end to end; {"op": "scan_target"} plays a short aim-and-sweep as job "scan".
 """
 
 import argparse
@@ -20,7 +22,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, PointCloud2, PointField
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 
@@ -117,6 +119,11 @@ class MockArm(Node):
         self.status_pub = self.create_publisher(String, '/d1_arm/status', 10)
         self.create_subscription(String, '/d1_arm/command', self.on_command, 10)
         self.tf_broadcaster = TransformBroadcaster(self) if tf else None
+        if tf:
+            self.create_subscription(PoseStamped, '/goal_pose', self.on_goal, 10)
+        self.base = [0.0, 0.0, 0.0]  # x, y, yaw of the fake dog
+        self.goal = None
+        self.job = None
         self.pose = [0.0] * 6
         self.plan = []  # [(t_end, start, target)] still to run
         self.state = 'idle'
@@ -130,6 +137,12 @@ class MockArm(Node):
             op = json.loads(msg.data).get('op')
         except (ValueError, AttributeError):
             return
+        if op == 'scan_target' and not self.plan:
+            # Stand-in for arm_ik_scanner.py (no ikpy here): look forward-down, sweep, home.
+            look = [0.0, 25.0, -12.0, 0.0, 47.0, 0.0]
+            sweep = [[a, *look[1:]] for a in (0.0, 10.0, 5.0, 0.0, -5.0, -10.0, 0.0)]
+            self.start_plan('scan', [look] + sweep + [[0.0] * 6], step=0.5)
+            return
         if op == 'orbit' and not self.plan:
             targets = [list(SCAN_POSE)]
             for i in range(STEPS):
@@ -138,21 +151,50 @@ class MockArm(Node):
                 t[0], t[5] = base, -base * WRIST_GAIN
                 targets.append(t)
             targets.append([0.0] * 6)
-            now, start = time.monotonic(), list(self.pose)
-            for n, t in enumerate(targets):
-                dur = self.MOVE_S if n in (0, 1, len(targets) - 1) else self.STEP_S
-                now += dur
-                self.plan.append((now, dur, start, t))
-                start = t
-            self.state = 'running'
-            self.get_logger().info(f'orbit scan: {len(targets)} moves, {now - time.monotonic():.0f} s')
+            self.start_plan('orbit', targets, step=self.STEP_S)
         elif op == 'stop' and self.plan:
             self.plan = [(time.monotonic() + self.MOVE_S, self.MOVE_S, list(self.pose), [0.0] * 6)]
             self.state = 'stopped'
             self.get_logger().info('orbit scan stopped: homing')
 
+    def start_plan(self, job, targets, step):
+        now, start = time.monotonic(), list(self.pose)
+        for n, t in enumerate(targets):
+            dur = self.MOVE_S if n in (0, 1, len(targets) - 1) else step
+            now += dur
+            self.plan.append((now, dur, start, t))
+            start = t
+        self.job, self.state = job, 'running'
+        self.get_logger().info(f'{job}: {len(targets)} moves, {now - time.monotonic():.0f} s')
+
+    def on_goal(self, msg):
+        q = msg.pose.orientation
+        self.goal = (msg.pose.position.x, msg.pose.position.y,
+                     math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+        self.get_logger().info(f'goal ({self.goal[0]:.2f}, {self.goal[1]:.2f}): walking')
+
+    def walk(self, dt):
+        """Fake Nav2: turn towards the goal, walk at 0.3 m/s, then turn to its yaw."""
+        x, y, yaw = self.base
+        gx, gy, gyaw = self.goal
+        d = math.hypot(gx - x, gy - y)
+        turn = lambda a: (a + math.pi) % (2 * math.pi) - math.pi  # noqa: E731
+        if d > 0.05:
+            want = math.atan2(gy - y, gx - x)
+            yaw += max(-0.6 * dt, min(0.6 * dt, turn(want - yaw)))
+            if abs(turn(want - yaw)) < 0.3:
+                step = min(d, 0.3 * dt)
+                x, y = x + math.cos(yaw) * step, y + math.sin(yaw) * step
+        elif abs(turn(gyaw - yaw)) > 0.02:
+            yaw += max(-0.6 * dt, min(0.6 * dt, turn(gyaw - yaw)))
+        else:
+            self.goal = None
+        self.base = [x, y, yaw]
+
     def tick(self):
         now = time.monotonic()
+        if self.goal:
+            self.walk(0.05)
         while self.plan and now >= self.plan[0][0]:
             self.pose = list(self.plan.pop(0)[3])
             if not self.plan and self.state == 'running':
@@ -172,13 +214,15 @@ class MockArm(Node):
             tf.header.stamp = js.header.stamp
             tf.header.frame_id = 'lidar3d_map'
             tf.child_frame_id = 'base_link'
+            tf.transform.translation.x, tf.transform.translation.y = self.base[0], self.base[1]
             tf.transform.translation.z = 0.32  # standing trunk height
-            tf.transform.rotation.w = 1.0
+            tf.transform.rotation.z = math.sin(self.base[2] / 2)
+            tf.transform.rotation.w = math.cos(self.base[2] / 2)
             self.tf_broadcaster.sendTransform(tf)
 
     def status(self):
         self.status_pub.publish(String(data=json.dumps(
-            {'arm': True, 'orbit': self.state, 'commands': True, 'mock': True})))
+            {'arm': True, 'orbit': self.state, 'job': self.job, 'commands': True, 'mock': True})))
 
 
 def main():

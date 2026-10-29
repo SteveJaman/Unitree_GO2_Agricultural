@@ -10,6 +10,10 @@ import { fetchConfigJson } from './ros/config.js';
 import Go2Model from './Go2Model.jsx';
 import D1Model from './D1Model.jsx';
 
+// Map geometry a click lands on (voxels, scan mesh, map points): see pickSurface().
+const PICKABLE = { pick: true };
+// Inspection target marker colours by inspection_mission.py state.
+const INSPECT_COLOR = { navigating: '#22d3ee', scanning: '#f59e0b', done: '#34d399' };
 // D1 base on the Go2 trunk (base_link): centre of the trunk top, as in
 // gazebo/sim/build_model.py --mount and the MoveIt model (d1_go2.urdf.xacro).
 const D1_MOUNT = [0, 0, 0.057];
@@ -44,7 +48,7 @@ export default memo(Scene);
 function Scene({
   fixedFrame, baseFrame, layers, view, meshUrl, textured, shadows, voxelSize, quality = 'high',
   assets, clickToGo, follow, waypoint, onPick, onGoal, onStats,
-  rooms, roomsInteractive, selectedRooms = [], onRoomClick,
+  rooms, roomsInteractive, selectedRooms = [], onRoomClick, inspectTarget = null,
 }) {
   const tf = useMemo(() => new TfTree(), []);
   const [cloud, setCloud] = useState(null);
@@ -67,6 +71,16 @@ function Scene({
   useTopic('/d1_arm/joint_states', 'sensor_msgs/msg/JointState', (m) => {
     (m.name || []).forEach((n, i) => armJoints.current.set(n, m.position[i]));
   }, { throttle: 50 });
+  // Inspection target (inspection_mission.py) and its state, for the marker.
+  const [inspect, setInspect] = useState(null);
+  const [inspectState, setInspectState] = useState('idle');
+  useTopic('/inspection/target', 'geometry_msgs/msg/PointStamped', (m) => setInspect(m));
+  useTopic('/inspection/status', 'std_msgs/msg/String', (m) => {
+    try { setInspectState(JSON.parse(m.data).state || 'idle'); } catch { /* ignore */ }
+  }, { throttle: 500 });
+  const target = inspectTarget || (inspect && { x: inspect.point.x, y: inspect.point.y, z: inspect.point.z });
+  // A fresh click shows at once; the node's target while a mission runs or just ended.
+  const showInspect = !!target && (!!inspectTarget || !['idle', 'cancelled'].includes(inspectState));
   const q = QUALITY[quality] || QUALITY.high;
   const voxelOpts = useMemo(() => (view === 'solid'
     ? { size: voxelSize === 'auto' ? 0.06 : Number(voxelSize), budget: q.voxelBudget } : null),
@@ -151,7 +165,7 @@ function Scene({
             {shadows && <ShadowFloor z={floorZ} />}
           </InFrame>
         )}
-        {layers.map && view === 'points' && cloud && <Points tf={tf} fixed={fixedFrame} cloud={cloud} size={0.05} />}
+        {layers.map && view === 'points' && cloud && <Points tf={tf} fixed={fixedFrame} cloud={cloud} size={0.05} pickable />}
         {layers.map && view === 'mesh' && meshUrl && (
           <InFrame tf={tf} fixed={fixedFrame} frame="rtabmap_map" fallbackIdentity>
             <ScanMesh url={meshUrl} textured={textured} onInfo={setMeshInfo} />
@@ -169,6 +183,7 @@ function Scene({
         )}
         {plan && waypoint && <Route tf={tf} fixed={fixedFrame} path={plan} />}
         {waypoint && <WaypointPin key={waypoint.id} x={waypoint.x} y={waypoint.y} />}
+        {showInspect && <InspectMarker target={target} state={inspectState} floorZ={floorZ ?? 0} />}
         <Dock />
         {layers.yolo && [...yolo.values()].map((m) => (
           <YoloBox key={`${m.ns}/${m.id}`} tf={tf} fixed={fixedFrame} marker={m} />
@@ -234,7 +249,8 @@ function Voxels({ voxels, textured, lambert }) {
     mesh.computeBoundingSphere();
   }, [voxels, textured, material]);
 
-  return <instancedMesh ref={ref} args={[geometry, material, voxels.count]} castShadow receiveShadow />;
+  return <instancedMesh ref={ref} args={[geometry, material, voxels.count]} castShadow receiveShadow
+                        userData={PICKABLE} />;
 }
 
 /** Exported Poisson mesh (binary PLY with normals and optional colours). */
@@ -259,7 +275,7 @@ function ScanMesh({ url, textured, onInfo }) {
   if (!geometry) return <Html zIndexRange={LABEL_Z} center className="scene-msg">Loading 3D scan…</Html>;
   const colored = textured && !!geometry.attributes.color;
   return (
-    <mesh geometry={geometry} castShadow receiveShadow>
+    <mesh geometry={geometry} castShadow receiveShadow userData={PICKABLE}>
       {/* keyed: vertexColors is compiled into the shader, a prop change alone is ignored */}
       <meshStandardMaterial key={colored ? 'rgb' : 'plain'} color={colored ? '#ffffff' : SURFACE} vertexColors={colored}
                             roughness={0.85} metalness={0.05} side={THREE.DoubleSide} />
@@ -278,7 +294,7 @@ function ShadowFloor({ z }) {
   );
 }
 
-function Points({ tf, fixed, cloud, size, tint }) {
+function Points({ tf, fixed, cloud, size, tint, pickable = false }) {
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(cloud.positions, 3));
@@ -289,7 +305,7 @@ function Points({ tf, fixed, cloud, size, tint }) {
   useEffect(() => () => geometry.dispose(), [geometry]);
   return (
     <InFrame tf={tf} fixed={fixed} frame={cloud.frame}>
-      <points geometry={geometry}>
+      <points geometry={geometry} userData={pickable ? PICKABLE : undefined}>
         <pointsMaterial size={size} sizeAttenuation vertexColors={!tint} color={tint || '#ffffff'} />
       </points>
     </InFrame>
@@ -477,6 +493,44 @@ function Robot({ tf, fixed, base, follow, joints, lambert, armJoints }) {
   );
 }
 
+/**
+ * What the arm will scan: a glowing sphere at the clicked 3D point with a
+ * pulsing halo and a line down to the floor, coloured by the mission state.
+ */
+function InspectMarker({ target, state, floorZ }) {
+  const halo = useRef();
+  const color = INSPECT_COLOR[state] || (['failed', 'unreachable', 'timeout'].includes(state) ? '#ff3b5c' : '#a78bfa');
+  useFrame(({ clock }) => {
+    if (!halo.current) return;
+    const k = 1 + 0.35 * (0.5 + 0.5 * Math.sin(clock.elapsedTime * 4));
+    halo.current.scale.setScalar(k);
+    halo.current.material.opacity = 0.35 / k;
+  });
+  if (!target) return null;
+  const { x, y, z } = target;
+  const drop = Math.max(0, z - floorZ);
+  const label = { navigating: 'Walking to target', scanning: 'Arm scanning', done: 'Scan complete',
+    failed: 'Scan failed', unreachable: 'Unreachable', timeout: 'Timed out' }[state] || 'Inspect target';
+  return (
+    <group position={[x, y, z]}>
+      <mesh>
+        <sphereGeometry args={[0.05, 24, 16]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} toneMapped={false} />
+      </mesh>
+      <mesh ref={halo}>
+        <sphereGeometry args={[0.11, 24, 16]} />
+        <meshBasicMaterial color={color} transparent opacity={0.3} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <pointLight color={color} intensity={1.5} distance={1.2} />
+      {drop > 0.02 && (
+        <Line points={[[0, 0, 0], [0, 0, -drop]]} color={color} lineWidth={1.5} dashed dashSize={0.04} gapSize={0.03}
+              transparent opacity={0.8} />
+      )}
+      <Html zIndexRange={LABEL_Z} position={[0, 0, 0.16]} center className="tag tag-inspect">{label}</Html>
+    </group>
+  );
+}
+
 /** Go2-sized box (0.70 x 0.31 x 0.40 m), used when the model cannot load. */
 function StandIn() {
   const legs = [[0.25, 0.12], [0.25, -0.12], [-0.25, 0.12], [-0.25, -0.12]];
@@ -552,6 +606,26 @@ function Pin({ x, y, z, label, kind }) {
 }
 
 /** Invisible z = 0 plane of the fixed frame that turns clicks into floor points. */
+/**
+ * The point under the cursor on the map itself (voxels, scan mesh or map
+ * points, userData.pick), nearest first; null if the ray meets none of them.
+ */
+const pickRay = new THREE.Raycaster();
+function pickSurface(root, ray) {
+  const targets = [];
+  root.traverseVisible((o) => { if (o.userData?.pick) targets.push(o); });
+  if (!targets.length) return null;
+  pickRay.set(ray.origin, ray.direction);
+  pickRay.far = 500;
+  pickRay.params.Points.threshold = 0.05;
+  return pickRay.intersectObjects(targets, false)[0]?.point ?? null;
+}
+
+/**
+ * Clicks: the exact 3D point on the map surface (an object on a table, not
+ * the floor below it), or the floor (z = 0 in the fixed frame) where the ray
+ * meets no map geometry. Reported in the fixed frame: { x, y, z, surface }.
+ */
 function ClickPlane({ enabled, onPick }) {
   const ref = useRef();
   return (
@@ -559,8 +633,10 @@ function ClickPlane({ enabled, onPick }) {
           onClick={(e) => {
             if (!enabled || e.delta > 4) return;       // ignore orbit drags
             e.stopPropagation();
-            const p = ref.current.parent.worldToLocal(e.point.clone());
-            onPick?.({ x: p.x, y: p.y });
+            const root = ref.current.parent;
+            const hit = pickSurface(root, e.ray);
+            const p = root.worldToLocal((hit || e.point).clone());
+            onPick?.({ x: p.x, y: p.y, z: p.z, surface: !!hit });
           }}>
       <planeGeometry args={[2000, 2000]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />

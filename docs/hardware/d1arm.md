@@ -336,6 +336,35 @@ has no cable link, or `start_arm.sh --robot <Go2 IP> orbit`). Options:
 `--move-timeout` (s, default 15). The pose, range, step count and wrist gain
 are constants at the top of `orbit_scan.py`.
 
+## IK scan (`start_arm.sh scan`)
+
+Aim the wrist camera at a point and sweep across it, solved with inverse
+kinematics ([`arm_ik_scanner.py`](../../scripts/nodes/arm_ik_scanner.py), `ikpy`)
+instead of fixed angles. The dashboard's Inspect mode runs it for you; by hand:
+
+```bash
+python3 scripts/nodes/arm_ik_scanner.py --target 0.55 0 0 --dry-run   # solve, print, no arm
+./scripts/runtime/start_arm.sh scan --target 0.55 0 0                  # preflight, confirm, run
+```
+
+- The target is in the Go2's `base_link` (m: x forward, y left, z up).
+- The chain is the D1 URDF (`twin/webapp/public/d1_description`) from `base_link`
+  to `Link6` plus a camera point 0.09 m along the gripper axis. The camera is placed
+  above and in front of the target looking down (or on the shoulder line for
+  distant targets), 0.15–0.45 m away.
+- Aim points: the target, then left to right across it (`--side 0.1`,
+  `--steps 5`), then the target again. Each pose is one multi-joint move
+  (funcode 2, mode 1), `--delay 0.5` s apart.
+- Refused before anything moves: more than 3° off aim, a joint at its limit, the
+  camera closer than 0.15 m, or a link inside the Go2's body box.
+- Like `orbit`, a `try/finally` homes the arm and releases it (mode 0) on Ctrl+C
+  or an error.
+
+**Check on the real arm first.** The angle mapping (protocol angle *i* in degrees
+= URDF `Joint(i+1)` in radians, same zero) comes from the Gazebo emulator and has
+not been confirmed on the hardware. Run `--dry-run`, then a first run with the
+space clear, and check the 3D arm in the dashboard matches the real one.
+
 ## The arm in the web dashboard
 
 The 3D dashboard ([3d_nav.md](../ai_and_vision/3d_nav.md#web-dashboard)) draws the D1 on
@@ -351,7 +380,9 @@ The arm has no ROS `JointState` of its own (it speaks JSON on raw DDS), so
 - publishes `/d1_arm/joint_states` (`sensor_msgs/JointState`, `Joint1`..`Joint6`
   in radians, fingers `Joint7_1`/`Joint7_2`) and `/d1_arm/status` through rosbridge;
 - runs `start_arm.sh orbit --yes` on `{"op":"orbit"}` from `/d1_arm/command`
-  (the button, after a confirmation) and Ctrl+C's it on `{"op":"stop"}`.
+  (the button, after a confirmation), `start_arm.sh scan --target dx dy dz --yes`
+  on `{"op":"scan_target","target":[dx,dy,dz]}` (inspection_mission.py), and
+  Ctrl+C's either on `{"op":"stop"}`.
   `--no-commands` turns the button off.
 
 `wifi_3d_nav.sh` starts it with every session (`TWIN_ARM=0` turns it off;

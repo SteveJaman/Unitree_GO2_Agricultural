@@ -35,7 +35,8 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --manual        # AI on, but you start/steer (dashboard Auto Survey, Auto Explore, clicks)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only (no explorer, so no survey)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-ai         # 3D map only: no YOLO, VLM or battery docking
-#   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # leave one AI node out (also --no-vlm, --no-battery)
+#   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # leave one AI node out (also --no-vlm, --no-battery,
+#                                                    #   --no-inspect)
 #                      The AI also: adds /yolo/obstacles to the Nav2 costmap config
 #                      (add-yolo-costmap-source.sh), VLM BLOCKED -> pause + dock,
 #                      and auto-localization at the dock.
@@ -139,7 +140,7 @@ while [ $# -gt 0 ]; do
         --no-build)   TWIN_AUTO_BUILD="0" ;;
         --no-explore|--plan|--nav)
                       SURVEY_AUTO="0"; PASSTHRU+=("$1") ;;   # no explorer: nothing for the survey to drive
-        --no-yolo|--no-vlm|--no-battery)
+        --no-yolo|--no-vlm|--no-battery|--no-inspect)
                       NO_AI+=("${1#--no-}") ;;
         --resume)     RESUME="true" ;;
         --no-localize) NO_LOCALIZE="true" ;;
@@ -166,11 +167,13 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# --ai turns the three AI nodes on; --no-yolo / --no-vlm / --no-battery win.
+# --ai turns the AI nodes on; --no-yolo / --no-vlm / --no-battery / --no-inspect win.
+# inspect: inspection_mission.py (dashboard Inspect: walk to a 3D point, IK-aim the arm at it).
 ai_default() { [ "${AI}" = "true" ] && [[ " ${NO_AI[*]} " != *" $1 "* ]] && echo 1 || echo 0; }
 TWIN_YOLO="${TWIN_YOLO:-$(ai_default yolo)}"
 TWIN_VLM="${TWIN_VLM:-$(ai_default vlm)}"
 TWIN_BATTERY="${TWIN_BATTERY:-$(ai_default battery)}"
+TWIN_INSPECT="${TWIN_INSPECT:-$(ai_default inspect)}"
 TWIN_ARM="${TWIN_ARM:-1}"
 TWIN_BATTERY_LOW="${TWIN_BATTERY_LOW:-15}"
 TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
@@ -488,7 +491,7 @@ start_twin_when_ready() {
             -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
-            -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" \
+            -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" -e TWIN_INSPECT="${TWIN_INSPECT}" \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" "${camera_args[@]}" \
@@ -652,6 +655,7 @@ echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && e
 echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialpose at the dock (0 0 0) on start" || echo "manual" )"
 echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
+echo "  Inspect     : $( [ "${TWIN_INSPECT}" = 1 ] && echo "on: dashboard Inspect -> walk to the point -> IK arm scan (inspection.log)" || echo "off (--ai)" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"

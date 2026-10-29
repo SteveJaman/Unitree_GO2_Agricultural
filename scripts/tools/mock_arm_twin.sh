@@ -4,8 +4,10 @@
 # Runs the go2-3d image with rosbridge (:9090), the dashboard (:3000) and
 # cmu-legacy/mock_sim.py --arm --tf: the Go2 stands at the map origin, the
 # arm sits on its back, and the dashboard's Orbit Scan button plays the same
-# sweep as scripts/nodes/orbit_scan.py. ROS stays on its own domain, localhost
-# only, so it never meets a real session.
+# sweep as scripts/nodes/orbit_scan.py. scripts/nodes/inspection_mission.py
+# runs too: Inspect + a click walks the fake dog there and plays a fake arm
+# scan (no costmap here, so goals are not snapped). ROS stays on its own
+# domain, localhost only, so it never meets a real session.
 #
 # Usage:
 #   ./scripts/tools/mock_arm_twin.sh        # then open http://localhost:3000
@@ -32,9 +34,11 @@ for p in "${WEB_PORT}" "${WS_PORT}"; do
 done
 
 echo "[mock] Dashboard with a fake D1 arm: http://localhost:${WEB_PORT}  (Orbit Scan button). Ctrl+C to stop."
-exec docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id -g)" \
+# Closing the terminal (SIGHUP) does not stop an attached container: stop it here.
+trap 'docker stop go2-3d-mock-arm >/dev/null 2>&1 || true' EXIT HUP INT TERM
+docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id -g)" \
     -e HOME=/tmp -e ROS_DOMAIN_ID="${DOMAIN}" -e ROS_LOCALHOST_ONLY=1 \
-    -v "${REPO_DIR}/twin:/twin:ro" -v "${REPO_DIR}/cmu-legacy:/cmu-legacy:ro" \
+    -v "${REPO_DIR}/twin:/twin:ro" -v "${REPO_DIR}/cmu-legacy:/cmu-legacy:ro" -v "${REPO_DIR}/scripts/nodes:/nodes:ro" \
     "${IMAGE}" bash -c '
         source /opt/ros/humble/setup.bash
         root=/opt/webapp
@@ -42,5 +46,6 @@ exec docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):
         mkdir -p /tmp/view/maps /tmp/view/config && for f in "$root"/*; do ln -s "$f" /tmp/view/; done
         python3 -m http.server '"${WEB_PORT}"' --bind 0.0.0.0 --directory /tmp/view >/tmp/web.log 2>&1 &
         ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:='"${WS_PORT}"' >/tmp/rosbridge.log 2>&1 &
+        python3 -u /nodes/inspection_mission.py >/tmp/inspection.log 2>&1 &
         trap "kill 0" EXIT
         exec python3 -u /cmu-legacy/mock_sim.py --arm --tf'

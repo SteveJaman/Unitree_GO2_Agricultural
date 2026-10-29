@@ -18,6 +18,8 @@
 #   * auto_localize       (TWIN_AUTOLOCALIZE=1) one-shot /initialpose at the dock
 #   * room_segmentation   (TWIN_ROOMS=1) costmap -> rooms (/semantic_rooms), names
 #                         and merges from the dashboard -> config/semantic_rooms.json
+#   * inspection_mission  (TWIN_INSPECT=1, --ai) dashboard Inspect: /inspect_point ->
+#                         walk there facing it -> IK-aim the D1 arm at it (arm_ik_scanner.py)
 #   * survey_manager      (TWIN_SURVEY=1) autonomous survey: explore, rooms, visit and
 #                         categorize each, report, dock; TWIN_SURVEY_AUTO=1 starts it
 #
@@ -100,6 +102,7 @@ TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
 TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_ROOMS="${TWIN_ROOMS:-1}"
 TWIN_SURVEY="${TWIN_SURVEY:-1}"
+TWIN_INSPECT="${TWIN_INSPECT:-0}"
 TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}"
 TWIN_ROOM_DOOR_WIDTH="${TWIN_ROOM_DOOR_WIDTH:-0.9}"
 TWIN_ROOM_MIN_AREA="${TWIN_ROOM_MIN_AREA:-1.5}"
@@ -200,6 +203,12 @@ if [ "$TWIN_SURVEY" = 1 ]; then
         -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" \
         -p map_frame:="$TWIN_MAP_FRAME" -p base_frame:="$TWIN_BASE_FRAME" \
         -p database:="$TWIN_DB"
+fi
+
+# Inspection: a 3D point from the dashboard -> stand-off goal facing it -> arm scan.
+if [ "$TWIN_INSPECT" = 1 ]; then
+    start inspection python3 -u /nodes/inspection_mission.py --ros-args \
+        -p map_frame:="$TWIN_MAP_FRAME" -p base_frame:="$TWIN_BASE_FRAME"
 fi
 
 # One-shot: /initialpose at the session's start pose (the dock), then exits.
