@@ -66,7 +66,11 @@ there for the wired link: `pip3 install cyclonedds` (not needed over Wi-Fi). Don
 - Feedback: address 2 funcode 1 = joint angles (10 Hz), funcode 3 = status,
   funcode 4 = motor info; address 3 funcode 1 = command received (`recv_status`),
   funcode 2 = executed.
-- Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
+- Joint limits (degrees, Unitree's published ranges, as in the D1-550 URDF): ±135,
+±90, ±90, ±135, ±90, ±135 (`JOINT_LIMITS`). Commands and computed motions (jog,
+sweep, orbit, IK scan, periscope) stay inside them; poses taught by hand may go
+up to 10° further (`JOINT_REACH`), since the real arm reaches a little past the
+published ranges.
   Joint names: 0 base, 1 shoulder, 2 elbow, 3 wrist roll, 4 wrist pitch, 5 wrist yaw.
 - Arm default IP `192.168.123.100`.
 
@@ -236,7 +240,11 @@ Every command is `{"seq":N,"address":1,"funcode":F,"data":{...}}`, where
 | Release | `5` | `{"mode":0}` | Motors off (limp, drag-teach) |
 | Home | `7` | *(none)* | Return all joints to zero |
 
-Joint limits (degrees, match the D1-550 URDF): ±135, ±90, ±90, ±135, ±90, ±135.
+Joint limits (degrees, Unitree's published ranges, as in the D1-550 URDF): ±135,
+±90, ±90, ±135, ±90, ±135 (`JOINT_LIMITS`). Commands and computed motions (jog,
+sweep, orbit, IK scan, periscope) stay inside them; poses taught by hand may go
+up to 10° further (`JOINT_REACH`), since the real arm reaches a little past the
+published ranges.
 The scripts reject anything beyond them.
 
 ## Parameters
@@ -280,9 +288,11 @@ python3 scripts/tools/teach_arm.py --new    # new home + new sweep
    angles (telemetry address 2, funcode 1) go to `config/arm_waypoints.json`,
    written after every pose. At the prompt: **u** undoes the last pose, **h**
    re-records home, **l** lists home and the poses.
-4. Readings without telemetry, or more than 5° past a joint limit, are
-   refused. Up to 5° past one is clamped to it, with a note: the folded rest
-   pose reads joint 2 at +91.8° against a ±90° limit.
+4. Poses are saved exactly as measured. They are checked against the arm's
+   **reach**, `JOINT_REACH`: the published ranges + 10°, because a pose placed
+   by hand can go a little past them (the folded rest pose reads joint 2 at
+   +91.8°, a taught pose had joint 4 at +97.6°). Readings without telemetry or
+   beyond the reach (a telemetry glitch) are refused.
 5. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
    Ctrl+D lock it too, so it never drops.
 
@@ -298,8 +308,8 @@ python3 scripts/tools/play_arm.py --dry-run  # check the file and print the pose
 python3 scripts/tools/play_arm.py            # run the sweep
 ```
 
-Home and every waypoint are checked against the joint limits before anything
-moves. Then the arm powers on, locks, goes to the **recorded home** (the same
+Home and every waypoint are checked against the arm's reach (as when
+teaching) before anything moves. Then the arm powers on, locks, goes to the **recorded home** (the same
 smooth trajectory; the factory zero pose, `funcode 7`, if the file has no home
 or with `--factory-home`) and visits each pose
 with a smooth trajectory (`funcode 2`, `mode 1`). It waits until the pose is
