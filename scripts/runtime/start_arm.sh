@@ -53,7 +53,7 @@ export ARM_BRIDGE_PORT="${ARM_BRIDGE_PORT:-18100}"
 # No cable link on the wired arm port (carrier 0) but the arm answers behind
 # the Go2: use it over Wi-Fi through the robot's bridge instead of failing.
 if [ -z "${ARM_ROBOT:-}" ] && [ "$(cat "/sys/class/net/${ARM_IFACE}/carrier" 2>/dev/null)" != 1 ]; then
-    robot_ip="${GO2_ROBOT_IP:-$(head -n1 "${GO2_IP_CACHE}" 2>/dev/null || true)}"
+    robot_ip="$(go2_known_robot_ip || true)"
     # Several pings (any reply counts) or the bridge port: one 1 s ping can
     # land in a Wi-Fi power-save stall and silently fall back to the cable.
     if go2_valid_ip "${robot_ip}" && { ping -c3 -i0.3 -W1 "${robot_ip}" >/dev/null 2>&1 \

@@ -7,7 +7,8 @@
 # The router hands out addresses by DHCP, so nothing here is hardcoded:
 #   * Host IP  : read from the Wi-Fi interface (GO2_IFACE, auto-detected:
 #                the wireless NIC that has an IPv4 address).
-#   * Robot IP : find_go2_ip() — cache → hostname → MAC scan → SSH probe.
+#   * Robot IP : find_go2_ip() — hostname (ubuntu.local, mDNS) → cache →
+#                MAC scan → SSH probe. The DHCP address changes; the name does not.
 #
 # The D1 arm's wired interface (ARM_IFACE, auto-detected: the wired NIC on
 # 192.168.123.x, else the first wired NIC) is never used:
@@ -22,7 +23,7 @@
 #   GO2_IFACE=<auto>          Wi-Fi interface that reaches the Go2
 #   ARM_IFACE=<auto>          D1 arm interface — always ignored here
 #   GO2_MAC_PREFIX=02:00:00   MAC prefix of the Go2 Jetson Wi-Fi
-#   GO2_ROBOT_HOSTNAME=unitree
+#   GO2_ROBOT_HOSTNAME=ubuntu    the Jetson's hostname: ubuntu.local (Avahi/mDNS)
 #   GO2_ROBOT_USER=unitree
 #   GO2_IP_CACHE=~/.cache/go2_wifi_nav/robot_ip
 # ---------------------------------------------------------------------------
@@ -60,7 +61,7 @@ go2_default_arm_iface() {
 GO2_IFACE="${GO2_IFACE:-$(go2_default_wifi_iface)}"
 ARM_IFACE="${ARM_IFACE:-$(go2_default_arm_iface)}"
 GO2_MAC_PREFIX="${GO2_MAC_PREFIX:-02:00:00}"
-GO2_ROBOT_HOSTNAME="${GO2_ROBOT_HOSTNAME:-unitree}"
+GO2_ROBOT_HOSTNAME="${GO2_ROBOT_HOSTNAME:-ubuntu}"
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
 GO2_IP_CACHE="${GO2_IP_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/go2_wifi_nav/robot_ip}"
 
@@ -203,10 +204,44 @@ _go2_pick() {
     echo "$1"
 }
 
-find_go2_ip() {
-    local ip h cidr prefix cands=() neigh
+# The robot by name: the Jetson announces ubuntu.local over mDNS (Avahi), so
+# this follows DHCP changes. "ubuntu" is a common default hostname: once
+# --setup-ssh has pinned the robot's key, the answer must prove it is the Go2
+# (MAC prefix or that key); before that, Wi-Fi + ping. Prints the IP.
+go2_robot_by_name() {
+    local h ip
+    for h in "${GO2_ROBOT_HOSTNAME}.local" "${GO2_ROBOT_HOSTNAME}"; do
+        ip="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1; exit}' || true)"
+        [ -n "${ip}" ] && [ "${ip}" != "${GO2_HOST_IP}" ] || continue
+        if ssh-keygen -F go2-robot >/dev/null 2>&1; then
+            go2_is_go2 "${ip}" || { go2_log "[net] ${h} -> ${ip} is not the Go2 (SSH key differs); skipped"; continue; }
+        elif ! { go2_on_wifi_segment "${ip}" && go2_ping "${ip}"; }; then
+            continue
+        fi
+        go2_log "[net] Robot found by hostname ${h} -> ${ip}"
+        echo "${ip}"; return 0
+    done
+    return 1
+}
 
-    # 1. Last known IP, if it still answers as the Go2
+# Quick robot IP for helper scripts (start_arm.sh, check_map_tilt.sh, ...):
+# GO2_ROBOT_IP, else by name, else the cached one; no network scan.
+go2_known_robot_ip() {
+    if [ -n "${GO2_ROBOT_IP:-}" ]; then echo "${GO2_ROBOT_IP}"; return 0; fi
+    [ -n "${GO2_HOST_IP:-}" ] || go2_detect_host_ip 2>/dev/null || true
+    go2_robot_by_name 2>/dev/null && return 0
+    head -n1 "${GO2_IP_CACHE}" 2>/dev/null
+}
+
+find_go2_ip() {
+    local ip cidr prefix cands=() neigh
+
+    # 1. By name (ubuntu.local)
+    if ip="$(go2_robot_by_name)"; then
+        echo "${ip}"; return 0
+    fi
+
+    # 2. Last known IP, if it still answers as the Go2
     if [ -r "${GO2_IP_CACHE}" ]; then
         ip="$(head -n1 "${GO2_IP_CACHE}" 2>/dev/null || true)"
         if go2_is_go2 "${ip}"; then
@@ -214,16 +249,6 @@ find_go2_ip() {
             echo "${ip}"; return 0
         fi
     fi
-
-    # 2. Hostname (mDNS / router DNS)
-    for h in "${GO2_ROBOT_HOSTNAME}" "${GO2_ROBOT_HOSTNAME}.local"; do
-        ip="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1; exit}' || true)"
-        [ -n "${ip}" ] && [ "${ip}" != "${GO2_HOST_IP}" ] || continue
-        if go2_on_wifi_segment "${ip}" && go2_ping "${ip}"; then
-            go2_log "[net] Robot found by hostname ${h} -> ${ip}"
-            echo "${ip}"; return 0
-        fi
-    done
 
     cidr="$(go2_iface_cidr "${GO2_IFACE}")"
     if [ -z "${cidr}" ]; then

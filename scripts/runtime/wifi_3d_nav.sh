@@ -687,7 +687,7 @@ start_arm_state() {
     local robot args=()
     # shellcheck disable=SC2016
     robot="$(bash -c 'source "$1"; [ "$(cat "/sys/class/net/${ARM_IFACE}/carrier" 2>/dev/null)" = 1 ] \
-        || head -n1 "${GO2_IP_CACHE}" 2>/dev/null' _ "${SCRIPT_DIR}/go2_net.sh" 2>/dev/null || true)"
+        || go2_known_robot_ip' _ "${SCRIPT_DIR}/go2_net.sh" 2>/dev/null || true)"
     [ -n "${robot}" ] && args=(--robot "${robot}")
     python3 -u "${NODES_DIR}/arm_state_bridge.py" "${args[@]}" --rosbridge "localhost:${TWIN_ROSBRIDGE_PORT}" \
         --orbit-log "${TWIN_LOG_DIR}/arm_orbit.log" > "${TWIN_LOG_DIR}/arm_state.log" 2>&1 &

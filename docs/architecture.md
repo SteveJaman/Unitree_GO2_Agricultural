@@ -119,7 +119,7 @@ resolved on every run by [`scripts/runtime/go2_net.sh`](../scripts/runtime/go2_n
 | Node | IP | How it is found |
 |---|---|---|
 | Workstation | DHCP | `GO2_HOST_IP`: read from the Wi-Fi interface (`GO2_IFACE`, auto-detected: the wireless NIC with an IPv4 address, e.g. `wlx1cbfce22ca47`). Override: `--host-ip` |
-| Go2 Jetson | DHCP | `GO2_ROBOT_IP`: last known IP, then hostname `unitree`, then a MAC-prefix scan (`02:00:00`) on `GO2_IFACE`, then an SSH-key probe. Override: `--robot-ip` |
+| Go2 Jetson | DHCP, by name `ubuntu.local` | `GO2_ROBOT_IP`: the hostname `ubuntu.local` (mDNS, follows DHCP changes; must match the SSH key pinned by `--setup-ssh`, since `ubuntu` is a common default name), then the last known IP, then a MAC-prefix scan (`02:00:00`) on `GO2_IFACE`, then an SSH-key probe. Override: `--robot-ip`, or `GO2_ROBOT_HOSTNAME` for another name |
 | D1-T arm | `192.168.123.100` | Wired, on `ARM_IFACE` (auto-detected: the wired NIC on `192.168.123.x`, e.g. `enp0s31f6`). The nav stack never uses this interface |
 | DDS domain | `64` | Wi-Fi side |
 | Relay port | `17999` | TCP, `/cmd_vel` |

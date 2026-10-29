@@ -149,19 +149,25 @@ ignores it with a note. Remove it to avoid confusion.
 
 ### `could not find the Go2 on <wifi iface>`
 
-Robot discovery failed. Order tried: last known IP, hostname `unitree`, MAC
+Robot discovery failed. Order tried: hostname `ubuntu.local` (mDNS, checked
+against the pinned SSH key), last known IP, MAC
 prefix scan (`02:00:00`) on the Wi-Fi interface, then an SSH-key probe.
 
 0. Make sure the Go2 is on the **same Wi-Fi network** as the workstation. If
    it is cabled to the workstation, `getent hosts unitree.local` resolving to
    `192.168.123.161` means you only reach it over the cable: `ssh` in there
    and check `nmcli -t -f ACTIVE,SSID dev wifi` and `hostname -I`.
-1. Find the address in the router's DHCP lease list, or run `hostname -I` on
+1. Check the name: `getent hosts ubuntu.local` should print the robot's Wi-Fi
+   address. If not, Avahi (mDNS) is not answering: on the Jetson,
+   `systemctl status avahi-daemon`; on this computer, `avahi-resolve -n ubuntu.local`.
+   Another device called `ubuntu` is skipped once `--setup-ssh` has pinned the
+   robot's key (`... is not the Go2 (SSH key differs)`).
+2. Find the address in the router's DHCP lease list, or run `hostname -I` on
    the Jetson, then `./scripts/runtime/wifi_nav.sh --robot-ip <IP>`. It is
    cached for next time.
-2. If the Jetson's Wi-Fi MAC doesn't start with `02:00:00` (check `ip link` on
+3. If the Jetson's Wi-Fi MAC doesn't start with `02:00:00` (check `ip link` on
    the Jetson), set `GO2_MAC_PREFIX=<prefix>`.
-3. Install `arp-scan` (`sudo apt install arp-scan`) or `nmap` for a faster,
+4. Install `arp-scan` (`sudo apt install arp-scan`) or `nmap` for a faster,
    more reliable scan. Without them, a ping sweep is used.
 
 ### `route to robot ... goes via the arm interface <iface>`
