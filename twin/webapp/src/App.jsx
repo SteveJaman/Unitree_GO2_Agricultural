@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { RosProvider, usePublisher, useRos, useTopic } from './RosProvider.jsx';
 import RoomsPanel from './RoomsPanel.jsx';
 import RoomNameModal from './RoomNameModal.jsx';
@@ -49,6 +49,21 @@ function useMeshes() {
   return meshes;
 }
 
+/**
+ * Publish the bottom-left controls' height as --controls-h on the app, so the
+ * top-left settings column stops above them on any screen (styles.css).
+ */
+function useControlsHeight(appRef) {
+  useLayoutEffect(() => {
+    const app = appRef.current;
+    const controls = app?.querySelector('.controls');
+    if (!controls || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => app.style.setProperty('--controls-h', `${controls.offsetHeight}px`));
+    ro.observe(controls);
+    return () => ro.disconnect();
+  }, [appRef]);
+}
+
 /** A callback with a stable identity that always runs the latest closure. */
 function useStable(fn) {
   const ref = useRef(fn);
@@ -59,6 +74,8 @@ function useStable(fn) {
 function Dashboard() {
   const { status } = useRos();
   const connected = status === 'connected';
+  const appRef = useRef(null);
+  useControlsHeight(appRef);
   const [quality, setQualityState] = useState(initialQuality);
   const lite = quality === 'lite';
   const [layers, setLayers] = useState({ map: true, scan: false, yolo: true, labels: true, rooms: true });
@@ -218,7 +235,7 @@ function Dashboard() {
   const meshUrl = meshFile ? `${ASSETS}maps/${encodeURIComponent(meshFile)}` : null;
 
   return (
-    <div className={`app ${lite ? 'lite' : ''}`}>
+    <div ref={appRef} className={`app ${lite ? 'lite' : ''}`}>
       {/* keyed: antialiasing is fixed when the WebGL context is created */}
       <Scene key={quality} quality={quality} fixedFrame={FIXED_FRAME} baseFrame={BASE_FRAME} layers={layers} view={view}
              meshUrl={meshUrl} textured={textured} shadows={shadows} voxelSize={voxelSize}

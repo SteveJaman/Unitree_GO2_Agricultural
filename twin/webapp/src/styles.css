@@ -46,6 +46,13 @@ button { font: inherit; color: inherit; }
 
 /* ---------------------------------------------------------- top left */
 .mapmenu { position: absolute; top: var(--gap); left: var(--gap); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+/* The column stops above the bottom-left controls (--controls-h, set by App.jsx);
+   the settings menu scrolls instead of running under them on short screens. */
+.mapmenu {
+  max-height: calc(100vh - 3 * var(--gap) - var(--controls-h, 0px));
+  max-height: calc(100dvh - 3 * var(--gap) - var(--controls-h, 0px));
+}
+.mapmenu > .brand, .mapmenu > .segmented { flex: none; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 10px 16px; font-size: 15px; letter-spacing: .01em; }
 .brand b { font-weight: 650; }
 .brand-mark {
@@ -63,7 +70,11 @@ button { font: inherit; color: inherit; }
 .segmented .gear { font-size: 15px; padding: 7px 11px; }
 .segmented .gear.active { background: rgba(255, 255, 255, .12); color: var(--text); }
 
-.menu { width: 260px; padding: 8px; display: flex; flex-direction: column; animation: pop .15s ease-out; }
+.menu {
+  width: 260px; padding: 8px; display: flex; flex-direction: column; animation: pop .15s ease-out;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
+.menu .row { flex: none; }
 .menu .row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 9px 10px; border-radius: 10px; color: var(--text); background: transparent; border: 0; text-align: left; cursor: pointer;
@@ -180,6 +191,8 @@ button { font: inherit; color: inherit; }
 /* UI above the 3D labels (Html zIndexRange 0-500), dialogs above everything. */
 .mapmenu, .status, .vlm-badge, .vlm-toast, .controls, .pip, .rooms, .rooms-fab, .toast, .connecting, .hint { z-index: 1000; }
 .modal-backdrop { z-index: 2000 !important; }
+/* An open settings menu stays above the controls if they ever meet. */
+.mapmenu { z-index: 1001; }
 
 /* Floating 3D labels (HTML overlays anchored in the scene). */
 .tag {
@@ -269,6 +282,45 @@ button { font: inherit; color: inherit; }
 @keyframes drop { from { opacity: 0; transform: translate(-50%, -10px); } }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 
+/* ---------------------------------------------------------- screen sizes */
+/* Large desktop monitors: a little more room for text and the camera. */
+@media (min-width: 1920px) and (min-height: 1000px) {
+  :root { --gap: 20px; }
+  body { font-size: 15px; }
+  .controls { width: 330px; }
+  .menu { width: 280px; }
+  .pip { width: 400px; }
+  .rooms { width: 320px; }
+}
+
+/* Laptops (or any short window): tighter panels so the map stays visible
+   and the settings menu and the controls both fit in the height. */
+@media (max-height: 860px) and (min-width: 761px) {
+  :root { --gap: 12px; --radius: 16px; }
+  .brand { padding: 8px 14px; }
+  .segmented button { padding: 6px 12px; }
+  .menu { width: 240px; padding: 6px; }
+  .menu .row { padding: 7px 10px; }
+  .controls { width: 280px; padding: 10px; gap: 8px; }
+  .explore, .survey-main { padding: 10px 12px; gap: 12px; border-radius: 14px; }
+  .explore-icon, .survey-icon { width: 32px; height: 32px; font-size: 13px; }
+  .explore-title { font-size: 15px; }
+  .explore-sub { font-size: 11.5px; }
+  .action { padding: 9px; border-radius: 12px; }
+  .room-go select { padding: 9px 0; }
+  .chip { padding: 6px 10px; }
+  .pip { width: 260px; }
+  .rooms-fab, .rooms { top: 66px; }
+  .rooms { width: 280px; }
+}
+
+/* Very short windows (small laptops, browser zoom): drop the sub-lines. */
+@media (max-height: 640px) and (min-width: 761px) {
+  .explore-sub { display: none; }
+  .survey-steps, .survey-results { display: none; }
+  .pip { width: 220px; }
+}
+
 /* Phones / narrow windows */
 @media (max-width: 760px) {
   :root { --gap: 10px; }
@@ -276,7 +328,25 @@ button { font: inherit; color: inherit; }
   .pip { width: 180px; }
   .status { padding: 8px 12px; gap: 10px; }
   .status-text, .brand span:last-child { display: none; }
-  .vlm-badge, .vlm-toast { top: 64px; }
+  /* Top-left stacks the brand and the view switcher (to ~100px): rooms go
+     below it and stop above the controls; the AI badge sits on the controls. */
+  .rooms-fab, .rooms { top: calc(var(--gap) + 96px); }
+  .rooms {
+    max-height: calc(100vh - 4 * var(--gap) - 216px - var(--controls-h, 0px));
+    max-height: calc(100dvh - 4 * var(--gap) - 216px - var(--controls-h, 0px));
+  }
+  .vlm-badge, .vlm-toast { top: auto; bottom: calc(2 * var(--gap) + 120px + var(--controls-h, 0px)); }
+  /* Settings open as a full-width sheet over everything, not squeezed
+     between the top bar and the controls. */
+  .mapmenu { max-height: none; }
+  .menu {
+    position: fixed; left: var(--gap); right: var(--gap); width: auto; z-index: 1500;
+    top: calc(var(--gap) + 96px);
+    max-height: calc(100vh - 2 * var(--gap) - 96px);
+    max-height: calc(100dvh - 2 * var(--gap) - 96px);
+    background: var(--glass-strong);
+  }
+  .menu .row { padding: 11px 12px; }
 }
 
 /* auto survey card (SurveyCard.jsx) */
