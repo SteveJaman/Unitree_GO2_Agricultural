@@ -264,18 +264,23 @@ camera's weight, so teaching uses **compliance mode** (`funcode 5`,
 **1. Teach** (one hand on the arm, the other on the keyboard):
 
 ```bash
-python3 scripts/tools/teach_arm.py          # add poses to the existing sweep
-python3 scripts/tools/teach_arm.py --new    # start a new sweep
+python3 scripts/tools/teach_arm.py          # add poses (a saved home is kept)
+python3 scripts/tools/teach_arm.py --new    # new home + new sweep
 ```
 
 1. The arm powers on and goes compliant: *"Arm is compliant. You can now
    move it by hand."*
-2. Move it until the camera frames the plant, then press **Enter**. The six
-   joint angles (telemetry address 2, funcode 1) are appended to
-   `config/arm_waypoints.json`, and the file is written after every pose.
-   Poses beyond the joint limits, or saved without telemetry, are refused.
-3. Repeat for every scan angle, in the order you want them visited.
-4. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
+2. **HOME first:** move it to its home / rest pose and press **Enter**. The
+   sweep starts and ends there. A file that already has a home keeps it.
+3. **Then each scan pose:** move it until the camera frames the plant and
+   press **Enter**, or type a name first (e.g. `left leaf`). The six joint
+   angles (telemetry address 2, funcode 1) go to `config/arm_waypoints.json`,
+   written after every pose. At the prompt: **u** undoes the last pose, **h**
+   re-records home, **l** lists home and the poses.
+4. Readings without telemetry, or more than 5° past a joint limit, are
+   refused. Up to 5° past one is clamped to it, with a note: the folded rest
+   pose reads joint 2 at +91.8° against a ±90° limit.
+5. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
    Ctrl+D lock it too, so it never drops.
 
 If the arm sags under the camera, raise `--stiffness` (e.g. 8000); if it is
@@ -288,19 +293,22 @@ python3 scripts/tools/play_arm.py --dry-run  # check the file and print the pose
 python3 scripts/tools/play_arm.py            # run the sweep
 ```
 
-Every waypoint is checked against the joint limits before anything moves.
-Then the arm powers on, locks, homes (`funcode 7`) and visits each pose
+Home and every waypoint are checked against the joint limits before anything
+moves. Then the arm powers on, locks, goes to the **recorded home** (the same
+smooth trajectory; the factory zero pose, `funcode 7`, if the file has no home
+or with `--factory-home`) and visits each pose
 with a smooth trajectory (`funcode 2`, `mode 1`). It waits until the pose is
 reached (within `--tolerance`, 3°), prints *"Waypoint N reached. [Camera
-should capture photo here]"* and holds `--dwell` seconds (3). At the end it
-homes again and **stays locked**; `--release` releases it at home (support
+should capture photo here]"* (with its name) and holds `--dwell` seconds (3).
+At the end it goes home again and **stays locked**; `--release` releases it at home (support
 it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
 locks the arm where it stopped.
 
 `config/arm_waypoints.json` is user data (git-ignored):
 
 ```json
-{"waypoints": [{"angles": [10.5, -32.0, 45.1, 0.0, 20.0, 0.0], "saved": "2026-10-27T17:05:12"}]}
+{"home": {"angles": [1.8, -88.8, 90.0, 1.3, 23.0, 0.6], "saved": "2026-10-29T19:05:02"},
+ "waypoints": [{"angles": [10.5, -32.0, 45.1, 0.0, 20.0, 0.0], "name": "left leaf", "saved": "2026-10-29T19:05:12"}]}
 ```
 
 Both scripts take the usual `--iface`, `--ip`, `--domain`,

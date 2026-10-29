@@ -2,14 +2,18 @@
 """
 play_arm.py
 
-Replay the plant-scan poses taught with teach_arm.py
-(config/arm_waypoints.json): lock, home, then visit every waypoint with a
+Replay the home and plant-scan poses taught with teach_arm.py
+(config/arm_waypoints.json): lock, go home, then visit every pose with a
 smooth trajectory (funcode 2, mode 1) and hold it for the camera.
 
+Home is the pose recorded with teach_arm.py (reached with the same smooth
+trajectory). Without one, or with --factory-home, it is the arm's factory
+zero pose (funcode 7), as before.
+
 Workflow:
-    1. Check every waypoint against the joint limits (nothing moves if one fails)
-    2. Power on, lock (funcode 5, {"mode": 80000}), home (funcode 7)
-    3. Per waypoint: move, wait until it is reached, hold --dwell s
+    1. Check home and every pose against the joint limits (nothing moves if one fails)
+    2. Power on, lock (funcode 5, {"mode": 80000}), go home
+    3. Per pose: move, wait until it is reached, hold --dwell s
        ("Waypoint N reached. [Camera should capture photo here]")
     4. Home again. The arm stays locked; --release releases it at home
 Ctrl+C or an error locks the arm where it is (it never drops).
@@ -41,22 +45,31 @@ WAYPOINTS = os.path.join(_repo, "config", "arm_waypoints.json")
 ARM_JOINTS = 6
 
 
+def check_pose(label, a):
+    if len(a) != ARM_JOINTS:
+        sys.exit(f"[!] {label}: {len(a)} angles, expected {ARM_JOINTS}")
+    bad = [f"joint {j} {v:+.1f}°" for j, v in enumerate(a) if abs(v) > JOINT_LIMITS[j]]
+    if bad:
+        sys.exit(f"[!] {label} beyond the joint limits: {', '.join(bad)}")
+    return [float(v) for v in a]
+
+
 def load_waypoints(path):
-    """[[a0..a5], ...] from teach_arm.py's file; exits with a message on errors."""
+    """(home angles or None, [(name, angles), ...]) from teach_arm.py's file;
+    exits with a message on errors."""
     if not os.path.isfile(path):
         sys.exit(f"[!] {path} not found: teach poses first (scripts/tools/teach_arm.py)")
     with open(path) as f:
         data = json.load(f)
-    wps = [w["angles"] if isinstance(w, dict) else w for w in data.get("waypoints", [])]
-    if not wps:
+    raw = data.get("waypoints", [])
+    if not raw:
         sys.exit(f"[!] {path} has no waypoints")
-    for n, a in enumerate(wps, 1):
-        if len(a) != ARM_JOINTS:
-            sys.exit(f"[!] waypoint {n}: {len(a)} angles, expected {ARM_JOINTS}")
-        bad = [f"joint {j} {v:+.1f}°" for j, v in enumerate(a) if abs(v) > JOINT_LIMITS[j]]
-        if bad:
-            sys.exit(f"[!] waypoint {n} beyond the joint limits: {', '.join(bad)}")
-    return [[float(v) for v in a] for a in wps]
+    wps = []
+    for n, w in enumerate(raw, 1):
+        a, name = (w["angles"], w.get("name", "")) if isinstance(w, dict) else (w, "")
+        wps.append((name, check_pose(f"waypoint {n}", a)))
+    home = data.get("home")
+    return (check_pose("home", home["angles"]) if home else None), wps
 
 
 def current(arm):
@@ -89,14 +102,19 @@ def main():
     ap.add_argument("--tolerance", type=float, default=3.0, help="degrees counted as reached")
     ap.add_argument("--move-timeout", type=float, default=15.0, help="s allowed per move")
     ap.add_argument("--release", action="store_true", help="release the arm at home when done")
+    ap.add_argument("--factory-home", action="store_true",
+                    help="use the arm's factory zero pose as home, not the recorded one")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, do not connect")
     ap.add_argument("--skip-preflight", action="store_true")
     args = ap.parse_args()
 
-    wps = load_waypoints(args.file)
+    home, wps = load_waypoints(args.file)
+    if args.factory_home:
+        home = None
     print(f"{len(wps)} waypoints from {args.file}")
-    for n, a in enumerate(wps, 1):
-        print(f"  {n}: {' '.join(f'{v:+7.1f}' for v in a)}")
+    print(f"  home: {' '.join(f'{v:+7.1f}' for v in home) if home else 'factory zero pose (funcode 7)'}")
+    for n, (name, a) in enumerate(wps, 1):
+        print(f"  {n}: {' '.join(f'{v:+7.1f}' for v in a)}  {name}")
     if args.dry_run:
         return 0
 
@@ -119,21 +137,29 @@ def main():
             print(f"[!] the arm did not enable (state: {st or 'none'}); nothing moved")
             return 3
         locked = True
-        print("[*] home")
-        arm.home()
-        time.sleep(T_HOME)
         gripper = (current(arm) or [0.0] * 7)[6]   # keep the end effector as it is
-        for n, a in enumerate(wps, 1):
+
+        def move(a, label):
             cmd = {"mode": 1, **{f"angle{j}": v for j, v in enumerate(a)}, "angle6": gripper}
             arm._send(FUNC_JOINTS, cmd)
             if not wait_reached(arm, a, args.tolerance, args.move_timeout):
-                print(f"  [!] waypoint {n} not reached within {args.move_timeout:.0f} s "
+                print(f"  [!] {label} not reached within {args.move_timeout:.0f} s "
                       f"(±{args.tolerance:.0f}°); holding anyway")
-            print(f"Waypoint {n} reached. [Camera should capture photo here]")
+
+        def go_home():
+            print("[*] home" + (" (recorded)" if home else " (factory zero)"))
+            if home:
+                move(home, "home")
+            else:
+                arm.home()
+                time.sleep(T_HOME)
+
+        go_home()
+        for n, (name, a) in enumerate(wps, 1):
+            move(a, f"waypoint {n}")
+            print(f"Waypoint {n}{f' ({name})' if name else ''} reached. [Camera should capture photo here]")
             time.sleep(args.dwell)
-        print("[*] home")
-        arm.home()
-        time.sleep(T_HOME)
+        go_home()
         if args.release:
             print("[*] release (the arm goes limp at home)")
             arm.release()
