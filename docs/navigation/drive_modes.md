@@ -108,7 +108,7 @@ repo's version over it.
 | Injected leg abort | Recovery found free space behind, stepped back, re-sent the goal; the planner replanned (2 retries, then stopped retrying) |
 
 In the simulator the dog covers only about 20% of the commanded distance,
-because Gazebo runs at roughly 20% of real time on this VM. On the robot the
+because Gazebo ran at roughly 20% of real time on the old VM. On the robot the
 speeds are real.
 
 **Real dog** (no motion, no goals sent): MPPI loaded with the `Omni` model,
@@ -134,5 +134,5 @@ in hand:
 | Reverses too eagerly | Raise `PreferForwardCritic.cost_weight` (e.g. 5) |
 | Controller CPU high | Lower `batch_size` (e.g. 600) or `time_steps` (30) |
 | Dog faces a wall and does nothing | Check that recovery is on (`Recovery : true` in the start-up banner) and look at `/tmp/stuck_recovery.log`. With `--omni` it can also sidestep and reverse along the path |
-| `CRITICAL FAILURE: SERVER controller_server IS DOWN` | The controller missed its 4 s lifecycle heartbeat because the VM was overloaded (seen in the simulator: Gazebo + RViz at load 15 on 6 cores). Nav2 stays down until a restart. Close other heavy programs |
+| `CRITICAL FAILURE: SERVER controller_server IS DOWN` | The controller missed its 4 s lifecycle heartbeat because the host was overloaded (seen in the simulator on the old VM: Gazebo + RViz at load 15 on 6 cores). Nav2 stays down until a restart. Close other heavy programs |
 | Recovery never moves | `docker exec go2-lidar3d tail /tmp/stuck_recovery.log`: `no free space (back: max cost …, … unknown)` means a cell in the escape box is inscribed/lethal (cost ≥ `free_threshold`, 99) or unknown. It never steps into unknown space |

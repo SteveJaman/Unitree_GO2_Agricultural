@@ -6,9 +6,9 @@
 # Point-LIO, Nav2, RViz, explorer, camera), plus a separate go2-3d container:
 #   * RTAB-Map            dense 3D map of the run, saved to a .db file;
 #                         coloured from the Go2 camera when it publishes
-#   * Web dashboard       http://<VM IP>:3000 (React + three.js, twin/webapp):
+#   * Web dashboard       http://<host IP>:3000 (or http://localhost:3000 on this computer) (React + three.js, twin/webapp):
 #                         3D map, robot, plan, camera, battery, click-to-go,
-#                         over rosbridge ws://<VM IP>:9090
+#                         over rosbridge ws://<host IP>:9090
 #   * go2_click_to_goal   a point clicked in the dashboard becomes a Nav2 goal
 #   * battery monitor     /battery_state (in go2-lidar3d)
 #   * rooms + survey      room segmentation; the autonomous survey (explore,
@@ -330,7 +330,7 @@ do_export() {
         python3 /tools/export_tour.py "/data/${name}-export/$(basename "${cloud}")" --from-ply \
             -o "/data/${name}_mesh.ply" --max-triangles "${TWIN_MESH_TRIANGLES}" ${TWIN_MESH_ARGS:-}
     echo "[3d] Mesh ready: ${dir}/${name}_mesh.ply"
-    echo "[3d] View it: dashboard -> 3D Scan (http://<VM IP>:${TWIN_WEB_PORT}) during a session,"
+    echo "[3d] View it: dashboard -> 3D Scan (http://localhost:${TWIN_WEB_PORT}) during a session,"
     echo "     or without the robot: $0 --view   (docs/ai_and_vision/3d_nav.md#presentation-mesh)"
 }
 
@@ -521,7 +521,7 @@ start_twin_when_ready() {
                 echo "   Survey      : on demand - dashboard 'Auto Survey'"
             fi
             if [ "${TWIN_WEB}" = 1 ]; then
-                echo "   Dashboard   : http://${host_ip}:${TWIN_WEB_PORT}   (on the VM: http://localhost:${TWIN_WEB_PORT})"
+                echo "   Dashboard   : http://${host_ip}:${TWIN_WEB_PORT}   (on this computer: http://localhost:${TWIN_WEB_PORT})"
                 echo "   Click-to-go : dashboard toolbar 'Click-to-go', then click the floor"
             fi
             [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "   rosbridge   : ws://${host_ip}:${TWIN_ROSBRIDGE_PORT}"

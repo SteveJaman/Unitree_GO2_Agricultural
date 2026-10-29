@@ -157,7 +157,7 @@ exactly at the URDF `front_camera` pose, and its intrinsics are known exactly
 so the correct overlay needs zero offsets. It can't test the lens calibration
 (the sim has no checkerboard), only the projection.
 
-On this VM, headless Gazebo (`SIM_GUI=0`) renders a **black camera and an
+With software GL (the old VM, or no GPU driver), headless Gazebo (`SIM_GUI=0`) renders a **black camera and an
 empty LiDAR scan** with the default `ogre2` engine. Use the older engine:
 
 ```bash
@@ -235,7 +235,7 @@ settings guessed from a 110° field of view, the fit matched the LiDAR to a
 median 7% (90°: 31%, 130°: 16%). That suggests the lens is about 110° wide.
 The lab chair (pole, foot ring, base) came out as a cluster 1.1 m ahead and
 the glass door as a wall about 2.5 m away. Inference took about 1 s per
-frame on this VM, with the rest of the session running.
+frame on the old VM, with the rest of the session running.
 
 | Node parameter | Default | Meaning |
 |---|---|---|

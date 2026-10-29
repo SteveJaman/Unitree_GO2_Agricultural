@@ -2,7 +2,7 @@
 # diag_arm.sh: D1 arm network + DDS diagnostic.
 #
 # Environment overrides:
-#   ARM_IFACE=enp0s8        interface the arm is plugged into (auto-detected if unset)
+#   ARM_IFACE=enp0s31f6     interface the arm is plugged into (auto-detected if unset)
 #   ARM_SUBNET=192.168.123  arm subnet (D1 factory default IP is .100)
 #   ARM_IP=192.168.123.100
 #   ARM_PEER=...            unicast discovery peer (not recommended: this firmware needs multicast)
@@ -39,8 +39,8 @@ if [ -z "$IFACE" ]; then
     else
         fail "no interface has an address in ${SUBNET}.x"
         echo "  The arm must be on its own wired interface (not your home-LAN one)."
-        echo "  In VirtualBox: attach the USB Ethernet adapter to the VM, or add a Bridged"
-        echo "  adapter bound to that NIC. Then:"
+        echo "  Plug the arm into a wired port of this computer (e.g. enp0s31f6), give it"
+        echo "  an address on the arm subnet (or: sudo nmcli connection up go2-arm), e.g.:"
         echo "    sudo ip addr add ${SUBNET}.51/24 dev <iface>"
         echo "    sudo ip link set <iface> up"
         echo "  and re-run:  ARM_IFACE=<iface> $0"
@@ -79,7 +79,7 @@ CARRIER="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo 0)"
 if [ "$CARRIER" = "1" ]; then
     pass "link is up (cable detected)"
 else
-    fail "no link/carrier on $IFACE (cable, adapter, or VM attachment problem)"
+    fail "no link/carrier on $IFACE (cable, adapter, or arm power problem)"
 fi
 
 mapfile -t IPS < <(ip -4 -o addr show dev "$IFACE" | awk '{print $4}' | cut -d/ -f1)
@@ -123,7 +123,7 @@ else
         echo "  no hosts responded on $IFACE"
         echo "  Next: sudo tcpdump -i $IFACE -n -c 20   (arm powered on, cable in)."
         echo "        Packets from the arm => link is fine, IP/subnet is the issue."
-        echo "        Silence => cable / adapter / VirtualBox attachment."
+        echo "        Silence => cable / adapter / arm power."
         echo "        The arm also needs ~1 min after power-on."
     else
         for f in "$SWEEP_DIR"/*; do

@@ -235,7 +235,7 @@ Pick one per session.
 | All waypoints turn red at once | Planner rejected them (goal inside an inflated obstacle) | Move waypoints away from walls; run [`./scripts/tools/tune_costmap.sh --safe`](../../scripts/tools/tune_costmap.sh) |
 | Saved `tour.rviz` doesn't load | Version mismatch or a plugin missing | Open RViz without `-d`, redo the setup, save again |
 
-More: [troubleshooting.md](../troubleshooting.md#rviz--vm).
+More: [troubleshooting.md](../troubleshooting.md#rviz).
 
 ---
 

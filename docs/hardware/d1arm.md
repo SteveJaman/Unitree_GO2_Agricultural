@@ -2,11 +2,11 @@
 
 [← Back to README](../../README.md) · [Scripts](../setup/scripts.md) · [Gazebo sim](../simulation/gazebo.md) · [Troubleshooting → D1-T Arm](../troubleshooting.md#d1-t-arm) · [Roadmap](../roadmap.md)
 
-Controls a Unitree D1 / D1-T arm over DDS directly from the VM host (no
+Controls a Unitree D1 / D1-T arm over DDS directly from the host (no
 container). Protocol source: Unitree "D1 Mechanical Arm Services Interface" doc,
 cross-checked against working open-source drivers (see References).
 
-**Verified config:** interface `enp0s8`, DDS domain 0, **multicast** discovery.
+**Verified config:** a wired interface (auto-detected, e.g. `enp0s31f6`), DDS domain 0, **multicast** discovery.
 Or plug the arm into the Go2 and control it over Wi-Fi: see
 [Arm over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2).
 Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
@@ -71,32 +71,36 @@ there for the wired link: `pip3 install cyclonedds` (not needed over Wi-Fi). Don
 ## Hardware
 
 - **Power:** 24V DC via the DC 5.5-2.1 barrel jack (~1 min boot)
-- **Communication:** RJ45 to the VM's `enp0s8`, or to the Go2's Ethernet port
-  ([over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2)). Arm at `192.168.123.100`, VM at
-  `192.168.123.99` (`sudo ip addr add 192.168.123.99/24 dev enp0s8`). DDS
+- **Communication:** RJ45 to a wired port of the workstation (e.g. `enp0s31f6`),
+  or to the Go2's Ethernet port ([over Wi-Fi](#arm-over-wi-fi-plugged-into-the-go2)).
+  Arm at `192.168.123.100`, host at `192.168.123.99` (the `go2-arm`
+  NetworkManager profile, see [Network](#network)). DDS
   discovery is multicast. It is kept separate from the Go2's Wi-Fi DDS
 - **Debug:** USB-C (serial debug only)
 
 ## Network
 
-The arm must be on its own wired interface in the VM (`enp0s8` by default). The
-VM side needs the address **`192.168.123.99/24`** on that interface. The Go2's
-Wi-Fi bridge (`enp0s3`) must be on a different subnet, otherwise arm and Go2 DDS
+The arm must be on its own wired interface of the workstation (auto-detected:
+the wired NIC on `192.168.123.x`, else the first wired NIC; here `enp0s31f6`).
+The host side needs the address **`192.168.123.99/24`** on that interface. The
+Go2's Wi-Fi interface must be on a different subnet, otherwise arm and Go2 DDS
 traffic mix. `wifi_nav.sh --arm` refuses an overlapping setup.
 
-In VirtualBox, attach the arm's Ethernet as Adapter 2 (Bridged, adapter type
-**Intel PRO/1000**). The arm needs about a minute after power-on. Then:
+Give the port its address once with a NetworkManager profile. It persists across
+reboots and comes up whenever the cable is plugged in. The arm needs about a
+minute after power-on. Then:
 
 ```bash
-sudo ip addr add 192.168.123.99/24 dev enp0s8
-sudo ip link set enp0s8 up
+sudo nmcli connection add type ethernet ifname enp0s31f6 con-name go2-arm \
+  ipv4.method manual ipv4.addresses 192.168.123.99/24 ipv4.never-default yes ipv6.method ignore
+sudo nmcli connection up go2-arm
 ./scripts/runtime/start_arm.sh --check     # preflight: address + ping
 ```
 
-The address doesn't persist across VM reboots, so re-add it after a restart. If
-the arm doesn't reply to ping, cold-boot the VM (power off, not reboot).
+If the arm doesn't reply to ping, check its 24V power and the cable, then
+power-cycle the arm.
 
-Overrides: `ARM_IFACE` (default `enp0s8`), `ARM_IP` (`192.168.123.100`),
+Overrides: `ARM_IFACE` (default: auto-detected), `ARM_IP` (`192.168.123.100`),
 `ARM_HOST_IP` (`192.168.123.99`), `ARM_DOMAIN` (`0`).
 
 ## Arm over Wi-Fi (plugged into the Go2)
@@ -169,7 +173,7 @@ Overrides: `ARM_BRIDGE_PORT` (18100), `ARM_BRIDGE_TIMEOUT` (3 s),
 ## Run
 
 ```bash
-ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh     # all PASS expected
+./scripts/tools/diag_arm.sh                      # all PASS expected
 ./scripts/runtime/start_arm.sh --check           # preflight only
 ./scripts/runtime/start_arm.sh state             # read state
 ./scripts/runtime/start_arm.sh read              # print FOLDED_ANGLES (calibration)
@@ -237,9 +241,9 @@ The scripts reject anything beyond them.
 
 | Flag / env | Default | Notes |
 |---|---|---|
-| `--iface` / `ARM_IFACE` | `enp0s8` | Interface that reaches the arm |
+| `--iface` / `ARM_IFACE` | auto-detected (e.g. `enp0s31f6`) | Interface that reaches the arm |
 | `--ip` / `ARM_IP` | `192.168.123.100` | Arm address (preflight ping and route check) |
-| `ARM_HOST_IP` | `192.168.123.99` | VM address `start_arm.sh` expects on the interface |
+| `ARM_HOST_IP` | `192.168.123.99` | Host address `start_arm.sh` expects on the interface |
 | `--domain` / `ARM_DOMAIN` | `0` | DDS domain |
 | `--enable-mode` | `80000` | `enable` value (80000 = fully locked) |
 | `--match-timeout` | `20` | Seconds to wait for DDS discovery |
@@ -518,9 +522,9 @@ low: the arm is on a walking robot.
 
 | Symptom | Meaning | Fix |
 |---|---|---|
-| `enp0s8 is missing 192.168.123.99` | address lost after reboot | `sudo ip addr add 192.168.123.99/24 dev enp0s8` |
-| `192.168.123.100 does not reply to ping` | cable / adapter / still booting | check link; cold-boot the VM with Adapter 2 = Intel PRO/1000 |
-| `route to ... does NOT go via enp0s8` | another interface owns the subnet | remove the overlapping address |
+| `<iface> is missing 192.168.123.99` | cable unplugged, or the profile is down | plug in the cable; `sudo nmcli connection up go2-arm` |
+| `192.168.123.100 does not reply to ping` | cable / adapter / still booting | check link and 24V power; wait a minute after power-on; power-cycle the arm |
+| `route to ... does NOT go via <iface>` | another interface owns the subnet | remove the overlapping address |
 | `DDS discovery failed` | no DDS match within `--match-timeout` | arm powered and booted? no `--peer`; no ROS sourced; `pip3 show cyclonedds` |
 | commands acked but nothing moves | motors not enabled | `enable` first (`--enable-mode 80000`) |
 | `joint N limit ±L°` | target outside the limit | use a smaller angle |

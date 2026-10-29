@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# test_sim.sh: automated smoke test of the Gazebo simulation (on the VM).
+# test_sim.sh: automated smoke test of the Gazebo simulation (on the host).
 #
 # Uses the real go2-lidar3d container and the real arm scripts:
 #   1. starts the simulation (run_sim.sh up)

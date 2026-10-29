@@ -9,7 +9,7 @@
 # Starts wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera, waits for the
 # explorer, presses Auto Explore, stops at "Exploration complete" or after
 # LIMIT seconds (default 600), saves the trial and shuts everything down.
-# Run it from a terminal on the VM desktop (RViz needs $DISPLAY). Nothing else
+# Run it from a terminal on the desktop of this computer (RViz needs $DISPLAY). Nothing else
 # heavy should run meanwhile: the result depends on the real-time factor.
 # ---------------------------------------------------------------------------
 set -o pipefail
@@ -34,7 +34,7 @@ resume() {
     docker exec go2-lidar3d bash -c "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///tmp/go2-wifi-cyclonedds.xml; source /opt/ros/humble/setup.bash; ros2 topic pub --once -w 1 /explore/resume std_msgs/msg/Bool '{data: true}'" >/dev/null 2>&1
 }
 
-cd "${REPO}"
+cd "${REPO}" || exit 1
 rm -f "${FLOG}"
 echo "[trial] ${NAME}: starting the sim session (log ${SESSION_LOG})"
 setsid ./scripts/runtime/wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera "$@" > "${SESSION_LOG}" 2>&1 &

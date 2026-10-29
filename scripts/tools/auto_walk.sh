@@ -4,7 +4,7 @@
 # PREREQUISITES (must be running before you launch this):
 #   1. Dog standing, powered on
 #   2. Jetson: no leftover relay  → ssh unitree@192.168.1.9 'pkill -9 -f relay; pkill -9 -f go2_cmd_vel'
-#   3. VM: ./mapping.sh --3d --nav  is running and RViz shows a live map
+#   3. Host: ./mapping.sh --3d --nav  is running and RViz shows a live map
 #   4. Verify: docker exec -u root go2-lidar3d bash -lc 'source /opt/ros/humble/setup.bash; source /ws/install/setup.bash 2>/dev/null; ros2 run tf2_ros tf2_echo lidar3d_map base_link' — must show pose updates
 set -eo pipefail
 

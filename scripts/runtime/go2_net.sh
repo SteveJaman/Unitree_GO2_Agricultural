@@ -5,25 +5,60 @@
 # Sourced (not executed) by wifi_nav.sh, wifi_mapping.sh and the tools.
 #
 # The router hands out addresses by DHCP, so nothing here is hardcoded:
-#   * Host IP  : read from the Wi-Fi interface (GO2_IFACE, default enp0s3,
-#                the VirtualBox bridged adapter).
+#   * Host IP  : read from the Wi-Fi interface (GO2_IFACE, auto-detected:
+#                the wireless NIC that has an IPv4 address).
 #   * Robot IP : find_go2_ip() — cache → hostname → MAC scan → SSH probe.
 #
-# The D1 arm's wired interface (ARM_IFACE, default enp0s8) is never used:
+# The D1 arm's wired interface (ARM_IFACE, auto-detected: the wired NIC on
+# 192.168.123.x, else the first wired NIC) is never used:
 # it is refused as GO2_IFACE, never scanned, and a robot route through it
 # is an error. This keeps Go2 DDS traffic off the arm's segment.
 #
+# Interface names differ per machine (on the native Ubuntu workstation:
+# wlx1cbfce22ca47 USB Wi-Fi and enp0s31f6 onboard Ethernet), so they are
+# detected rather than named. Set GO2_IFACE / ARM_IFACE to pin them.
+#
 # Tunables (env):
-#   GO2_IFACE=enp0s3          Wi-Fi interface that reaches the Go2
-#   ARM_IFACE=enp0s8          D1 arm interface — always ignored here
+#   GO2_IFACE=<auto>          Wi-Fi interface that reaches the Go2
+#   ARM_IFACE=<auto>          D1 arm interface — always ignored here
 #   GO2_MAC_PREFIX=02:00:00   MAC prefix of the Go2 Jetson Wi-Fi
 #   GO2_ROBOT_HOSTNAME=unitree
 #   GO2_ROBOT_USER=unitree
 #   GO2_IP_CACHE=~/.cache/go2_wifi_nav/robot_ip
 # ---------------------------------------------------------------------------
 
-GO2_IFACE="${GO2_IFACE:-enp0s3}"
-ARM_IFACE="${ARM_IFACE:-enp0s8}"
+ARM_SUBNET_PREFIX="${ARM_SUBNET_PREFIX:-192.168.123}"
+
+# First wireless interface with an IPv4 address (else the first wireless one).
+go2_default_wifi_iface() {
+    local d first=""
+    for d in /sys/class/net/*; do
+        [ -d "$d/wireless" ] || continue
+        d="${d##*/}"
+        first="${first:-$d}"
+        if ip -4 -o addr show dev "$d" scope global 2>/dev/null | grep -q .; then
+            echo "$d"; return 0
+        fi
+    done
+    echo "${first:-wlan0}"
+}
+
+# Wired (physical, non-wireless) interface on the arm subnet (else the first one).
+go2_default_arm_iface() {
+    local d first=""
+    for d in /sys/class/net/*; do
+        [ -e "$d/device" ] && [ ! -d "$d/wireless" ] || continue
+        d="${d##*/}"
+        first="${first:-$d}"
+        if ip -4 -o addr show dev "$d" 2>/dev/null | grep -q " ${ARM_SUBNET_PREFIX//./\\.}\."; then
+            echo "$d"; return 0
+        fi
+    done
+    echo "${first:-eth0}"
+}
+
+GO2_IFACE="${GO2_IFACE:-$(go2_default_wifi_iface)}"
+ARM_IFACE="${ARM_IFACE:-$(go2_default_arm_iface)}"
 GO2_MAC_PREFIX="${GO2_MAC_PREFIX:-02:00:00}"
 GO2_ROBOT_HOSTNAME="${GO2_ROBOT_HOSTNAME:-unitree}"
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
@@ -110,7 +145,7 @@ go2_detect_host_ip() {
     fi
 
     if ! ip link show dev "${GO2_IFACE}" >/dev/null 2>&1; then
-        # Interface name differs on this VM: fall back to the default route,
+        # Interface name differs on this machine: fall back to the default route,
         # but never onto the arm's interface.
         read -r dev src < <(ip -4 route get 8.8.8.8 2>/dev/null | awk '
             {for (i = 1; i < NF; i++) { if ($i == "dev") d = $(i + 1); if ($i == "src") s = $(i + 1) }}
@@ -133,7 +168,7 @@ go2_detect_host_ip() {
     cidr="$(go2_iface_cidr "${GO2_IFACE}")"
     if [ -z "${cidr}" ]; then
         go2_log "[net] ERROR: ${GO2_IFACE} has no IPv4 address."
-        go2_log "             Check the VirtualBox bridged adapter and DHCP (sudo dhclient ${GO2_IFACE})."
+        go2_log "             Check that the Wi-Fi is connected (nmcli device status) or set GO2_IFACE."
         return 1
     fi
     GO2_HOST_IP="${cidr%/*}"
@@ -265,7 +300,7 @@ go2_check_arm_iface() {
         return 1
     fi
     if ! ip link show dev "${ARM_IFACE}" >/dev/null 2>&1; then
-        go2_log "[arm] ERROR: arm interface ${ARM_IFACE} not found (attach the arm's adapter to the VM)."
+        go2_log "[arm] ERROR: arm interface ${ARM_IFACE} not found (plug in the arm cable or set ARM_IFACE)."
         return 1
     fi
     cidr="$(go2_iface_cidr "${ARM_IFACE}")"
@@ -346,7 +381,7 @@ go2_resolve_network() {
         dev="$(go2_route_dev "${GO2_ROBOT_IP}")"
         if [ "${dev}" = "${ARM_IFACE}" ]; then
             go2_log "[net] ERROR: route to robot ${GO2_ROBOT_IP} goes via the arm interface ${ARM_IFACE}."
-            go2_log "             Fix the VM routes so ${GO2_IFACE} carries Go2 traffic."
+            go2_log "             Fix the routes so ${GO2_IFACE} carries Go2 traffic."
             return 1
         fi
         if [ -n "${dev}" ] && [ "${dev}" != "${GO2_IFACE}" ]; then

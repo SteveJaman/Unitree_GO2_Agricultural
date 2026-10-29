@@ -85,5 +85,5 @@ ros2 topic echo /cmd_vel --field linear.x         # ramps smoothly, no sign flip
 
 - **No topics in a terminal:** you're outside the container. Use `go2sh`.
 - **The model drifts or sinks into the floor, or the red trail tangles:** the SLAM pose is degrading. Usually this follows fast remote driving, or launching before the dog was standing. Restart the session.
-- **The VM is slow:** RViz renders on the CPU in the container. Untick the heavy point cloud displays while driving. Use bridged networking (not NAT) and give the VM 4+ cores.
+- **RViz is slow:** without the NVIDIA driver RViz renders on the CPU in the container. Untick the heavy point cloud displays while driving, and check `glxinfo -B` shows the GPU.
 - **Patch error when running the script:** upstream changed. Apply the changes from the table above by hand.

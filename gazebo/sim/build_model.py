@@ -392,7 +392,7 @@ def main():
                          "Default: centre of the trunk top")
     ap.add_argument("--lidar-hz", type=float, default=float(os.environ.get("SIM_LIDAR_HZ", "5") or 5),
                     help="lidar rate (default env SIM_LIDAR_HZ or 5). Software rendering of each "
-                         "scan stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43x real "
+                         "scan stalls physics: on the old 4-core VM 10 Hz ran the sim at 0.43x real "
                          "time, 5 Hz at 0.85x. Nav2's costmap expects a scan every 0.8 s")
     ap.add_argument("--camera", choices=("0", "1"), default=os.environ.get("SIM_CAMERA", "1") or "1",
                     help="1 = render the front camera; 0 saves CPU (default env SIM_CAMERA)")

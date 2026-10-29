@@ -6,8 +6,8 @@ Fold the D1 arm into its calibrated resting pose on the Go2's back.
 Uses the shared D1Arm of d1_arm_control.py: DDS on --iface, or with
 ARM_ROBOT=<Go2 Wi-Fi IP> the arm plugged into the Go2, through its bridge.
 
-    python3 d1_arm_calibration.py --iface enp0s8 --read
-    python3 d1_arm_calibration.py --iface enp0s8 --move
+    python3 d1_arm_calibration.py --read            # wired iface auto-detected
+    python3 d1_arm_calibration.py --iface enp0s31f6 --move
     ARM_ROBOT=192.168.1.9 python3 d1_arm_calibration.py --move
 """
 
@@ -17,7 +17,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from d1_arm_control import ADDR_ACK, D1Arm as _SharedArm  # noqa: E402
+from d1_arm_control import ADDR_ACK, D1Arm as _SharedArm, default_arm_iface  # noqa: E402
 
 
 # Paste the FOLDED_ANGLES line printed by --read below:
@@ -78,7 +78,7 @@ class D1Arm(_SharedArm):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--iface", default="enp0s8")
+    ap.add_argument("--iface", default=default_arm_iface())
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--read", action="store_true")
     mode.add_argument("--move", action="store_true")

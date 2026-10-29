@@ -292,7 +292,7 @@ Trials go to `~/files/go2-nav2-wifi/ws/log/nav_compare/NAME/` (set
 
 ### In the simulator
 
-Run from a terminal on the VM desktop, with nothing else heavy running (the
+Run from a terminal on the workstation desktop, with nothing else heavy running (the
 results depend on the real-time factor):
 
 ```bash
@@ -306,7 +306,7 @@ N=~/files/go2-nav2-wifi/ws/log/nav_compare
 ```
 
 - Each trial takes about 5–8 minutes, including start-up and shutdown.
-- Interleave the modes as above, so a slow period on the VM doesn't hit only
+- Interleave the modes as above, so a slow period on the host doesn't hit only
   one mode.
 - Extra `wifi_nav.sh` options pass through (e.g. `sim_trial.sh h4 --drive
   hybrid --no-recovery`).
@@ -332,7 +332,7 @@ the space behind the dog.
 
 **Before.**
 
-- Raise the network buffers once per VM boot (needs sudo). Without this, the
+- Raise the network buffers once (needs sudo; the `sysctl.d` file persists). Without this, the
   lidar arrives late and the dog doesn't move. See
   [troubleshooting.md](../troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map).
 

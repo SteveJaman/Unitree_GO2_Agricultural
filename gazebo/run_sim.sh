@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# run_sim.sh: start/stop the Go2 + D1 Gazebo simulation (on the VM).
+# run_sim.sh: start/stop the Go2 + D1 Gazebo simulation (on the host).
 #
 #   ./gazebo/run_sim.sh up       start (no-op if running); waits until ready
 #   ./gazebo/run_sim.sh down     stop and remove the sim arm interface
@@ -15,16 +15,16 @@
 #   * D1 arm: DDS domain 0 on interface simarm0 (192.168.123.51, arm "at" .100)
 #
 # Environment:
-#   GO2_HOST_IP=...       DDS bind address (default: auto on enp0s3, else 127.0.0.1)
-#   SIM_GUI=0             1 = Gazebo window. Off by default: on the 4-core VM
+#   GO2_HOST_IP=...       DDS bind address (default: auto on the Wi-Fi interface, else 127.0.0.1)
+#   SIM_GUI=0             1 = Gazebo window. Off by default: on the old 4-core VM
 #                         the window ran the sim at ~14% real time, so the
 #                         robot crawled while Nav2/explorer timed out
 #                         (they run on wall-clock time). RViz shows the same.
 #   SIM_ARM=1             create simarm0 + run the D1 emulator (0 = no arm)
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
-#   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black on the VM)
-#   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the VM)
-#   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halves the sim speed on the VM
+#   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black)
+#   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the old 4-core VM)
+#   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halved the sim speed on the old 4-core VM
 #   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
 #   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
@@ -96,7 +96,7 @@ setup_arm_iface() {
         echo "[sim] ${SIM_ARM_IFACE} present"
         return 0
     fi
-    # Another interface on the same subnet (e.g. the real arm on enp0s8) would
+    # Another interface on the same subnet (e.g. the real arm on the wired port) would
     # make routing to the arm ambiguous.
     local other
     other="$(ip -4 -o addr show | awk -v p="^${SIM_ARM_SUBNET//./\\.}\\." '$4 ~ p {print $2; exit}')"
@@ -141,7 +141,7 @@ report_rtf() {
     if awk -v r="$rtf" 'BEGIN{exit !(r < 0.8)}'; then
         echo "[sim] WARN: sim runs at ${rtf}x real time; the robot will crawl and goals time out."
         echo "[sim]       Try SIM_CAMERA=0 (wifi_nav --no-camera does this), keep SIM_GUI=0 and"
-        echo "[sim]       SIM_LIDAR_HZ=5, close other heavy apps, or give the VM more CPU cores."
+        echo "[sim]       SIM_LIDAR_HZ=5, or close other heavy apps."
     else
         echo "[sim] real-time factor ${rtf}"
     fi

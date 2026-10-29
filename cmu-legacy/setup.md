@@ -23,8 +23,8 @@ Start with Ethernet. See docs/ethernet.md.
 
 | Item | Where | Version |
 |------|-------|---------|
-| Ubuntu | VM | 22.04 |
-| ROS 2 | VM | Humble |
+| Ubuntu | Workstation (native) | 22.04 |
+| ROS 2 | Workstation (native) | Humble |
 | ROS 2 | Go2 Jetson | Foxy |
 | autonomy_stack_go2 | ~/files/autonomy_stack_go2 | External, must be built |
 | go2_robot_sdk | ~/files/ros2_ws/src/go2_robot_sdk | External, must be built |

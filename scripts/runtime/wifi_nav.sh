@@ -154,9 +154,14 @@ ROBOT_CLOCK_OFFSET=""
 ROBOT_CLOCK_RTT=""
 measure_robot_clock_offset() {
     local best_rtt="" best_off="" t0 r t1 rtt off
-    for _ in 1 2 3 4 5; do
+    # Reuse one SSH connection: a fresh connection spends most of its round
+    # trip on the handshake before `date` runs, which skews the midpoint
+    # estimate by up to a few hundred ms over Wi-Fi.
+    local mux=(-o ControlMaster=auto -o "ControlPath=/tmp/go2-clock-%C" -o ControlPersist=10)
+    robot_ssh -T -o ConnectTimeout=5 "${mux[@]}" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" true 2>/dev/null || return 1
+    for _ in 1 2 3 4 5 6 7 8; do
         t0="$(date +%s.%N)"
-        r="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
+        r="$(robot_ssh -T -o ConnectTimeout=5 "${mux[@]}" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
         t1="$(date +%s.%N)"
         [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
         read -r rtt off < <(awk -v a="$t0" -v b="$r" -v c="$t1" 'BEGIN {printf "%.6f %.6f\n", c - a, b - (a + c) / 2}')
@@ -1116,7 +1121,7 @@ python3 "${SCRIPT_DIR}/../tools/rviz_add_camera.py" \
     "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_navigation.rviz" || true
 
 if [ "${SIM}" = "true" ]; then
-    : "${DISPLAY:?RViz needs a desktop session: run this in a terminal on the VM desktop}"
+    : "${DISPLAY:?RViz needs a desktop session: run this in a terminal on the desktop of this computer}"
     sim_nav=0; sim_plan=1
     [ "${MODE}" = "--nav" ] && sim_nav=1
     if [ "${sim_nav}" = 1 ]; then

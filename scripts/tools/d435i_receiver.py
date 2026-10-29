@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-D435i receiver: runs on the ROS2 Humble VM.
+D435i receiver: runs on the ROS2 Humble host (native Ubuntu 22.04).
 
 Subscribes to the ZeroMQ stream from d435i_sender.py and republishes:
     /camera/color/image_raw                     (sensor_msgs/Image, bgr8)
@@ -8,7 +8,7 @@ Subscribes to the ZeroMQ stream from d435i_sender.py and republishes:
     /camera/aligned_depth_to_color/image_raw    (sensor_msgs/Image, 16UC1, millimetres)
     /camera/aligned_depth_to_color/camera_info  (sensor_msgs/CameraInfo)
 
-Install (on the VM):
+Install (on the host):
     pip install pyzmq opencv-python numpy
 
 Run:

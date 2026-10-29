@@ -10,7 +10,8 @@
 #   source ./scripts/setup_env.sh --no-dds       # skip CYCLONEDDS_URI
 #
 # Environment overrides (set before sourcing):
-#   SETUP_NETWORK=false    # skip auto-configuring enp0s3 / enp0s8
+#   SETUP_NETWORK=false    # skip auto-configuring the wired robot link
+#   ROBOT_IFACE=<iface>    # wired interface to the Go2 (default: auto-detected, e.g. enp0s31f6)
 #
 # After sourcing, the current shell has:
 #   - ROS 2 Humble environment
@@ -19,7 +20,8 @@
 #   - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 #   - CYCLONEDDS_URI pointing at the requested config
 #   - ROS_DOMAIN_ID=0 (override with ROS_DOMAIN_ID=... before sourcing)
-#   - enp0s3 (internet) and enp0s8 (robot link) brought up automatically
+#   - the wired robot link (ROBOT_IFACE) brought up automatically;
+#     internet is left to NetworkManager (native Ubuntu, no VM)
 # ---------------------------------------------------------------------------
 
 # Must be sourced, not executed
@@ -47,7 +49,8 @@ case "${1:-}" in
 esac
 
 # ---- Network interfaces ---------------------------------------------------
-# Bring up enp0s3 (internet / DHCP) and enp0s8 (robot link / static IP).
+# Bring up the wired robot link (static IP). Internet (Wi-Fi) is managed by
+# NetworkManager on the native Ubuntu host, so it is not touched here.
 # Uses sudo, which may prompt for a password on first invocation.
 # Set SETUP_NETWORK=false before sourcing to skip this.
 
@@ -85,12 +88,12 @@ ensure_iface_dhcp() {
     fi
 }
 
-if [ "${SETUP_NETWORK:-true}" = "true" ]; then
-    # enp0s3 — internet via DHCP
-    ensure_iface_dhcp enp0s3
+source "${WS_ROOT}/scripts/runtime/go2_net.sh"   # go2_default_arm_iface: wired NIC on 192.168.123.x
+ROBOT_IFACE="${ROBOT_IFACE:-$(go2_default_arm_iface)}"
 
-    # enp0s8 — static IP on the robot's subnet
-    ensure_iface_static enp0s8 "192.168.123.100/24"
+if [ "${SETUP_NETWORK:-true}" = "true" ]; then
+    # Wired robot link — static IP on the robot's subnet
+    ensure_iface_static "${ROBOT_IFACE}" "192.168.123.100/24"
 fi
 
 # ---- Source ROS 2 (set -u safe) ------------------------------------------
@@ -135,7 +138,7 @@ echo "  RMW            = ${RMW_IMPLEMENTATION}"
 echo "  ROS_DOMAIN_ID  = ${ROS_DOMAIN_ID}"
 echo "  NET_MODE       = ${NET_MODE}"
 [ -n "${CYCLONEDDS_URI:-}" ] && echo "  CYCLONEDDS_URI = ${CYCLONEDDS_URI}"
-echo "  enp0s3         = $(_ip_of enp0s3)     (internet)"
-echo "  enp0s8         = $(_ip_of enp0s8)     (robot link)"
+echo "  ${GO2_IFACE}  = $(_ip_of "${GO2_IFACE}")     (Wi-Fi / internet)"
+echo "  ${ROBOT_IFACE}  = $(_ip_of "${ROBOT_IFACE}")     (robot link)"
 
 unset _SETUP_SCRIPT_DIR

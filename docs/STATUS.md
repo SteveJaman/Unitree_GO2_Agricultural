@@ -13,7 +13,7 @@ From the weekly meeting with the advisor; tracked in the
 
 | Goal | State |
 |---|---|
-| Scan an object with the RGBD camera (D435i) | **Tools written**: [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) stream colour + depth to the VM; first scan pending |
+| Scan an object with the RGBD camera (D435i) | **Tools written**: [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) stream colour + depth to the workstation; first scan pending |
 | Arm rotates to scan the fake plant: left, front, right | **Tools written**: teach the three poses with [`teach_arm.py`](../scripts/tools/teach_arm.py), replay with [`play_arm.py`](../scripts/tools/play_arm.py); not yet done on the plant |
 | Mount the camera on the arm's end | **Blocked**: waiting for the USB-C extension cable |
 
@@ -21,7 +21,7 @@ From the weekly meeting with the advisor; tracked in the
 
 ## Physical test readiness (2026-10-23)
 
-**Primary interface: the web dashboard** at `http://<VM IP>:3000`, started by
+**Primary interface: the web dashboard** at `http://localhost:3000` (or `http://<host IP>:3000`), started by
 `./scripts/runtime/wifi_3d_nav.sh`. RViz still opens with the session, and
 Foxglove is the optional alternative (`--foxglove`).
 
@@ -40,13 +40,13 @@ Foxglove is the optional alternative (`--foxglove`).
 | `--resume` after a battery swap | **Implemented (pending physical test)** |
 | Dashboard performance mode (software renderer), Go2 model with live leg joints | **Implemented (pending physical test)**: measured against synthetic data in software WebGL (2026-10-27) |
 | Battery level on the dashboard (`/battery_state`) | **Fixed and seen on the robot (2026-10-27)**: the battery manager crashed (`No module named 'unitree_go'`) |
-| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound VM). Raise the UDP buffers ([setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
+| Camera in the 3D session (YOLO, VLM, coloured map, dashboard camera) | **Dashboard Live + AI verified on the robot (2026-10-27)**: relay ~4.5 fps, dashboard ~3 fps, YOLO ~0.4 Hz (CPU-bound, on the old VM). Raise the UDP buffers ([setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup)) for RTAB-Map camera mode; YOLO boxes still to check with a chair or person in view |
 | D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
 | D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Moved on the robot over Wi-Fi (2026-10-27)**: power, enable, joint 0 +20°, home, fold. Found and fixed: the bridge's auto-lock re-enabled an enabled arm, which drives it to its last target. Open: `power 0` does not switch motor power off over the bridge |
 | Drive modes `--drive hybrid` (default) / `diff` / `omni` ([drive modes](navigation/drive_modes.md)): MPPI reverse + sidestep, stuck recovery in every session | **Implemented (pending physical test)**: sim comparison of all three, 9 trials (2026-10-28, [results](navigation/locomotion_comparison.md)); on the real dog MPPI loads and recovery is ready, but no movement test yet |
 | MoveIt 2 for the D1 arm (`arm_moveit.sh`, [d1arm.md](hardware/d1arm.md#moveit-2-cartesian-planning-arm_moveitsh)): Cartesian goals, collision-free plans around the Go2, plant-inspection demo | **Implemented (pending physical test)**: runs on ros2_control mock hardware only; driving the real arm needs a trajectory bridge (not written) |
 | Unity sim (`sim_explore.sh`, [unity.md](simulation/unity.md)): explorer + the real go2_nav2 config in the CMU Unity sim, on the host | **Implemented (pending physical test)**: explorer runs in the sim (2026-10-16, -22); the same explorer parameters still need the robot |
-| VLM (llava:7b on the VM's CPU) | **Too slow on the VM (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout, so no decision is published; use a GPU host or a smaller model |
+| VLM (llava:7b) | **Too slow on the old VM's CPU (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout. The native workstation has an NVIDIA GPU (Quadro RTX 4000) that Ollama uses once the driver is loaded; re-test pending |
 
 Test plan: checks 17–54 under [Pending verification](#pending-verification-needs-robot),
 and the [Next session plan](#next-session-plan).
@@ -84,7 +84,7 @@ Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scrip
 
 ### Navigation — verified working
 
-- VM container `go2-lidar3d` running, DDS bound to the VM's Wi-Fi address
+- Container `go2-lidar3d` running, DDS bound to the host's Wi-Fi address
   (verified when the lab network used `192.168.1.4` ↔ robot `192.168.1.9`;
   addresses are now resolved at runtime, see below)
 - Lab-nav-fixes applied (RPP controller, velocity smoother, Go2 URDF lidar mount)
@@ -119,7 +119,7 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](ai_and_vision/camera.md)
 
 ### DHCP networking — code complete, untested on robot (2026-10-18)
 
-- [`go2_net.sh`](../scripts/runtime/go2_net.sh): host IP auto-detected on `enp0s3`;
+- [`go2_net.sh`](../scripts/runtime/go2_net.sh): host IP auto-detected on the Wi-Fi interface;
   robot found by cache → hostname → MAC prefix scan → SSH-key probe;
   `--host-ip` / `--robot-ip` / `--iface` overrides
 - Container recreated when its baked-in host **or robot** IP is stale. `mapping.sh`
@@ -129,7 +129,7 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](ai_and_vision/camera.md)
 - SSH relay start fixed (heredoc; the old `bash -lc` string killed itself via `pkill -f`)
 - Relay IP passed under private names, so a stale `GO2_HOST_IP` in the Jetson's login
   profile can no longer redirect the relay
-- Discovery `ping` falls back when binding to `enp0s3` isn't permitted
+- Discovery `ping` falls back when binding to the Wi-Fi interface isn't permitted
 - Container checks no longer use `grep -q` in pipelines (SIGPIPE + `pipefail` misreport)
 - `--setup-ssh` implemented directly in `wifi_nav.sh`
 - Discovery logic unit-tested against mocked `ip`/`arp-scan` output; `wifi_nav.sh`
@@ -137,8 +137,9 @@ via `wifi_nav.sh` unless `--no-camera`. See [camera.md](ai_and_vision/camera.md)
 
 ### D1-T arm — reworked for host-side control (2026-10-20)
 
-Verified config: `enp0s8`, DDS domain 0, **multicast** discovery (unicast
-`--peer` breaks on this firmware). The scripts now run on the VM with the pip
+Verified config: a wired interface (now auto-detected), DDS domain 0,
+**multicast** discovery (unicast `--peer` breaks on this firmware). The scripts
+run on the host with the pip
 `cyclonedds` package, not inside the container.
 
 - [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py): chain-style DDS/JSON CLI. Commands:
@@ -149,10 +150,10 @@ Verified config: `enp0s8`, DDS domain 0, **multicast** discovery (unicast
 - [`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py): `--read` folded angles, `--move` fold
   (power on → enable → move → release → power off). `FOLDED_ANGLES` calibrated
 - [`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) (new): per-joint offset, commanded vs reported angle
-- [`start_arm.sh`](../scripts/runtime/start_arm.sh): preflight (`192.168.123.99` on `enp0s8`, ping the arm),
+- [`start_arm.sh`](../scripts/runtime/start_arm.sh): preflight (`192.168.123.99` on the arm interface, ping the arm),
   then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` chain. Removed:
   `--read`/`--no-home`/`--setup-net` flags and the no-argument fold
-- `wifi_nav.sh --arm`: checks `enp0s8`, runs `start_arm.sh fold` in the background
+- `wifi_nav.sh --arm`: checks the arm interface, runs `start_arm.sh fold` in the background
 - [`diag_arm.sh`](../scripts/tools/diag_arm.sh): DDS check updated for the new control output
 
 ### Gazebo simulation — code complete, untested in Gazebo (2026-10-18)
@@ -165,7 +166,7 @@ Verified off-robot: model builder on the real Unitree URDFs (tree, meshes, spawn
 height); pose maths against upstream `compose_pose`; cmd_vel TCP server; the D1
 emulator against the **unmodified** `d1_arm_control.py` and `d1_arm_calibration.py`
 over real CycloneDDS; `wifi_nav.sh --sim` / `run_sim.sh` with a fake harness.
-Not yet run: Gazebo itself (needs the Ubuntu VM): run `./gazebo/test_sim.sh`.
+Not yet run: Gazebo itself (needs the Ubuntu workstation): run `./gazebo/test_sim.sh`.
 
 ### 3D digital twin — code complete, untested (2026-10-21)
 
@@ -177,7 +178,7 @@ with the web dashboard `:3000` (foxglove_bridge `:8765` with `--foxglove`) and
 (`/clicked_point` → nearest safe floor → `/goal_pose`). It copies the session's DDS settings, and
 the RTAB-Map DB is saved on every exit. Runbook: [3d_nav.md](ai_and_vision/3d_nav.md).
 
-Checked off the VM: bash syntax and shellcheck, Python syntax. Not yet run:
+Checked off-robot: bash syntax and shellcheck, Python syntax. Not yet run:
 the `go2-3d:local` image build, RTAB-Map on live data, the dashboard on the
 robot, click-to-go, `--export`.
 
@@ -260,13 +261,13 @@ relay is unconfirmed.
 
 [`./scripts/runtime/wifi_nav.sh --arm`](../scripts/runtime/wifi_nav.sh) now handles the entire session:
 
-1. Detects the VM's Wi-Fi IP and discovers the robot's IP
-2. Kills stale processes on VM **and** Jetson, cleans up partial runs
+1. Detects the host's Wi-Fi interface and IP and discovers the robot's IP
+2. Kills stale processes on the host **and** Jetson, cleans up partial runs
 3. Recreates the container if its host or robot IP is stale, pins numpy, checks DDS
 4. Jetson compute (default): leaves the relay + motion bridge to `mapping.sh`.
    Otherwise SSHes into Jetson, clears port 17999, starts the relay in FULL mode
    and waits for it to confirm
-5. (`--arm`) folds the D1 arm in the background over `enp0s8`
+5. (`--arm`) folds the D1 arm in the background over the wired arm interface
 6. Launches Nav2 + RViz via `mapping.sh --3d --nav`
 7. Starts explorer + camera relay after 20 s
 8. On Ctrl+C: waits for an arm fold in progress, then stops everything cleanly
@@ -286,7 +287,7 @@ relay is unconfirmed.
 | 7 | STOP button halts dog | click | stop within 1 s |
 | 8 | Full autonomous run | watch | `IDLE → EXPLORING → RETURNING → DONE` |
 | 9 | Camera reaches container | `ros2 topic hz /camera/image_raw` | ~10–30 Hz |
-| 10 | Arm reachable | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` (on the Go2: `start_arm.sh --robot <ip> state`) | all PASS — ✅ over Wi-Fi 2026-10-27 |
+| 10 | Arm reachable | `./scripts/tools/diag_arm.sh` (on the Go2: `start_arm.sh --robot <ip> state`) | all PASS — ✅ over Wi-Fi 2026-10-27 |
 | 11 | Arm responds to `joint` | `start_arm.sh enable sleep 2 joint 0 20 sleep 3 release` | joint 0 moves 20° — ✅ over Wi-Fi 2026-10-27 (−0.8° → +20.0°) |
 | 12 | Joint offsets small | `start_arm.sh --calibrate --test-deg 10 --yes` | offsets within a degree or two |
 | 13 | Fold calibration | `start_arm.sh read`, paste, `start_arm.sh fold` | arm folds onto mount, goes limp — ✅ over Wi-Fi 2026-10-27 |
@@ -295,7 +296,7 @@ relay is unconfirmed.
 | 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
 | 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
 | 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
-| 19 | Dense map grows | dashboard `http://<VM IP>:3000`, 3D view | map fills in as the dog walks |
+| 19 | Dense map grows | dashboard `http://localhost:3000`, 3D view | map fills in as the dog walks |
 | 20 | Click-to-go | dashboard Click-to-go, click the floor, then a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
 | 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
 | 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
@@ -307,7 +308,7 @@ relay is unconfirmed.
 | 28 | VLM | `ollama serve` + `llava:7b`, `--ai` | `[checks] Ollama llava:7b … OK`; `/vlm_decision` updates in the dashboard |
 | 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
 | 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
-| 31 | Dashboard | open `http://<VM IP>:3000` from Windows | green rosbridge dot, robot moves with the dog, battery % matches the app |
+| 31 | Dashboard | open `http://<host IP>:3000` from another device | green rosbridge dot, robot moves with the dog, battery % matches the app |
 | 32 | Dashboard camera | camera mode, dashboard Camera / YOLO tabs | ~5 fps each |
 | 33 | Dashboard STOP | explorer running, click STOP | dog stops, explorer `IDLE` |
 | 34 | Auto-localization | `--ai` with the dog at the dock | `auto_localize.log`: `initial pose … published`; no manual 2D Pose Estimate needed |
@@ -328,7 +329,7 @@ relay is unconfirmed.
 | 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
 | 50 | Drive `omni` | `wifi_3d_nav.sh --no-explore --drive omni`, remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
 | 51 | Drive `hybrid` recovery | default drive, explorer next to a wall until a leg aborts | `/tmp/stuck_recovery.log`: steps back or aside 0.3 m, goal re-sent |
-| 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the VM | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
+| 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the workstation | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
 | 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |
 | 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
 
@@ -338,7 +339,7 @@ relay is unconfirmed.
 
 | Item | Blocker |
 |---|---|
-| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the VM (see [tour.md](navigation/tour.md)) |
+| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the workstation (see [tour.md](navigation/tour.md)) |
 | Camera backend on Jetson | `WARN: camera unavailable` in relay log |
 | Hyperspectral camera mount | 3D-printed attachment + sensor |
 | D435i on the arm's end | USB-C extension cable not yet arrived |
@@ -350,14 +351,15 @@ relay is unconfirmed.
 
 Full list of fixes: [troubleshooting.md](troubleshooting.md).
 
-### VLM never answers on the VM (2026-10-27)
+### VLM never answered on the old VM (2026-10-27)
 
 Measured with the node's own prompt on a camera-sized frame: llava:7b loads
 in ~5 min (the 10.9 GB VM swaps) and reads one image in ~2 min (627 tokens at
 ~5 tokens/s), longer than `vlm_reasoning_node.py`'s 120 s timeout. Every
 request times out (`Ollama not reachable … timed out` in `vlm.log`), so
 `/vlm_decision` stays silent and BLOCKED → dock can never trigger. YOLO is
-fine (0.2–0.8 s per frame). Fix: Ollama on a GPU host (`TWIN_VLM_URL`, see
+fine (0.2–0.8 s per frame). Fix: the native workstation's NVIDIA GPU (driver
+loaded, `nvidia-smi` works), Ollama on another GPU host (`TWIN_VLM_URL`, see
 [3d_nav.md](ai_and_vision/3d_nav.md#vlm-reasoning-ollama)) or a smaller model.
 
 ### D1 arm not answering — resolved (2026-10-27)
@@ -366,9 +368,9 @@ Earlier neither the workstation nor the Go2 reached `192.168.123.100`. With
 the arm plugged into the Go2 and powered, it answers (ping 0.65 ms) and
 reports state and angles over Wi-Fi through the bridge.
 
-### Camera at ~0.2 fps on the VM — fix known, needs `sudo` (2026-10-27)
+### Camera at ~0.2 fps on the old VM — fixed by the UDP buffers (2026-10-27)
 
-The robot sends 5 fps; the VM's UDP sockets overflow (Ubuntu default
+The robot sends 5 fps; the host's UDP sockets overflow (Ubuntu default
 `rmem_max` 208 KB, `RcvbufErrors` growing) and drop most frames. Effects:
 dashboard "Camera unavailable", RTAB-Map camera mode starved (empty map),
 YOLO and the VLM idle. Fix: [setup.md](setup/setup.md#3d-digital-twin-and-ai--one-time-setup);
@@ -443,9 +445,9 @@ matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 
 ```bash
 # 1. Power on the dog, stand it up
-# 2. Power on the D1 arm if using it (24V DC, RJ45 to the VM's enp0s8;
-#    or plug it into the Go2 and use --arm-wifi / start_arm.sh --robot <ip>)
-sudo ip addr add 192.168.123.99/24 dev enp0s8  # after each VM reboot
+# 2. Power on the D1 arm if using it (24V DC, RJ45 to the workstation's wired
+#    port, address from the go2-arm profile; or plug it into the Go2 and use
+#    --arm-wifi / start_arm.sh --robot <ip>)
 ./scripts/runtime/start_arm.sh --check
 
 # 3. Launch the full stack (drop --arm for navigation only)
@@ -479,7 +481,7 @@ ros2 topic echo /explore/status            # watch goals_sent
 # Dog standing AT THE DOCK (the map origin, dock goal and auto-localization assume it)
 # First run needs internet: builds the image, pulls llava:7b, starts ollama serve
 ./scripts/runtime/wifi_3d_nav.sh                # banner: YOLO → Nav2 on, Ollama OK, Localize auto, Survey AUTO
-# Open http://<VM IP>:3000 (READY block) and watch; the survey needs no input
+# Open http://localhost:3000 (READY block) and watch; the survey needs no input
 # Step-by-step instead: ./scripts/runtime/wifi_3d_nav.sh --manual
 # Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh
 # VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --manual

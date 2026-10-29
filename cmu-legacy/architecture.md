@@ -28,14 +28,14 @@ A mismatch in any item fails silently. The topic appears in `ros2 topic list`, b
 
 ### Layer 3 - Between Computers
 
-CycloneDDS carries ROS 2 traffic between the VM and the Go2 Jetson over Ethernet or Wi-Fi.
+CycloneDDS carries ROS 2 traffic between the workstation and the Go2 Jetson over Ethernet or Wi-Fi.
 
 The XML configs bind DDS to one network interface and name the discovery peers.
 
 | Mode | Config file | Addresses |
 |------|-------------|-----------|
-| Ethernet | `config/cyclonedds_ethernet.xml` | VM 192.168.123.100, Jetson 192.168.123.18 |
-| Wireless | `config/cyclonedds_wireless.xml` | VM 192.168.137.201, front board 192.168.137.33 |
+| Ethernet | `config/cyclonedds_ethernet.xml` | Host 192.168.123.100, Jetson 192.168.123.18 |
+| Wireless | `config/cyclonedds_wireless.xml` | Host 192.168.137.201, front board 192.168.137.33 |
 
 Structure of a CycloneDDS config. Replace ETH_INTERFACE and PEER_IP with your values. The real values live in the files above.
 

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # campus_session.sh — verify, tune, patch, launch, monitor the explorer.
 #
-# Run this ON THE VM after standing the dog and launching
+# Run this ON THE HOST (this Ubuntu computer) after standing the dog and launching
 # mapping.sh --3d --nav in another terminal.
 set -eo pipefail
 
 CONTAINER="${CONTAINER_NAME:-go2-lidar3d}"
 EXPLORER_SRC="${EXPLORER_SRC:-$HOME/files/Unitree_GO2_Agricultural/scripts/nodes/frontier_explorer.py}"
 CONTAINER_EXPLORER="/tmp/frontier_explorer.py"
-CONTAINER_LOG="/tmp/frontier.log"
 MONITOR_SECONDS=30
 
 # shellcheck source=../runtime/go2_net.sh

@@ -5,7 +5,7 @@ d1_arm_control.py
 Control the Unitree D1 arm over DDS (CycloneDDS).
 
 Verified config (proven with move_test.py):
-    iface    = enp0s8
+    iface    = the wired NIC on 192.168.123.x (auto-detected; ARM_IFACE overrides)
     domain   = 0
     discovery = MULTICAST  (do NOT pass --peer on this firmware)
 
@@ -76,6 +76,35 @@ T_MOVE, T_HOME, T_ENABLE, T_RELEASE = 3.0, 6.0, 1.5, 0.5
 DEG_WAIT = 0.04
 
 BRIDGE_PORT = int(os.environ.get("ARM_BRIDGE_PORT", "18100"))
+
+
+def default_arm_iface():
+    """ARM_IFACE, else the wired NIC on 192.168.123.x, else the first wired NIC.
+
+    Same rule as go2_net.sh: interface names differ per machine (enp0s31f6 on
+    the native Ubuntu workstation), so they are detected, not hardcoded.
+    """
+    if os.environ.get("ARM_IFACE"):
+        return os.environ["ARM_IFACE"]
+    net = "/sys/class/net"
+    try:
+        wired = sorted(
+            d
+            for d in os.listdir(net)
+            if os.path.exists(os.path.join(net, d, "device"))
+            and not os.path.isdir(os.path.join(net, d, "wireless"))
+        )
+    except OSError:
+        wired = []
+    for d in wired:
+        res = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "dev", d],
+            capture_output=True,
+            text=True,
+        )
+        if " 192.168.123." in res.stdout:
+            return d
+    return wired[0] if wired else "eth0"
 
 
 def robot_host():
@@ -216,7 +245,7 @@ def preflight(iface, arm_ip, want_ping=True):
 class D1Arm:
     def __init__(
         self,
-        iface="enp0s8",
+        iface=None,
         domain=0,
         peer=None,
         verbose=False,
@@ -236,7 +265,7 @@ class D1Arm:
                 "cyclonedds not installed. Run: pip3 install cyclonedds "
                 "(or use the Go2 bridge: --robot / ARM_ROBOT)"
             )
-        os.environ["CYCLONEDDS_URI"] = build_uri(iface, peer)
+        os.environ["CYCLONEDDS_URI"] = build_uri(iface or default_arm_iface(), peer)
         if verbose:
             print(f"      CYCLONEDDS_URI = {os.environ['CYCLONEDDS_URI']}")
         self.ok = False
@@ -490,7 +519,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--iface", default=os.environ.get("ARM_IFACE", "enp0s8"))
+    ap.add_argument("--iface", default=default_arm_iface())
     ap.add_argument(
         "--domain", type=int, default=int(os.environ.get("ARM_DOMAIN", "0"))
     )

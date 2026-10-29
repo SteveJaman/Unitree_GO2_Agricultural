@@ -25,7 +25,7 @@ import numpy as np
 import open3d as o3d
 
 # Triangle budget per mesh: the whole dog stays near 25k triangles, cheap
-# enough for a VM without 3D acceleration.
+# enough for a machine without 3D acceleration.
 BUDGET = {'base': 6000, 'hip': 1500, 'thigh': 1500, 'thigh_mirror': 1500,
           'calf': 900, 'calf_mirror': 900, 'foot': 300}
 

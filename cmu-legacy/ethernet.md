@@ -25,20 +25,18 @@ This is the recommended mode for development. Native DDS, no relay, no bridge. P
 
 ```
 +------------------+                    +-----------------+
-|  KSU desktop     |  Ethernet cable    |  Go2 robot      |
-|  (Windows host)  | ---------------->  |  (rear port)    |
+|  Ubuntu 22.04    |  Ethernet cable    |  Go2 robot      |
+|  workstation     | ---------------->  |  (rear port)    |
 |                  |                    |                 |
-|  +-- Ubuntu VM   |                    |  Jetson eth0    |
-|      (enp0s8)    |                    |  192.168.123.18 |
+|  wired NIC       |                    |  Jetson eth0    |
+|  (e.g. enp0s31f6)|                    |  192.168.123.18 |
 |  192.168.123.100 |                    |                 |
 +------------------+                    +-----------------+
 ```
 
-1. Plug an Ethernet cable from the desktop physical NIC to the Go2 rear Ethernet port.
-2. In the VM settings, add a second network adapter in Bridged mode bound to that physical NIC.
-3. Boot the VM.
+1. Plug an Ethernet cable from the workstation's wired port to the Go2 rear Ethernet port.
 
-## Step 1 - Configure the VM Ethernet Interface
+## Step 1 - Configure the Ethernet Interface
 
 Find the interface name.
 
@@ -46,19 +44,19 @@ Find the interface name.
 ip -o link show | awk -F': ' '{print $2}' | grep -v lo
 ```
 
-Typical output: enp0s3 (Wi-Fi or NAT), enp0s8 (Ethernet), possibly enp0s9.
+Typical output on the workstation: `enp0s31f6` (onboard Ethernet), `wlx…` (USB Wi-Fi), `docker0`.
 
-Set a static IP on the Ethernet interface. Assume enp0s8.
+Set a static IP on the Ethernet interface. Assume enp0s31f6.
 
 ```bash
-sudo ip addr add 192.168.123.100/24 dev enp0s8
-sudo ip link set enp0s8 up
+sudo ip addr add 192.168.123.100/24 dev enp0s31f6
+sudo ip link set enp0s31f6 up
 ```
 
 Verify.
 
 ```bash
-ip addr show enp0s8 | grep inet
+ip addr show enp0s31f6 | grep inet
 ```
 
 Expected:
@@ -85,31 +83,17 @@ If ping works but SSH refuses, the Jetson's sshd may be bound to an internal int
 
 ## Step 3 - Make the IP Persistent
 
-Without this, the IP disappears on VM reboot.
+Without this, the IP disappears on reboot. Use a NetworkManager profile
+(`never-default` keeps internet on the Wi-Fi):
 
 ```bash
-sudo nano /etc/netplan/01-netcfg.yaml
+sudo nmcli connection add type ethernet ifname enp0s31f6 con-name go2-eth \
+  ipv4.method manual ipv4.addresses 192.168.123.100/24 ipv4.never-default yes ipv6.method ignore
+sudo nmcli connection up go2-eth
 ```
 
-Example content. Adjust the interface names.
-
-```yaml
-network:
-  version: 2
-  renderer: NetworkManager
-  ethernets:
-    enp0s3:
-      dhcp4: true
-    enp0s8:
-      dhcp4: false
-      addresses: [192.168.123.100/24]
-```
-
-Apply.
-
-```bash
-sudo netplan apply
-```
+The D1 arm also uses `192.168.123.100`: don't keep this profile and the arm's
+`go2-arm` profile active on the same port.
 
 ## Step 4 - Verify the Jetson Topics
 
@@ -135,7 +119,7 @@ Expected topics from the dog:
 /utlidar/robot_pose
 ```
 
-From the VM, verify the same topics are visible.
+From the workstation, verify the same topics are visible.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -374,7 +358,7 @@ This starts the mapping node, slam_toolbox, pointcloud_to_scan, camera relay, an
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| ping fails | Cable or VM adapter mode | Check Bridged adapter in VM settings |
+| ping fails | Cable, or no address on the port | `cat /sys/class/net/<iface>/carrier` is `1`; `ip addr show <iface>` |
 | ping works, SSH refuses | sshd bound to internal interface | See docs/troubleshooting.md |
 | Topics exist but no data | QoS mismatch | Run ros2 topic info <topic> -v |
 | Point-LIO silent after IMU init | use_sim_time true in utlidar.yaml | Set to false and rebuild |

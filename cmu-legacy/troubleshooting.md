@@ -115,7 +115,7 @@ The CycloneDDS XML pins an interface name that does not exist on this machine.
 ip -o link show | awk -F': ' '{print $2}' | grep -v lo
 ```
 
-Typical output: `enp0s3`, `enp0s8`, `enp0s9`.
+Typical output on the workstation: `enp0s31f6` (Ethernet), `wlx…` (USB Wi-Fi), `docker0`.
 
 **Fix:** Edit the `<NetworkInterface name="...">` in `config/cyclonedds_ethernet.xml` or `cyclonedds_wireless.xml` to match.
 
@@ -169,7 +169,7 @@ sleep 3
 
 3. Relaunch.
 
-If the problem persists after both, reboot the VM.
+If the problem persists after both, reboot the workstation.
 
 ---
 
@@ -511,7 +511,7 @@ Default after standing. Verify in the Unitree app.
 ros2 topic hz /cmd_vel
 ```
 
-If silent, the planner is not producing commands. If publishing, the issue is between the VM and the Jetson.
+If silent, the planner is not producing commands. If publishing, the issue is between the workstation and the Jetson.
 
 **On the Jetson side:**
 
@@ -524,7 +524,7 @@ export ROS_DOMAIN_ID=0
 ros2 topic hz /api/sport/request
 ```
 
-If silent, the VM is not sending commands. If publishing, the robot itself is refusing. Check the app for estop, lock state, or low battery.
+If silent, the workstation is not sending commands. If publishing, the robot itself is refusing. Check the app for estop, lock state, or low battery.
 
 ---
 

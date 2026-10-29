@@ -17,7 +17,7 @@ Ollama, localizes, and runs the [autonomous survey](#autonomous-survey---survey)
 from start to dock without any input.
 
 You can view all of it in the **web dashboard**, a React + three.js app served
-by the session at `http://<VM IP>:3000`. You can also send the dog somewhere
+by the session at `http://localhost:3000` (or `http://<host IP>:3000`). You can also send the dog somewhere
 by clicking in the 3D view.
 
 `wifi_nav.sh` is **not modified**. Use `wifi_nav.sh` when you only need 2D
@@ -62,7 +62,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   node, so it sees exactly the topics RViz sees. This also works with `--sim`.
 - **The web dashboard is the main interface.**
   - **Served from `go2-3d`:** the dashboard ([`twin/webapp`](../../twin/webapp/))
-    is built into the image, so the VM needs no Node.js. `go2-3d` serves it on
+    is built into the image, so the host needs no Node.js. `go2-3d` serves it on
     port 3000 and runs rosbridge on 9090.
   - **Point clouds** are requested in CBOR (binary) and throttled (map every
     2 s).
@@ -103,7 +103,7 @@ field of view, or fx/fy/cx/cy on `go2_camera_info.py`, and the real mount in
 undistorts the image ([below](#camera--lidar-fusion---fusion)).
 
 **YOLO11s** ([`twin/yolo_node.py`](../../twin/yolo_node.py), started by `--ai`)
-runs on the VM's CPU at `TWIN_YOLO_RATE` (2 Hz):
+runs on the host at `TWIN_YOLO_RATE` (2 Hz):
 
 | Topic | Content |
 |---|---|
@@ -373,20 +373,17 @@ does not trigger anything yet.
 Ollama setup (once):
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh    # on the VM
+curl -fsSL https://ollama.com/install.sh | sh    # on the host
 ollama pull llava:7b                             # ~4.7 GB
 ```
 
-llava:7b on the VM's CPU is too slow to use: measured 2026-10-27, one camera
-frame takes ~2 min (plus ~5 min to load the model when the VM swaps), longer
-than the node's 120 s timeout, so no decision is ever published. A Windows
-host with a GPU answers in seconds:
-
-1. Install Ollama on Windows.
-2. Set `OLLAMA_HOST=0.0.0.0` there.
-3. Allow port 11434 through the Windows firewall.
-4. On the VM, run
-   `TWIN_VLM_URL=http://<Windows IP>:11434/api/generate ./scripts/runtime/wifi_3d_nav.sh`.
+Ollama uses the workstation's NVIDIA GPU when the driver is installed
+(`nvidia-smi` works; see [setup → NVIDIA GPU](../setup/setup.md#host-packages-once)),
+and then answers in seconds. CPU only is too slow: measured 2026-10-27 on the
+old 4-core VM, one camera frame took ~2 min, longer than the node's 120 s
+timeout, so no decision was ever published. To use Ollama on another GPU
+machine instead, set `OLLAMA_HOST=0.0.0.0` there, open port 11434, and run
+`TWIN_VLM_URL=http://<GPU host IP>:11434/api/generate ./scripts/runtime/wifi_3d_nav.sh`.
 
 Other settings: `TWIN_VLM_MODEL`, `TWIN_VLM_PERIOD`.
 
@@ -589,16 +586,17 @@ locations depend on it.
 
 ## Web dashboard
 
-Open your browser and navigate to **`http://localhost:3000`** on the VM, or
-**`http://<VM IP>:3000`** from the Windows host. The READY block prints the
-exact address. The VM IP is DHCP, so it changes.
+Open your browser and navigate to **`http://localhost:3000`** on the host, or
+**`http://<host IP>:3000`** from another device on the network. The READY
+block prints the exact address. The host IP is DHCP, so it can change. The
+page exists only while `wifi_3d_nav.sh` runs.
 
 The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
 `lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.
 
-**Performance mode.** A VM without 3D acceleration (VirtualBox: `glxinfo -B`
-says `Accelerated: no`) draws everything on the CPU. When the browser reports
+**Performance mode.** A machine without 3D acceleration (`glxinfo -B`
+says `Accelerated: no`, e.g. no NVIDIA driver loaded) draws everything on the CPU. When the browser reports
 such a renderer (llvmpipe, SwiftShader, `LLVM`), the dashboard starts in
 performance mode: 1× resolution, no antialiasing, a 25k-cube map budget,
 cheaper lighting, shadows off and solid instead of blurred panels. On a
@@ -762,7 +760,7 @@ camera images. The database also opens in
 | Variable | Default | Meaning |
 |---|---|---|
 | `TWIN_CLOUD_TOPIC` | `/lidar3d/registered` | Cloud fed to RTAB-Map |
-| `TWIN_RTAB_ARGS` | — | Extra RTAB-Map parameters, e.g. `"--Grid/CellSize 0.1 --Grid/RangeMax 8"` (lighter on the VM) |
+| `TWIN_RTAB_ARGS` | — | Extra RTAB-Map parameters, e.g. `"--Grid/CellSize 0.1 --Grid/RangeMax 8"` (lighter on the CPU) |
 | `TWIN_WEB_PORT` / `TWIN_ROSBRIDGE_PORT` / `TWIN_FOXGLOVE_PORT` | `3000` / `9090` / `8765` | Dashboard, rosbridge, foxglove_bridge ports |
 | `TWIN_RGB_TOPIC` | `/camera/image_raw` (`--rgbd`: `/camera/color/image_raw`) | Camera image |
 | `TWIN_CAMERA_WAIT` | `180` | Seconds to wait for the first camera frame (`auto`; ends at the first frame; `--no-camera` skips it) |
@@ -798,10 +796,10 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Every run rebuilds the image | A file in `twin/webapp` or `twin/docker` has a future timestamp; `touch` it, or use `--no-build` |
 | `ollama serve` won't start (`bind: Only one usage…` in `ollama.log`) | Ollama already runs under another URL; set `TWIN_VLM_URL` to it |
 | `no ROS nodes in go2-lidar3d … 3D stack NOT started` | The 2D session never came up. Fix that first with `wifi_nav.sh` alone |
-| Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the VM; `tail …/ws/log/3d/web.log` |
-| Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; VM firewall must allow 9090; or pass `?ws=ws://<VM IP>:9090` |
+| Dashboard does not load | Use the address in the READY block; `ss -tlnp \| grep -E '3000\|9090'` on the host; `tail …/ws/log/3d/web.log` |
+| Dashboard shows "Connecting to rosbridge…" | `tail …/ws/log/3d/rosbridge.log`; host firewall (`sudo ufw status`) must allow 9090; or pass `?ws=ws://<host IP>:9090` |
 | Dashboard: no map / robot | Robot needs TF `lidar3d_map → base_link` (session up); map needs RTAB-Map data. Large maps arrive every 2 s; raise `--Grid/CellSize` if the browser struggles |
-| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the VM's UDP buffers are too small: [troubleshooting](../troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
+| Dashboard: camera "no frames" / "Camera unavailable" | Camera mode only (see READY `RTAB-Map : camera`). If the relay gets only a few frames a minute, the host's UDP buffers are too small: [troubleshooting](../troubleshooting.md#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map). Else `tail …/ws/log/3d/image_compressor.log` |
 | Map stays empty in camera mode; `rtabmap.log` repeats `Did not receive data` | RTAB-Map waits for camera + LiDAR depth together; the camera is too slow or missing. Same UDP buffer fix; `--lidar-only` maps without the camera |
 | No rooms, or one big room | `tail …/ws/log/3d/rooms.log`. Rooms need the costmap. Wide openings (> 0.9 m) don't split rooms: raise `TWIN_ROOM_DOOR_WIDTH`, or use Merge for the opposite |
 | Merge refused | The two rooms don't touch; merge through the room between them first |
@@ -819,13 +817,13 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
 | Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
 | `initial pose NOT published` in `auto_localize.log` | The robot was more than 0.5 m from the origin at start: start the session with the dog at the dock |
-| `Ollama not reachable` in `vlm.log` | `… timed out`: llava:7b on the VM's CPU needs ~2 min per frame, over the 120 s timeout; use a GPU host (`TWIN_VLM_URL`). Otherwise start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
+| `Ollama not reachable` in `vlm.log` | `… timed out`: llava:7b on CPU only needs ~2 min per frame (check `nvidia-smi`), over the 120 s timeout; use a GPU host (`TWIN_VLM_URL`). Otherwise start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
 | `no battery data` in `battery.log` | The relay does not forward `/lf/lowstate`; check in `go2sh`: `ros2 topic hz /lf/lowstate` |
 | Low battery but the dog doesn't go home | `battery.log` shows `dock goal sent`? Then check Nav2 (`/plan`); the dock is `TWIN_DOCK` in `lidar3d_map` |
 | `--resume`: old and new map not joined | Needs a recognised place: `camera` mode, start at the old start point |
-| VM CPU pegged | `--no-yolo` / `--no-vlm`, or `TWIN_YOLO_RATE=1`; `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
+| Host CPU pegged | `--no-yolo` / `--no-vlm`, or `TWIN_YOLO_RATE=1`; `TWIN_RTAB_ARGS="--Grid/CellSize 0.1 --Grid/RangeMax 8 --Rtabmap/DetectionRate 0.5"` |
 | `--fusion`: map stays white | `tail …/ws/log/3d/fusion_camera.log`: LiDAR depth px/frame must be > 0. Needs TF `front_camera` from the session URDF and the calibration at the camera's current width |
-| Foxglove 3D panel says *"Error creating WebGL context"* | No GPU acceleration in the VM, see [WebGL / Hardware Acceleration Error](#webgl--hardware-acceleration-error) |
+| Foxglove 3D panel says *"Error creating WebGL context"* | No GPU acceleration (NVIDIA driver not loaded), see [WebGL / Hardware Acceleration Error](#webgl--hardware-acceleration-error) |
 | Map not saved after a crash | A leftover `go2-3d` is stopped (and saved) at the start of the next run, or run `--stop` |
 
 `go2-3d` keeps its own log after it stops: `docker logs go2-3d`.
@@ -842,8 +840,8 @@ npm run build      # dist/: go2-3d serves it instead of the image's copy when it
 ```
 
 Running `npm` needs Node.js 18+ on the machine where you edit (not needed to
-*use* the dashboard). Open the dev server with `?ws=ws://<VM IP>:9090` when it
-is not on the VM.
+*use* the dashboard). Open the dev server with `?ws=ws://<host IP>:9090` when it
+is not on the host.
 
 ---
 
@@ -852,8 +850,8 @@ is not on the VM.
 The [Foxglove](https://foxglove.dev/download) app (or the open-source
 [Lichtblick](https://github.com/lichtblick-suite/lichtblick)) still works.
 Start the session with `--foxglove` and connect **Open connection → Foxglove
-WebSocket →** `ws://<VM IP>:8765`. You can also use **Rosbridge** on
-`ws://<VM IP>:9090`, which is always running.
+WebSocket →** `ws://localhost:8765` (or `ws://<host IP>:8765`). You can also
+use **Rosbridge** on `ws://<host IP>:9090`, which is always running.
 
 - **3D panel:**
   - display frame `lidar3d_map`;
@@ -880,8 +878,8 @@ If the 3D panel shows *"Error creating WebGL context"*, see
 
 To import it:
 
-1. Copy the file to the machine running Foxglove (for Windows, e.g. through the
-   VirtualBox shared folder, or `scp` it from the VM).
+1. Copy the file to the machine running Foxglove (on the host it is already
+   there; for another machine, `scp` it from the host).
 2. In Foxglove, open the **Layouts** menu (top-left, next to the layout name)
    or the **Layouts** sidebar.
 3. Choose **Import from file…** and select `foxglove_layout.json`.
@@ -902,62 +900,46 @@ complete (`/rtabmap/cloud_map`, `/clicked_goal_markers`,
 
 **This is not a bug in the repository.** The backend is working: the topics
 reaching Foxglove prove that RTAB-Map, the bridge and DDS are all fine. Foxglove's 3D
-panel renders with WebGL, and WebGL needs an OpenGL-capable GPU. A VirtualBox
-VM has none by default, so the browser or Foxglove app inside the VM cannot
-create a WebGL context. The **Image panel renders with WebGL too** and fails the
-same way. Panels that don't draw graphics keep working: Plot, Raw Messages,
-Diagnostics and the topic list. Use them to confirm the data is arriving.
+panel renders with WebGL, and WebGL needs an OpenGL-capable GPU. Without a
+working GPU driver the browser or Foxglove app cannot create a WebGL context.
+The **Image panel renders with WebGL too** and fails the same way. Panels that
+don't draw graphics keep working: Plot, Raw Messages, Diagnostics and the topic
+list. Use them to confirm the data is arriving.
 
-#### Fix: enable 3D acceleration in VirtualBox
+#### Fix: load the NVIDIA driver
 
-1. **Shut down** the VM completely (not *Save State*). These settings are
-   greyed out while it runs.
-2. VirtualBox Manager → select the VM → **Settings → Display → Screen**:
-   - **Video Memory:** `128 MB` (drag the slider to the maximum)
-   - **Graphics Controller:** `VMSVGA` (the recommended one for Linux guests)
-   - Tick **Enable 3D Acceleration**
-3. Start the VM and install the guest drivers:
+1. Check whether the GPU driver is loaded:
 
    ```bash
-   sudo apt update
-   sudo apt install -y virtualbox-guest-utils virtualbox-guest-x11
-   sudo reboot
-   ```
-
-   Alternatively, use **Devices → Insert Guest Additions CD image…** and run
-   `sudo /media/$USER/VBox_GAs_*/VBoxLinuxAdditions.run`. Use one method, not
-   both. The Guest Additions version should match the VirtualBox version on
-   the host.
-4. Check that OpenGL now goes through the host GPU:
-
-   ```bash
+   nvidia-smi
    sudo apt install -y mesa-utils
    glxinfo -B | grep -E 'renderer|direct rendering'
    ```
 
-   - `OpenGL renderer string: SVGA3D …`: accelerated, good.
-   - `llvmpipe` or `softpipe`: still software rendering. Recheck steps 2–3
-     and update the host GPU driver.
-5. In the VM's browser, make sure **Settings → System → Use graphics
-   acceleration when available** is on, then open `chrome://gpu` (Chrome or
-   Chromium) and check that *WebGL* says *Hardware accelerated*. Firefox shows
-   the same information on `about:support` under *Graphics*.
-6. Reload Foxglove.
+   - `OpenGL renderer string: Quadro …` (or another NVIDIA name): accelerated, good.
+   - `llvmpipe` or `softpipe`, or `nvidia-smi` fails: software rendering.
+2. Install or finish the driver. On Ubuntu 22.04 with the 6.8 HWE kernel the
+   NVIDIA DKMS build needs gcc-12
+   ([setup → NVIDIA GPU](../setup/setup.md#host-packages-once)):
+
+   ```bash
+   sudo apt-get install -y gcc-12
+   sudo dpkg --configure -a
+   sudo reboot
+   ```
+
+3. In the browser, make sure **Settings → System → Use graphics acceleration
+   when available** is on, then open `chrome://gpu` (Chrome or Chromium) and
+   check that *WebGL* says *Hardware accelerated*. Firefox shows the same
+   information on `about:support` under *Graphics*.
+4. Reload Foxglove.
 
 #### If WebGL still fails
 
-VirtualBox 3D support depends on the host GPU and driver, and some setups
-never get a working WebGL context. Use one of these instead.
-
-1. **Run Foxglove natively on the Windows host (recommended).** Install
-   the Foxglove desktop app on Windows ([download](https://foxglove.dev/download)),
-   where it uses the real GPU. Connect to `ws://<VM IP>:8765` (the IP in the
-   READY block) instead of `localhost`, and import
-   [`config/foxglove_layout.json`](../../config/foxglove_layout.json). This needs the VM on
-   **bridged** networking. On NAT, add a port-forwarding rule for TCP `8765`
-   (VM Settings → Network → Advanced → Port Forwarding) and connect to
-   `ws://localhost:8765` on Windows. This also takes the rendering load off
-   the VM's CPU.
+1. **Run Foxglove on another machine with a GPU.** Install the Foxglove
+   desktop app there ([download](https://foxglove.dev/download)), connect to
+   `ws://<host IP>:8765` (the IP in the READY block), and import
+   [`config/foxglove_layout.json`](../../config/foxglove_layout.json).
 2. **Use RViz for the 3D view.** RViz already opens with every
    `wifi_3d_nav.sh` session and works with software OpenGL:
    - Fixed Frame `lidar3d_map`.
@@ -969,7 +951,7 @@ never get a working WebGL context. Use one of these instead.
    - The dense map is heavy for a CPU renderer. Use **Style** `Points` with
      a small **Size**, untick `/lidar3d/registered`, or coarsen the map with
      `TWIN_RTAB_ARGS="--Grid/CellSize 0.1"`.
-3. **Software WebGL in Chrome (last resort, slow).** Start Chrome in the VM
+3. **Software WebGL in Chrome (last resort, slow).** Start Chrome on the host
    with `google-chrome --enable-unsafe-swiftshader --ignore-gpu-blocklist`.
    WebGL then runs on the CPU via SwiftShader. Expect a low frame rate with
    `/rtabmap/cloud_map` visible, so use it only to check that the panel
@@ -986,8 +968,8 @@ never get a working WebGL context. Use one of these instead.
   the image, so the colour is as sparse as the scan. A RealSense (`--rgbd`)
   gives dense depth.
 - **Doors and glass.** These need a custom-trained YOLO model; COCO has neither class.
-- **YOLO on the Jetson.** Inference runs on the VM's CPU at 2 Hz; the Jetson GPU
-  would be much faster. See [roadmap](../roadmap.md#milestone-4--rtab-map-reconstruction).
+- **YOLO on the Jetson.** Inference runs on the host at 2 Hz; the Jetson GPU
+  would offload it. See [roadmap](../roadmap.md#milestone-4--rtab-map-reconstruction).
 - **Room polygons follow the costmap.** Furniture splits or dents rooms. The
   door width is a single global setting; tune it per building.
 - **Room types are COCO-limited.** The survey can recognise bedrooms,

@@ -26,14 +26,13 @@
 #   ./scripts/wifi_mapping.sh --check            # verify prerequisites only
 #   ./scripts/wifi_mapping.sh --host-ip <IP>     # override host IP detection
 #   ./scripts/wifi_mapping.sh --robot-ip <IP>    # override robot discovery
-#   ./scripts/wifi_mapping.sh --iface <IFACE>    # Wi-Fi interface (default enp0s3)
+#   ./scripts/wifi_mapping.sh --iface <IFACE>    # Wi-Fi interface (default: auto-detected)
 #
 # Host and robot IPs are resolved at runtime (DHCP) by go2_net.sh.
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-WS_ROOT="$( cd "${SCRIPT_DIR}/.." &> /dev/null && pwd )"
 
 # shellcheck source=go2_net.sh
 source "${SCRIPT_DIR}/go2_net.sh"

@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(_repo, "scripts", "nodes"))
 try:
     from d1_arm_control import (
         D1Arm, ENABLE_FULL, FUNC_JOINTS, JOINT_LIMITS, preflight,
-        T_ENABLE, T_HOME, T_RELEASE,
+        T_ENABLE, T_HOME, T_RELEASE, default_arm_iface,
     )
 except ImportError as e:
     sys.exit(f"cannot import d1_arm_control: {e}")
@@ -81,7 +81,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--iface", default=os.environ.get("ARM_IFACE", "enp0s8"))
+    ap.add_argument("--iface", default=default_arm_iface())
     ap.add_argument("--domain", type=int, default=int(os.environ.get("ARM_DOMAIN", "0")))
     ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.100"))
     ap.add_argument("--file", default=WAYPOINTS, help="waypoint file (default: %(default)s)")

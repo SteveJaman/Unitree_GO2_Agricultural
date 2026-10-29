@@ -4,7 +4,7 @@
 # when the arm is plugged into the Go2 (--robot <Go2 IP> / ARM_ROBOT: the
 # robot's arm_bridge_wifi.py, see docs/hardware/d1arm.md).
 #
-# Uses the verified config: iface=enp0s8, domain=0, MULTICAST discovery.
+# Uses the verified config: wired iface, domain=0, MULTICAST discovery.
 # Do NOT pass --peer to the underlying scripts — unicast breaks on this arm.
 #
 # Usage:
@@ -20,10 +20,10 @@
 #   ./start_arm.sh --robot 192.168.1.9 fold   # arm on the Go2, over Wi-Fi
 #
 # Env overrides:
-#   ARM_IFACE  (default: enp0s8)
+#   ARM_IFACE  (default: auto-detected by go2_net.sh, e.g. enp0s31f6)
 #   ARM_IP     (default: 192.168.123.100)
 #   ARM_DOMAIN (default: 0)
-#   ARM_HOST_IP (default: 192.168.123.99, this VM's address on ARM_IFACE)
+#   ARM_HOST_IP (default: 192.168.123.99, this computer's address on ARM_IFACE)
 #   ARM_ROBOT  (unset = wired; Go2 Wi-Fi IP = through its bridge)
 #   ARM_BRIDGE_PORT (default: 18100)
 # ---------------------------------------------------------------------------
@@ -32,7 +32,10 @@ set -eo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_ROOT="$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 
-export ARM_IFACE="${ARM_IFACE:-enp0s8}"
+# ARM_IFACE defaults to the detected wired interface (see go2_net.sh).
+# shellcheck source=go2_net.sh
+source "${SCRIPT_DIR}/go2_net.sh"
+export ARM_IFACE
 export ARM_IP="${ARM_IP:-192.168.123.100}"
 export ARM_DOMAIN="${ARM_DOMAIN:-0}"
 ARM_HOST_IP="${ARM_HOST_IP:-192.168.123.99}"
@@ -68,14 +71,14 @@ preflight() {
     echo
     if ! ip -br addr show "$ARM_IFACE" 2>/dev/null | grep -qF "$ARM_HOST_IP/"; then
         echo "  [!] $ARM_IFACE is missing $ARM_HOST_IP"
-        echo "      Fix: sudo ip addr add $ARM_HOST_IP/24 dev $ARM_IFACE"
+        echo "      Fix: sudo ip addr add $ARM_HOST_IP/24 dev $ARM_IFACE   (or: sudo nmcli connection up go2-arm)"
         fail=1
     else
         echo "  [ok] $ARM_IFACE has $ARM_HOST_IP"
     fi
     if ! ping -c 2 -W 2 "$ARM_IP" >/dev/null 2>&1; then
         echo "  [!] $ARM_IP does not reply to ping"
-        echo "      Fix: cold-boot the VM (VirtualBox Adapter 2 -> Intel PRO/1000)"
+        echo "      Fix: check the arm power (24V) and cable, then power-cycle the arm"
         fail=1
     else
         echo "  [ok] $ARM_IP replies to ping"

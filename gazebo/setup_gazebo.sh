@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# setup_gazebo.sh: one-time setup of the Go2 + D1 Gazebo simulation (VM).
+# setup_gazebo.sh: one-time setup of the Go2 + D1 Gazebo simulation (host).
 #
 #   1. Downloads the official Unitree models into gazebo/models/ (not in git):
 #        go2_description  unitreerobotics/unitree_ros (BSD-3-Clause), pinned commit

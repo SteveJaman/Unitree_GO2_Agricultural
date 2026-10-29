@@ -8,7 +8,7 @@
 # Works over Ethernet and native Wi-Fi DDS. Not for WebRTC.
 #
 # Requirements:
-#   - Ethernet cable (or Wi-Fi) between the VM and Go2
+#   - Ethernet cable (or Wi-Fi) between this computer and the Go2
 #   - Robot is STANDING (use the physical remote first)
 #   - Robot is in Sport Mode
 # ---------------------------------------------------------------------------
@@ -42,8 +42,10 @@ echo "[move_forward] ROS_DOMAIN_ID  = ${ROS_DOMAIN_ID}"
 # --- Sanity check ---
 case "$NET_MODE" in
   ethernet)
-    ip addr show enp0s8 2>/dev/null | grep -q "192.168.123.100" \
-      || echo "[move_forward] WARN: enp0s8 missing 192.168.123.100/24"
+    # shellcheck source=../scripts/runtime/go2_net.sh
+    source "${WS_ROOT}/scripts/runtime/go2_net.sh"
+    ip addr show "${ARM_IFACE}" 2>/dev/null | grep -q "192.168.123.100" \
+      || echo "[move_forward] WARN: ${ARM_IFACE} missing 192.168.123.100/24"
     if ! ping -c 1 -W 1 192.168.123.18 > /dev/null 2>&1; then
       echo "[move_forward] ERROR: cannot reach Go2 at 192.168.123.18"
       exit 1

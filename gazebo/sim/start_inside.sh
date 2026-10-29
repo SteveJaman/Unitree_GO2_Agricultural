@@ -80,7 +80,7 @@ trap 'exit 143' TERM
 GZ_SERVER_ARGS=(-r -s --render-engine "$SIM_RENDER_ENGINE")
 # The lidar and camera are rendered by the server. With a desktop it renders
 # through $DISPLAY (GLX) even without the window. --headless-rendering (EGL)
-# is only for machines with no display: on the VM's software GL it returns
+# is only for machines with no display: on software GL (no GPU) it returns
 # lidar scans that are all inf (empty /lidar3d/registered, no map).
 [ -n "${DISPLAY:-}" ] || GZ_SERVER_ARGS+=(--headless-rendering)
 echo "[sim] starting Gazebo server (${SIM_RENDER_ENGINE}, GUI=${SIM_GUI})..."

@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [Setup](setup/setup.md) · [Scripts](setup/scripts.md) · [Troubleshooting](troubleshooting.md)
 
-How the Go2, the laptop VM and the D1-T arm fit together, and how the
+How the Go2, the Ubuntu workstation and the D1-T arm fit together, and how the
 network is found and kept apart. For the 3D digital twin (RTAB-Map, web
 dashboard, AI nodes) see [3d_nav.md](ai_and_vision/3d_nav.md#architecture).
 
@@ -34,7 +34,7 @@ in the [3D Digital Twin](ai_and_vision/3d_nav.md) session:
 ### Navigation
 
 ```text
-Robot (Jetson, DHCP)                     Laptop VM (Ubuntu 22.04, DHCP on enp0s3)
+Robot (Jetson, DHCP)                     Workstation (Ubuntu 22.04, DHCP on Wi-Fi)
 ─────────────────────────────            ───────────────────────────────────
 LiDAR + IMU ─► Point-LIO                 go2-lidar3d container (Docker)
       │                                        │
@@ -68,11 +68,11 @@ LiDAR + IMU ─► Point-LIO                 go2-lidar3d container (Docker)
 ```text
 D1-T arm (6 DOF + gripper, 192.168.123.100)
       │
-      │ RJ45 → VM enp0s8 (192.168.123.99), DDS domain 0, multicast
+      │ RJ45 → host ARM_IFACE, e.g. enp0s31f6 (192.168.123.99), DDS domain 0, multicast
       ▼
 rt/arm_Command      ◄── JSON commands ──  d1_arm_control.py / d1_arm_calibration.py
 rt/arm_Feedback     ── joint angles, acks ──►   (host python3 + pip cyclonedds,
-                                                 ROS not sourced, bound to enp0s8)
+                                                 ROS not sourced, bound to ARM_IFACE)
                                                             ▲
                                   start_arm.sh fold ◄── wifi_nav.sh --arm
 ```
@@ -85,14 +85,14 @@ D1-T arm ──RJ45──► Go2 eth0 (192.168.123.x), DDS domain 0, multicast
               arm_bridge_wifi.py on the Jetson (rclpy, Unitree CycloneDDS)
                         │ TCP 18100 over Wi-Fi, JSON lines, laptop only
                         ▼
-              D1Arm on the VM (same scripts: control, fold, teach, play)
+              D1Arm on the host (same scripts: control, fold, teach, play)
 ```
 
 Key facts:
 
-- **SLAM runs on the Jetson.** The VM never runs `slam_toolbox`. The global
+- **SLAM runs on the Jetson.** The workstation never runs `slam_toolbox`. The global
   frame is `lidar3d_map`, produced by Point-LIO onboard.
-- **All ROS runs inside Docker** on the VM. The host shell sees no topics.
+- **All ROS runs inside Docker** on the workstation. The host shell sees no topics.
   Use `go2sh` or `docker exec -u root go2-lidar3d bash -lc '…'`.
 - **DDS domain 64** on the Wi-Fi side, domain 0 onboard. The relay bridges them.
 - **The explorer reads from `/global_costmap/costmap`**, not `/map`. The
@@ -100,8 +100,9 @@ Key facts:
   occupancy grid source.
 - **The D1-T arm uses DDS + JSON** on `rt/arm_Command`, not ROS 2 messages.
   The arm control script wraps the raw interface.
-- **Arm and dog DDS never mix.** The Go2 runs on `enp0s3` (domain 64), and the
-  arm on `enp0s8` (domain 0) with its own CycloneDDS config. The scripts check
+- **Arm and dog DDS never mix.** The Go2 runs on the Wi-Fi interface
+  (`GO2_IFACE`, domain 64), and the arm on the wired one (`ARM_IFACE`,
+  domain 0) with its own CycloneDDS config. The scripts check
   that the two interfaces are different and on separate subnets. Over Wi-Fi
   the arm's DDS stays on the Go2's internal network; only TCP crosses Wi-Fi.
 - **Never re-enable an enabled arm.** Enable-all sent to an already enabled
@@ -117,9 +118,9 @@ resolved on every run by [`scripts/runtime/go2_net.sh`](../scripts/runtime/go2_n
 
 | Node | IP | How it is found |
 |---|---|---|
-| Laptop VM | DHCP | `GO2_HOST_IP`: read from the Wi-Fi interface `enp0s3` (VirtualBox bridge). Override: `--host-ip` |
-| Go2 Jetson | DHCP | `GO2_ROBOT_IP`: last known IP, then hostname `unitree`, then a MAC-prefix scan (`02:00:00`) on `enp0s3`, then an SSH-key probe. Override: `--robot-ip` |
-| D1-T arm | `192.168.123.100` | Wired, on `enp0s8`. The nav stack never uses this interface |
+| Workstation | DHCP | `GO2_HOST_IP`: read from the Wi-Fi interface (`GO2_IFACE`, auto-detected: the wireless NIC with an IPv4 address, e.g. `wlx1cbfce22ca47`). Override: `--host-ip` |
+| Go2 Jetson | DHCP | `GO2_ROBOT_IP`: last known IP, then hostname `unitree`, then a MAC-prefix scan (`02:00:00`) on `GO2_IFACE`, then an SSH-key probe. Override: `--robot-ip` |
+| D1-T arm | `192.168.123.100` | Wired, on `ARM_IFACE` (auto-detected: the wired NIC on `192.168.123.x`, e.g. `enp0s31f6`). The nav stack never uses this interface |
 | DDS domain | `64` | Wi-Fi side |
 | Relay port | `17999` | TCP, `/cmd_vel` |
 
@@ -131,12 +132,12 @@ CycloneDDS config afresh, bound to the current address. If the bind address were
 wrong, the container would announce the wrong address and no topics would cross
 the wire.
 
-Interface safeguards: `enp0s8` (the arm, `ARM_IFACE`) is refused as the nav
+Interface safeguards: the arm interface (`ARM_IFACE`) is refused as the nav
 interface. It is never scanned, and if the route to the robot goes through
 it, the script stops with an error. The script also checks that the container's
 DDS config binds only the Wi-Fi address.
 
-Tunables: `GO2_IFACE` (default `enp0s3`), `ARM_IFACE` (default `enp0s8`),
+Tunables: `GO2_IFACE` (default: auto-detected Wi-Fi), `ARM_IFACE` (default: auto-detected wired),
 `GO2_MAC_PREFIX`, `GO2_ROBOT_HOSTNAME`. Discovery is faster and more reliable
 with `arp-scan` (`sudo apt install arp-scan`) or `nmap` installed; without
 them it falls back to a ping sweep.

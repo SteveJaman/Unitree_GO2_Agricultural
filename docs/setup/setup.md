@@ -8,6 +8,58 @@ navigation and the arm. The 3D digital twin has its own one-time steps
 
 ---
 
+## Workstation
+
+The stack runs natively on an **Ubuntu 22.04** workstation (no virtual
+machine). ROS 2, Nav2 and RViz run in Docker containers; the arm scripts and
+discovery run on the host. Tested on a Dell Precision 3650 (Quadro RTX 4000)
+with a USB Wi-Fi adapter for the Go2 and the onboard Ethernet for the D1 arm.
+
+Network interfaces are **detected, not named** (see
+[`go2_net.sh`](../../scripts/runtime/go2_net.sh)):
+
+| Role | Detected as | This workstation | Override |
+|---|---|---|---|
+| Go2 Wi-Fi | the wireless interface with an IPv4 address | `wlx1cbfce22ca47` (USB Wi-Fi) | `GO2_IFACE` / `--iface` |
+| D1 arm | the wired interface on `192.168.123.x`, else the first wired one | `enp0s31f6` (onboard Ethernet) | `ARM_IFACE` |
+
+To pin them (e.g. with several Wi-Fi adapters), add to `~/.bashrc`:
+
+```bash
+export GO2_IFACE=wlx1cbfce22ca47
+export ARM_IFACE=enp0s31f6
+```
+
+The **Go2 must be on the same Wi-Fi network as the workstation**. If
+discovery finds nothing, plug a cable into the Go2, `ssh unitree@192.168.123.161`
+(or `unitree.local`), check `nmcli -t -f ACTIVE,SSID dev wifi` and
+`hostname -I`, and join the robot to the workstation's network.
+
+### Host packages (once)
+
+```bash
+sudo apt-get install -y docker.io python3-pip x11-xserver-utils nmap curl git
+sudo usermod -aG docker "$USER"          # log out and back in afterwards
+python3 -m pip install --user cyclonedds pre-commit
+```
+
+`x11-xserver-utils` provides `xhost`, which lets RViz in the container open on
+the desktop. `nmap` makes robot discovery faster and more reliable.
+
+**NVIDIA GPU (optional, recommended for the 3D twin).** The HWE kernel
+(6.8) is built with gcc-12, while Ubuntu 22.04 installs only gcc-11. Without
+gcc-12 the NVIDIA DKMS build fails with
+`unrecognized command-line option '-ftrivial-auto-var-init=zero'` and leaves
+`nvidia-dkms-open` half-installed, which then breaks every `apt-get install`:
+
+```bash
+sudo apt-get install -y gcc-12
+sudo dpkg --configure -a     # finishes the driver install
+# reboot, then: nvidia-smi
+```
+
+---
+
 ## Navigation — one-time setup (per workstation)
 
 ```bash
@@ -26,10 +78,10 @@ cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/wifi_nav.sh --setup-ssh
 
 # The Docker container is created automatically on the first run of
-# wifi_nav.sh, bound to the VM's current Wi-Fi IP.
+# wifi_nav.sh, bound to this computer's current Wi-Fi IP.
 
 # 4. (Optional) Install pre-commit hooks for linting
-pip install pre-commit
+python3 -m pip install --user pre-commit
 pre-commit install
 ```
 
@@ -41,7 +93,7 @@ After the navigation setup above (needs internet):
 curl -fsSL https://ollama.com/install.sh | sh   # Ollama, for the VLM
 ```
 
-Raise the VM's UDP receive buffers once. The Ubuntu default (208 KB) is too
+Raise the host's UDP receive buffers once. The Ubuntu default (208 KB) is too
 small for DDS over Wi-Fi: a camera frame is ~50 UDP packets and one dropped
 packet loses the frame, so the camera arrives at a fraction of its 5 fps and
 RTAB-Map's camera mode gets no data. `wifi_nav.sh` warns when they are too
@@ -57,7 +109,9 @@ That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
 `llava:7b` (~4.7 GB). It also starts `ollama serve` when it isn't running.
 
 Every session: dog standing at the dock, then
-`./scripts/runtime/wifi_3d_nav.sh` and open `http://<VM IP>:3000`.
+`./scripts/runtime/wifi_3d_nav.sh` and open `http://localhost:3000` (from
+another device: `http://<host IP>:3000`). The page exists only while the
+script runs.
 Details: [3d_nav.md](../ai_and_vision/3d_nav.md).
 
 ## Navigation — every session
@@ -81,8 +135,8 @@ terminal to end. The physical remote is the emergency stop.
 
 ## Navigation — what the script does automatically
 
-1. Detects the VM's Wi-Fi IP on `enp0s3` and discovers the robot's IP (see [Network](../architecture.md#network))
-2. Kills stale processes on the VM **and** on the Jetson
+1. Detects this computer's Wi-Fi interface and IP and discovers the robot's IP (see [Network](../architecture.md#network))
+2. Kills stale processes on the host **and** on the Jetson
 3. Cleans up partial runs on the robot
 4. Recreates the container if it was created for an old host or robot IP.
    Pins `numpy<1.25` inside it (prevents `ValueError: numpy.dtype size changed`).
@@ -101,28 +155,31 @@ terminal to end. The physical remote is the emergency stop.
 
 ## Arm — one-time setup
 
-1. In VirtualBox, attach the arm's Ethernet to the VM as Adapter 2 (Bridged,
-   adapter type **Intel PRO/1000**). It shows up as `enp0s8`. The Go2 Wi-Fi
-   stays on `enp0s3`.
-2. Give `enp0s8` the address `192.168.123.99/24`. This doesn't persist across
-   reboots, so re-run it after a VM restart:
+1. Plug the arm's Ethernet into a wired port of the workstation (here the
+   onboard `enp0s31f6`). The Go2 stays on the Wi-Fi interface.
+2. Give that port the address `192.168.123.99/24` with a NetworkManager
+   profile, so it persists across reboots and comes up whenever the cable is
+   plugged in (`never-default` keeps internet on the Wi-Fi):
 
    ```bash
-   sudo ip addr add 192.168.123.99/24 dev enp0s8
-   sudo ip link set enp0s8 up
+   sudo nmcli connection add type ethernet ifname enp0s31f6 con-name go2-arm \
+     ipv4.method manual ipv4.addresses 192.168.123.99/24 ipv4.never-default yes ipv6.method ignore
+   sudo nmcli connection up go2-arm
    ```
 
-3. Install the Python DDS bindings on the VM (the arm scripts run on the host,
-   not in the container): `pip3 install cyclonedds`
+   Don't use that port for internet afterwards.
+3. Install the Python DDS bindings on the host (the arm scripts run on the
+   host, not in the container): `python3 -m pip install --user cyclonedds`
 4. Check everything:
 
    ```bash
-   ./scripts/runtime/start_arm.sh --check         # address + ping
-   ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh   # all PASS expected
+   ./scripts/runtime/start_arm.sh --check   # address + ping (interface auto-detected)
+   ./scripts/tools/diag_arm.sh              # all PASS expected
    ```
 
 Discovery is multicast. Don't use `--peer` (unicast): it breaks on this arm's
-firmware. If the arm doesn't reply to ping, cold-boot the VM.
+firmware. If the arm doesn't reply to ping, check its 24V power and the cable,
+then power-cycle the arm.
 
 ## Arm — calibration (once)
 
@@ -149,9 +206,9 @@ run the offset calibration (the arm moves ±10° per joint, clear the workspace)
 
 ## Arm — every session
 
-The usual way is `./scripts/runtime/wifi_nav.sh --arm`. It checks that
-`enp0s8` exists, has an IPv4 address, and doesn't share a subnet with
-`enp0s3`. It then runs `start_arm.sh fold` in the background right before Nav2
+The usual way is `./scripts/runtime/wifi_nav.sh --arm`. It checks that the
+arm interface (`ARM_IFACE`, auto-detected) exists, has an IPv4 address, and
+doesn't share a subnet with the Wi-Fi interface. It then runs `start_arm.sh fold` in the background right before Nav2
 launches, logging to `go2-nav2-wifi/ws/log/arm.log`. If the arm isn't ready,
 navigation still starts and the arm is skipped with a warning.
 
@@ -161,7 +218,7 @@ reached (±3°, up to 30 s), then **release the motors and power off**. After
 that the arm is limp and rests on its mount; if the pose is not reached it
 stays holding instead.
 
-With the arm plugged into the Go2 instead of `enp0s8`, use
+With the arm plugged into the Go2 instead of the workstation, use
 `./scripts/runtime/wifi_nav.sh --arm-wifi`: same fold, over Wi-Fi through the
 robot's bridge ([d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)).
 
@@ -185,7 +242,7 @@ See [D1-T Arm Control](../hardware/d1arm.md) for every command.
 | Flag | Effect |
 |---|---|
 | *(none)* | Explore + camera (default) |
-| `--arm` | **Start everything:** also fold the D1 arm in the background (over `enp0s8`) |
+| `--arm` | **Start everything:** also fold the D1 arm in the background (over the wired `ARM_IFACE`) |
 | `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
 | `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [drive_modes.md](../navigation/drive_modes.md) |
 | `--no-recovery` | Turn off the stuck recovery (on by default: an aborted leg backs the dog up 0.3 m and retries) |
@@ -200,9 +257,9 @@ See [D1-T Arm Control](../hardware/d1arm.md) for every command.
 | `--clean` | Clean both ends and exit |
 | `--check` | Verify prerequisites only, no launch |
 | `--setup-ssh` | One-time passwordless SSH setup |
-| `--host-ip <IP>` | Use this host IP instead of auto-detecting it on `enp0s3` |
+| `--host-ip <IP>` | Use this host IP instead of auto-detecting it on the Wi-Fi interface |
 | `--robot-ip <IP>` | Use this robot IP instead of discovering it (required if discovery fails) |
-| `--iface <IFACE>` | Wi-Fi interface for Go2 traffic (default `enp0s3`; `enp0s8` is refused) |
+| `--iface <IFACE>` | Wi-Fi interface for Go2 traffic (default: auto-detected; the arm interface is refused) |
 
 ## Navigation — runtime overrides (no file edits)
 

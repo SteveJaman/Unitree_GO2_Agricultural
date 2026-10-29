@@ -25,7 +25,7 @@
 #   3. Tears down the CMU stack and other background processes
 #
 # Network:
-#   VM (enp0s8) : 192.168.123.100/24
+#   Host (wired, e.g. enp0s31f6) : 192.168.123.100/24
 #   Go2 Jetson  : 192.168.123.18/24
 # ---------------------------------------------------------------------------
 set -eo pipefail
@@ -40,8 +40,9 @@ CYCLONEDDS_XML="${WS_ROOT}/config/cyclonedds_ethernet.xml"
 AUTONOMY_WS="${AUTONOMY_WS:-$HOME/files/autonomy_stack_go2}"
 
 # Network
-VM_IFACE="${VM_IFACE:-enp0s8}"
-VM_IP="${VM_IP:-192.168.123.100}"
+source "${WS_ROOT}/scripts/runtime/go2_net.sh"   # go2_default_arm_iface: wired NIC on 192.168.123.x
+HOST_IFACE="${HOST_IFACE:-$(go2_default_arm_iface)}"
+HOST_IP="${HOST_IP:-192.168.123.100}"
 JETSON_IP="${JETSON_IP:-192.168.123.18}"
 
 # Feature flags
@@ -88,7 +89,7 @@ echo "================================================================"
 echo "  RMW             = ${RMW_IMPLEMENTATION}"
 echo "  CYCLONEDDS_URI  = ${CYCLONEDDS_URI}"
 echo "  ROS_DOMAIN_ID   = ${ROS_DOMAIN_ID}"
-echo "  VM interface    = ${VM_IFACE}  (${VM_IP})"
+echo "  Host interface  = ${HOST_IFACE}  (${HOST_IP})"
 echo "  Jetson          = ${JETSON_IP}"
 echo "  Fixed frame     = ${TOP_FRAME}"
 echo "  Mapping         = ${ENABLE_MAPPING}"
@@ -98,9 +99,9 @@ echo "  CMU RViz        = ${USE_CMU_RVIZ}"
 echo "  Logs            = ${LOG_DIR}"
 echo
 
-if ! ip addr show "${VM_IFACE}" 2>/dev/null | grep -q "${VM_IP}"; then
-  echo "[ethernet] WARN: ${VM_IFACE} missing ${VM_IP}/24"
-  echo "[ethernet]       run: sudo ip addr add ${VM_IP}/24 dev ${VM_IFACE}"
+if ! ip addr show "${HOST_IFACE}" 2>/dev/null | grep -q "${HOST_IP}"; then
+  echo "[ethernet] WARN: ${HOST_IFACE} missing ${HOST_IP}/24"
+  echo "[ethernet]       run: sudo ip addr add ${HOST_IP}/24 dev ${HOST_IFACE}"
 fi
 
 if ! ping -c 1 -W 1 "${JETSON_IP}" > /dev/null 2>&1; then

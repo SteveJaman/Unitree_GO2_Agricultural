@@ -16,9 +16,10 @@ run against it.
 ./scripts/runtime/wifi_nav.sh --sim --arm   # the whole stack, simulated
 ```
 
-Runs on the Ubuntu 22.04 VM, next to the existing `go2-lidar3d` container. Needs
-Docker and a desktop session (RViz and the Gazebo window). No GPU required
-(software rendering), but it is slow on a VM.
+Runs on the Ubuntu 22.04 workstation, next to the existing `go2-lidar3d`
+container. Needs Docker and a desktop session (RViz and the Gazebo window). No
+GPU required (software rendering works), but it is slow without one. The
+real-time figures below were measured on the old 4-core VM.
 
 ---
 
@@ -31,7 +32,7 @@ Docker and a desktop session (RViz and the Gazebo window). No GPU required
 | cmd_vel TCP server on Jetson :17999 (`go2_cmd_vel_tcp.py`) | Same 12-byte protocol on :17999 of this machine → Gazebo |
 | Sport API walking | **Gliding base**: the body follows `/cmd_vel` (VelocityControl); legs hold a standing pose, no gait. The bridge also turns the base back to level (`--upright-gain`, default 2/s), so a knock can't leave it tilted. Feet and body are frictionless, so slow turns (0.1 rad/s) move it as commanded |
 | Front camera | Gazebo camera → `/camera/image_raw` (no relay needed) |
-| D1 arm over `enp0s8`, DDS domain 0, JSON on `rt/arm_Command` | `d1_arm_emulator.py` speaks the same protocol on interface `simarm0` and drives the Gazebo joints |
+| D1 arm over the wired `ARM_IFACE`, DDS domain 0, JSON on `rt/arm_Command` | `d1_arm_emulator.py` speaks the same protocol on interface `simarm0` and drives the Gazebo joints |
 
 The laptop side is **the real one**: `wifi_nav.sh --sim` launches the same
 `go2-session.sh start lidar3d-viz` (Nav2 + RViz) that `mapping.sh --3d --nav`
@@ -97,24 +98,24 @@ export ARM_IFACE=simarm0 ARM_HOST_IP=192.168.123.51
 ```
 
 `wifi_nav.sh --sim --arm` sets these variables for you. The arm scripts run on
-the VM, so the VM needs `pip3 install cyclonedds`.
+the host, so the host needs `python3 -m pip install --user cyclonedds`.
 
 ## Settings
 
 | Variable | Default | |
 |---|---|---|
-| `SIM_GUI` | `0` | `1` opens the Gazebo window. On the 4-core VM the window slowed the sim to ~14 % of real time, so the robot crawled and goals timed out. `up` prints the real-time factor and warns below 0.8 |
-| `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black on the VM |
+| `SIM_GUI` | `0` | `1` opens the Gazebo window. On the old 4-core VM the window slowed the sim to ~14 % of real time, so the robot crawled and goals timed out. `up` prints the real-time factor and warns below 0.8 |
+| `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black |
 | `SIM_ARM` | `1` | Create `simarm0` and run the D1 emulator |
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
-| `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
-| `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
+| `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the old 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
+| `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the old 4-core VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
 | `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
-| `GO2_HOST_IP` | auto (`enp0s3`, else the default-route interface, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
+| `GO2_HOST_IP` | auto (the Wi-Fi interface, else the default-route interface, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |
 | `SIM_SENSOR_FROM_BASE` | read from go2-nav2-wifi `lidar3d_robot_viz.yaml` | Lidar mount `x y z qx qy qz qw`; must match the laptop |
 | `SIM_DRIFT_YAW` | `0` | Heading error added per radian turned (e.g. `0.02`). Tests drift tolerance |
 | `SIM_DRIFT_SCALE` | `0` | Distance scale error (e.g. `0.03` = 3 % long) |
@@ -146,10 +147,10 @@ These are deliberate. They're listed so test results aren't over-read:
 | `no lidar frame after 240 s` | Software rendering is slow: `SIM_TIMEOUT=600`, or `SIM_GUI=0`, or `SIM_RENDER_ENGINE=ogre` |
 | Robot crawls, explorer goals time out, Nav2 commands 0.3 m/s | Sim below real time (see the real-time factor from `up`). Nav2 runs on wall-clock time. Use `SIM_GUI=0` and close heavy apps |
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
-| `enp0s8 already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
+| `<arm iface> already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
 | RViz dog tilted (~20°) and heading ~120° off in `--sim` | The sim and `go2_odom_tf` use different lidar mounts. Check that `./gazebo/run_sim.sh logs` says `sensor_from_base from /nav2_cfg/lidar3d_robot_viz.yaml`, then restart the sim (`./gazebo/run_sim.sh down`). `tf2_echo lidar3d_map base_link` should show roll and pitch at 0 |
-| Headless (`SIM_GUI=0`): camera image black, LiDAR points all at the sensor | `ogre2` headless rendering fails on the VM: `SIM_RENDER_ENGINE=ogre` |
+| Headless (`SIM_GUI=0`): camera image black, LiDAR points all at the sensor | `ogre2` headless rendering fails on software GL: `SIM_RENDER_ENGINE=ogre` |
 | RViz shows no robot or cloud | `./gazebo/test_sim.sh` shows which topic is missing. The sim and the session must use the same `GO2_HOST_IP` |
 | `D1 download checksum mismatch` | Unitree changed the file. Inspect it, then update `D1_SHA256` in `setup_gazebo.sh` |
 
@@ -194,7 +195,7 @@ the rest of the workbench's shadow).
 
 The sim needs a desktop session even without the Gazebo window. The server
 renders the lidar through `$DISPLAY`. `--headless-rendering` (EGL, used only
-when there is no display) returns empty lidar scans on the VM's software GL,
+when there is no display) returns empty lidar scans on software GL (no GPU driver),
 so Nav2 gets no map.
 
 Explorer settings, results and the known "stuck next to a crate" case:

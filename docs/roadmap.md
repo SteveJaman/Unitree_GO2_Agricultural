@@ -35,7 +35,7 @@ Everything else depends on this. Do not skip.
 | 0.4 | [`auto_walk.sh`](../scripts/tools/auto_walk.sh) completes one square | ✅ verified |
 | 0.5 | DHCP-proof networking: host IP auto-detect, robot discovery, stale-container recreate | ✅ code ([`go2_net.sh`](../scripts/runtime/go2_net.sh)), ⏳ verify on robot |
 | 0.6 | Container `numpy<1.25` pin (fixes `numpy.dtype size changed`) | ✅ auto-handled by `wifi_nav.sh` |
-| 0.7 | Gazebo simulation of Go2 + D1 for off-robot testing | ✅ code ([`gazebo/`](../gazebo/), [docs](simulation/gazebo.md)), ⏳ first run on the VM (`gazebo/test_sim.sh`) |
+| 0.7 | Gazebo simulation of Go2 + D1 for off-robot testing | ✅ code ([`gazebo/`](../gazebo/), [docs](simulation/gazebo.md)), ⏳ first run on the workstation (`gazebo/test_sim.sh`) |
 
 **Blocker:** if 0.1–0.2 fail, nothing downstream matters. `wifi_nav.sh`
 now SSHes into the Jetson and clears the port before every launch. Manual
@@ -93,7 +93,7 @@ Required for reconstruction. Currently blocked by hardware.
 | # | Task | Status |
 |---|---|---|
 | 3.1 | Fix the camera backend on Jetson | ⏳ hardware |
-| 3.2 | Verify image reaches VM | ⏳ |
+| 3.2 | Verify image reaches the workstation | ⏳ |
 | 3.3 | Intel RealSense D435i | ✅ camera in hand, ZeroMQ sender / receiver written ([scripts](setup/scripts.md)); ⏳ mount (on the arm first: [G.3](#current-goals-advisor-week-of-2026-10-22)) |
 | 3.4 | Calibrate extrinsics camera ↔ `base_link` | ✅ tools written ([calibration + overlay](ai_and_vision/camera_lidar_fusion.md)), ⏳ run on robot |
 
@@ -144,14 +144,14 @@ The pipeline that produces the dense 3D tour.
 | 4.25 | Room-aware behaviour (explore one room, VLM checks per room) | ⏳ |
 | 4.26 | Autonomous survey: explore → segment → visit + categorise each room (YOLO evidence, VLM fallback) → report → dock, no user input (`--survey`) | ✅ [`twin/survey_manager.py`](../twin/survey_manager.py) written, simulated, ⏳ verify on robot |
 | 4.27 | Home map in RTAB-Map localization mode; room divide; cleaning-style room sequence | ⏳ |
-| 4.28 | Dashboard on a VM without 3D acceleration: performance mode, map decoding in a Web Worker, shadows once a second | ✅ ~3.4× frame rate in software WebGL (synthetic map), ⏳ verify in the lab browser |
+| 4.28 | Dashboard on a machine without 3D acceleration: performance mode, map decoding in a Web Worker, shadows once a second | ✅ ~3.4× frame rate in software WebGL (synthetic map), ⏳ verify in the lab browser |
 | 4.29 | Unitree Go2 model in the dashboard with leg joints from `/joint_states` | ✅ rendered and animated against synthetic joint data, ⏳ verify on robot |
-| 4.30 | Camera reliability over Wi-Fi: optical frame for YOLO/RTAB-Map, wait for the late robot camera, UDP buffer check | ✅ written (2026-10-27); ⏳ re-test after raising the VM's UDP buffers |
+| 4.30 | Camera reliability over Wi-Fi: optical frame for YOLO/RTAB-Map, wait for the late robot camera, UDP buffer check | ✅ written (2026-10-27); ⏳ re-test after raising the host's UDP buffers |
 
 **3D session:** [`docs/ai_and_vision/3d_nav.md`](ai_and_vision/3d_nav.md). `wifi_nav.sh` is unchanged;
 `wifi_3d_nav.sh` wraps it.
 
-**Compute risk:** RTAB-Map is heavier than Point-LIO. If the VM struggles,
+**Compute risk:** RTAB-Map is heavier than Point-LIO. If the workstation struggles,
 run RTAB-Map on a separate machine or throttle the LiDAR input rate.
 
 ## Milestone 5 — Capture automation
@@ -205,7 +205,7 @@ is captured for later plant-analysis research.
 
 **Definition of done:**
 
-1. Arm responds to commands from the VM container
+1. Arm responds to commands from the workstation
 2. Hyperspectral camera is mounted on the arm's end effector
 3. Arm moves the camera through a defined scan path over a plant
 4. Captured data is stored in a structured format for analysis
@@ -230,9 +230,9 @@ a colour + depth capture is saved at each pose (12.3–12.4).
 | # | Task | Status |
 |---|---|---|
 | 8.1 | [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py) written — DDS/JSON control | ✅ written |
-| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — preflight, `fold`, `read`, `--calibrate`, command chains from the VM | ✅ written |
-| 8.3 | Python DDS bindings on the VM | ✅ pip `cyclonedds` on the host (no SDK2, no container needed) |
-| 8.4 | Arm reachable from the VM (`enp0s8` `192.168.123.99` → arm `.100`, multicast) | ✅ verified config; check with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
+| 8.2 | [`start_arm.sh`](../scripts/runtime/start_arm.sh) written — preflight, `fold`, `read`, `--calibrate`, command chains from the host | ✅ written |
+| 8.3 | Python DDS bindings on the host | ✅ pip `cyclonedds` on the host (no SDK2, no container needed) |
+| 8.4 | Arm reachable from the workstation (wired `ARM_IFACE` `192.168.123.99` → arm `.100`, multicast) | ✅ verified config; check with [`diag_arm.sh`](../scripts/tools/diag_arm.sh) |
 | 8.5 | Arm responds to `joint` command | ✅ verified over Wi-Fi (2026-10-27: joint 0 −0.8° → +20.0°) |
 | 8.6 | Arm responds to `joints` command | ⏳ hardware |
 | 8.7 | Joint feedback readable (`feedback`) | ✅ verified over Wi-Fi (2026-10-27) |
@@ -247,14 +247,15 @@ a colour + depth capture is saved at each pose (12.3–12.4).
 single joint, 2 all joints, 5 enable (`mode` 80000) / release (`mode` 0),
 7 home. Full table: [d1arm.md](hardware/d1arm.md).
 
-**Network:** the arm is wired to the VM's `enp0s8` (VM `192.168.123.99`,
-arm `.100`, DDS domain 0, multicast discovery). It is kept separate from the Go2's Wi-Fi DDS on `enp0s3`
-(domain 64). First test on hardware:
+**Network:** the arm is wired to the workstation's arm port (`ARM_IFACE`,
+auto-detected, e.g. `enp0s31f6`; host `192.168.123.99`, arm `.100`, DDS domain
+0, multicast discovery). It is kept separate from the Go2's Wi-Fi DDS on the
+Wi-Fi interface (domain 64). First test on hardware:
 
 ```bash
-sudo ip addr add 192.168.123.99/24 dev enp0s8
+sudo nmcli connection up go2-arm      # address from the profile in setup.md
 ./scripts/runtime/start_arm.sh --check
-ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh
+./scripts/tools/diag_arm.sh
 ./scripts/runtime/start_arm.sh feedback
 ```
 

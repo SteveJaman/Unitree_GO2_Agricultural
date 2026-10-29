@@ -2,7 +2,7 @@
 """
 verify_costmap.py — check that /global_costmap/costmap is publishing.
 
-Run on the VM inside the container, or from Windows against a remote
+Run on the host inside the container, or from Windows against a remote
 Docker daemon if you have one configured.
 
 Usage:

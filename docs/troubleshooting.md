@@ -9,7 +9,7 @@ Sections are self-contained. Search for the error message you see.
 [Session / Infrastructure](#session--infrastructure) ·
 [Robot Wi-Fi](#robot-wi-fi-usb-dongle) ·
 [Motion](#motion) · [Explorer](#explorer) · [D1-T Arm](#d1-t-arm) ·
-[Camera](#camera) · [RViz / VM](#rviz--vm) · [3D twin](#3d-digital-twin) ·
+[Camera](#camera) · [Workstation](#native-ubuntu-workstation) · [RViz](#rviz) · [3D twin](#3d-digital-twin) ·
 [Known blockers](#known-blockers-and-fixes) ·
 [Collision tuning](#collision-threshold-tuning) ·
 [Diagnostics cheat sheet](#diagnostics-cheat-sheet)
@@ -26,15 +26,17 @@ Sections are self-contained. Search for the error message you see.
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
 | Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [docs/simulation/gazebo.md](simulation/gazebo.md#troubleshooting), `./gazebo/test_sim.sh` |
 | Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](../scripts/tools/test_explore.sh) |
-| Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | VM UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
+| Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | Host UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
 | Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | `(53) The Wi-Fi network could not be found` on the Go2 | No regulatory domain (`country 00`): 5 GHz is passive-scan only | `sudo iw reg set US` + make it permanent. See [Robot Wi-Fi](#the-wi-fi-network-could-not-be-found-53) |
 | `Secrets were required, but not provided` on the Go2 | Wi-Fi profile built in pieces; password unreadable | Delete it and recreate it with one `nmcli connection add`. See [Robot Wi-Fi](#secrets-were-required-but-not-provided) |
-| `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
+| `could not find the Go2 on <wifi iface>` | Robot on another Wi-Fi network, DHCP changed, or discovery failed | Same network? Then `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
+| `SENSOR CLOCK FAULT` in `slam.log`; map and dog stop updating; twin exits after `waiting up to 180 s for a frame` | The Jetson's clock jumped (first NTP sync after boot) | Wait ~2 min after booting the dog, then relaunch. See [Workstation](#sensor-clock-fault-right-after-the-dog-boots) |
+| `apt-get install` fails on `nvidia-dkms-open` / `cuda-drivers` | NVIDIA driver build needs gcc-12 | `sudo apt-get install -y gcc-12 && sudo dpkg --configure -a`. See [Workstation](#nvidia-driver-fails-to-build--ftrivial-auto-var-initzero) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
-| Foxglove 3D panel: `Error creating WebGL context` | VirtualBox has no GPU acceleration (not a code error) | Enable 3D Acceleration + 128 MB video memory, install `virtualbox-guest-utils`, or use Foxglove on Windows / RViz. See [3d_nav.md](ai_and_vision/3d_nav.md#webgl--hardware-acceleration-error) |
+| Foxglove 3D panel: `Error creating WebGL context` | No GPU acceleration: NVIDIA driver not loaded (not a code error) | Check `nvidia-smi` / `glxinfo -B`, finish the driver install, or use RViz. See [3d_nav.md](ai_and_vision/3d_nav.md#webgl--hardware-acceleration-error) |
 
 ---
 
@@ -107,7 +109,7 @@ sleep 3
 ss -tlnp | grep 17999        # must be empty
 ```
 
-Then relaunch the session on the VM.
+Then relaunch the session on the workstation.
 
 ### `SENSOR-ONLY: no cmd_vel TCP server…` in `slam.log`
 
@@ -135,7 +137,7 @@ differs.
 Check by hand:
 
 ```bash
-ip -4 -o addr show dev enp0s3                       # the VM's current Wi-Fi IP
+ip -4 -o addr show dev "$GO2_IFACE"                 # this computer's current Wi-Fi IP (or: hostname -I)
 docker exec go2-lidar3d printenv GO2_HOST_IP        # must match
 docker exec go2-lidar3d printenv GO2_ROBOT_IP       # must be the robot's current IP
 docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address   # rewritten each session
@@ -145,11 +147,15 @@ docker exec go2-lidar3d cat /tmp/go2-wifi-cyclonedds.xml | grep -i address   # r
 If a stale IP is exported in your shell (e.g. `~/.bashrc`), `wifi_nav.sh`
 ignores it with a note. Remove it to avoid confusion.
 
-### `could not find the Go2 on enp0s3`
+### `could not find the Go2 on <wifi iface>`
 
 Robot discovery failed. Order tried: last known IP, hostname `unitree`, MAC
-prefix scan (`02:00:00`) on `enp0s3`, then an SSH-key probe.
+prefix scan (`02:00:00`) on the Wi-Fi interface, then an SSH-key probe.
 
+0. Make sure the Go2 is on the **same Wi-Fi network** as the workstation. If
+   it is cabled to the workstation, `getent hosts unitree.local` resolving to
+   `192.168.123.161` means you only reach it over the cable: `ssh` in there
+   and check `nmcli -t -f ACTIVE,SSID dev wifi` and `hostname -I`.
 1. Find the address in the router's DHCP lease list, or run `hostname -I` on
    the Jetson, then `./scripts/runtime/wifi_nav.sh --robot-ip <IP>`. It is
    cached for next time.
@@ -158,11 +164,12 @@ prefix scan (`02:00:00`) on `enp0s3`, then an SSH-key probe.
 3. Install `arp-scan` (`sudo apt install arp-scan`) or `nmap` for a faster,
    more reliable scan. Without them, a ping sweep is used.
 
-### `route to robot ... goes via the arm interface enp0s8`
+### `route to robot ... goes via the arm interface <iface>`
 
-The VM would send Go2 traffic out the arm's Ethernet. Make sure `enp0s3` (Wi-Fi
-bridge) and `enp0s8` (arm, `192.168.123.x`) are on different subnets, and that
-`enp0s3` holds the route to the robot's network (`ip route get <robot-ip>`).
+The workstation would send Go2 traffic out the arm's Ethernet. Make sure the
+Wi-Fi interface (`GO2_IFACE`) and the arm interface (`ARM_IFACE`,
+`192.168.123.x`) are on different subnets, and that the Wi-Fi interface holds
+the route to the robot's network (`ip route get <robot-ip>`).
 
 ### `ValueError: numpy.dtype size changed`
 
@@ -307,7 +314,7 @@ ssh unitree@<robot-ip>
 pkill -9 -f 'robot-relay-wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge'
 rm -f /tmp/go2-relay-wifi.sock*
 sleep 3
-export GO2_HOST_IP=<vm-wifi-ip>    # `ip -4 -o addr show dev enp0s3` on the VM
+export GO2_HOST_IP=<host-wifi-ip>  # `hostname -I` on the workstation
 bash ~/robot-relay-wifi.sh
 ```
 
@@ -513,20 +520,23 @@ Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
 [`start_arm.sh`](../scripts/runtime/start_arm.sh). Protocol and runbook:
 [d1arm.md](hardware/d1arm.md).
 
-The arm is wired to the VM's `enp0s8` (VM `192.168.123.99`, arm `.100`, DDS
+The arm is wired to a port of the workstation (`ARM_IFACE`, auto-detected, e.g.
+`enp0s31f6`; host `192.168.123.99`, arm `.100`, DDS
 domain 0, multicast discovery), or plugged into the Go2 and reached over
 Wi-Fi through the robot's bridge (`--robot <ip>` / `--arm-wifi`, see
 [d1arm.md](hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
-in its troubleshooting table). Wired, the arm scripts run with the VM's
+in its troubleshooting table). Wired, the arm scripts run with the host's
 `python3` and the pip `cyclonedds` package; don't source ROS in that shell.
 
 ### Arm does not respond to commands
 
 1. **Run the preflight:** `./scripts/runtime/start_arm.sh --check` (address + ping).
-2. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
+2. **Run the diagnostic:** `./scripts/tools/diag_arm.sh` (interface
+   auto-detected; set `ARM_IFACE` to force one).
    It checks the interface, ping, container, `cyclonedds`, and DDS match.
-3. **Check the address.** `enp0s8` needs `192.168.123.99`, which is lost on
-   every VM reboot: `sudo ip addr add 192.168.123.99/24 dev enp0s8`.
+3. **Check the address.** The arm port needs `192.168.123.99`. It comes from
+   the `go2-arm` NetworkManager profile whenever the cable is plugged in:
+   `sudo nmcli connection up go2-arm` ([setup](setup/setup.md#arm--one-time-setup)).
 4. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
 5. **Read joint feedback:**
 
@@ -539,11 +549,11 @@ in its troubleshooting table). Wired, the arm scripts run with the VM's
 
 ### `does not reply to ping`
 
-The cable, adapter, or VM networking is wrong, or the arm is still booting.
-Check the link light, then cold-boot the VM (power off, not reboot) with
-VirtualBox Adapter 2 set to **Intel PRO/1000**.
+The cable or adapter is wrong, or the arm is still booting (allow ~1 min).
+Check the link light (`cat /sys/class/net/<iface>/carrier` is `1`) and the
+24V power, then power-cycle the arm.
 
-### `route to 192.168.123.100 does NOT go via enp0s8`
+### `route to 192.168.123.100 does NOT go via <iface>`
 
 Another interface also has a `192.168.123.x` address, so traffic to the arm
 leaves the wrong way. Remove the other address, or set `ARM_IFACE`.
@@ -552,7 +562,7 @@ leaves the wrong way. Remove the other address, or set `ARM_IFACE`.
 
 No DDS match within `--match-timeout` (default 20 s). In order:
 
-1. `pip3 show cyclonedds` on the VM. Fix: `pip3 install cyclonedds`.
+1. `pip3 show cyclonedds` on the host. Fix: `python3 -m pip install --user cyclonedds`.
 2. Don't use `--peer` / unicast. This firmware only works with multicast.
 3. Make sure ROS isn't sourced in that shell. ROS's `libddsc` can clash with the
    pip `cyclonedds` (`free(): invalid pointer`).
@@ -567,10 +577,10 @@ Use a smaller angle. `sweep --pct` keeps targets inside the limits.
 
 Navigation continues without the arm. The banner shows `D1 arm: disabled (...)`.
 
-- `enp0s8 not ready`: the interface is missing or has no IPv4 address. Run
-  `sudo ip addr add 192.168.123.99/24 dev enp0s8`.
-- `share a subnet`: `enp0s3` and `enp0s8` overlap, so arm and Go2 DDS would mix.
-  Give `enp0s8` its `192.168.123.99` address.
+- `<iface> not ready`: the arm interface is missing or has no IPv4 address.
+  Plug in the cable and run `sudo nmcli connection up go2-arm`.
+- `share a subnet`: the Wi-Fi and arm interfaces overlap, so arm and Go2 DDS
+  would mix. Give the arm interface its `192.168.123.99` address.
 - `arm start failed`: read `~/files/go2-nav2-wifi/ws/log/arm.log`. A
   `preflight failed` there means the address or ping check failed.
 
@@ -682,16 +692,66 @@ helps, because RViz renders on the CPU.
 
 ---
 
-## RViz / VM
+## Native Ubuntu workstation
+
+The stack used to run in a VirtualBox VM; it now runs natively on Ubuntu 22.04.
+Interface names are auto-detected ([setup](setup/setup.md#workstation)).
+
+### `SENSOR CLOCK FAULT` right after the dog boots
+
+`slam.log` shows the lidar relay running (`registered=7.4 Hz`) and then
+`SENSOR CLOCK FAULT: sensor timestamp is in the future ... forwarding stopped`.
+From then on no map or pose reaches the workstation: Nav2 logs
+`/lidar3d/obstacle_points ... has not been updated`, and the 3D twin prints
+`waiting up to 180 s for a frame on /camera/image_raw...` and stops, which
+takes the dashboard on port 3000 with it.
+
+The Jetson has no battery-backed clock. It boots with the last saved time and
+jumps when it first reaches an NTP server (`journalctl -u systemd-timesyncd`
+on the robot shows `Initial synchronization`). On the workstation's Wi-Fi it
+has internet, so this happens on every boot. Wait ~2 minutes after powering on
+the dog, then relaunch; check with `timedatectl` on the robot
+(`System clock synchronized: yes`).
+
+### `robot clock offset ... TOO LARGE`
+
+`wifi_nav.sh` measures the robot clock over SSH. It now reuses one SSH
+connection, so the reading is accurate to a few ms. If it still fails, the
+clocks really differ: check `timedatectl` on both ends, or run
+`./scripts/runtime/wifi_nav.sh --sync-clock` (asks for the robot's sudo
+password).
+
+### NVIDIA driver fails to build (`-ftrivial-auto-var-init=zero`)
+
+`apt-get install` of anything fails with errors on `nvidia-dkms-open`,
+`nvidia-driver-open`, `nvidia-open`, `cuda-drivers`, and
+`/var/lib/dkms/nvidia/*/build/make.log` shows
+`cc: error: unrecognized command-line option '-ftrivial-auto-var-init=zero'`.
+The 6.8 HWE kernel is built with gcc-12; Ubuntu 22.04 has only gcc-11:
+
+```bash
+sudo apt-get install -y gcc-12
+sudo dpkg --configure -a
+sudo reboot          # then: nvidia-smi
+```
+
+### Docker: `permission denied ... docker.sock`
+
+Your user is not in the `docker` group yet: `sudo usermod -aG docker "$USER"`,
+then log out and back in.
+
+---
+
+## RViz
 
 ### RViz renders slowly with the point cloud visible
 
-RViz renders on the CPU inside the container. To improve:
+RViz renders inside the container (on the GPU once the NVIDIA driver is
+loaded, otherwise on the CPU). To improve:
 
 - Close the heavy point cloud display while tuning
 - Untick displays you aren't using
-- Use bridged networking (not NAT) on the VM
-- Give the VM 4+ cores
+- Check `glxinfo -B` shows the NVIDIA renderer, not `llvmpipe`
 
 ### `view_frames` PDF is empty
 
@@ -740,7 +800,7 @@ connecting, empty
 `/rtabmap/cloud_map`, clicks ignored, camera not detected, wrong map colours,
 YOLO obstacles ignored by Nav2, Ollama unreachable, no battery data, `--resume`
 maps not joined, CPU load, unsaved map, Foxglove
-*"Error creating WebGL context"* in a VirtualBox VM): see
+*"Error creating WebGL context"* without a GPU driver): see
 [3d_nav.md → Troubleshooting](ai_and_vision/3d_nav.md#troubleshooting). Logs are in
 `~/files/go2-nav2-wifi/ws/log/3d/` (`rtabmap.log`, `bridge.log`,
 `click_to_goal.log`, `yolo.log`, `vlm.log`, `battery.log`, `camera_info.log`,
@@ -753,7 +813,7 @@ maps not joined, CPU load, unsaved map, Foxglove
 
 ### Robot IP not found / DHCP changed
 
-`wifi_nav.sh` stops with `could not find the Go2 on enp0s3` when discovery fails.
+`wifi_nav.sh` stops with `could not find the Go2 on <wifi iface>` when discovery fails.
 Find the robot's address in the router's DHCP lease list, or run `hostname -I`
 on the Jetson, then:
 
@@ -819,13 +879,13 @@ If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 
 ### Arm does not respond
 
-1. **Run the diagnostic:** `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh`.
+1. **Run the diagnostic:** `./scripts/tools/diag_arm.sh` (interface auto-detected).
    It checks the interface, ping, container, `cyclonedds`, and DDS match.
-2. **Check the address.** `enp0s8` needs `192.168.123.99`:
-   `sudo ip addr add 192.168.123.99/24 dev enp0s8`, then
+2. **Check the address.** The arm port needs `192.168.123.99`:
+   `sudo nmcli connection up go2-arm`, then
    `./scripts/runtime/start_arm.sh --check`.
 3. **Check the arm is powered.** 24V DC via the barrel jack; allow ~1 min to boot.
-4. **Check `cyclonedds`** on the VM: `pip3 show cyclonedds`. Discovery is
+4. **Check `cyclonedds`** on the host: `pip3 show cyclonedds`. Discovery is
    multicast; don't pass `--peer`. Don't source ROS in the same shell.
 5. **Read the joint feedback:**
 
@@ -886,7 +946,7 @@ and the matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
 | Costmap missing | `go2sh; ros2 topic list \| grep costmap` |
 | TF broken | `go2sh; ros2 run tf2_ros tf2_echo lidar3d_map base_link` |
 | Camera empty | `go2sh; ros2 topic hz /camera/image_raw` |
-| Arm unresponsive | `ARM_IFACE=enp0s8 ./scripts/tools/diag_arm.sh` |
+| Arm unresponsive | `./scripts/tools/diag_arm.sh` |
 | Robot / host IP wrong | `./scripts/runtime/wifi_nav.sh --check` (banner shows both IPs) |
 | Full reset | `./scripts/runtime/wifi_nav.sh --clean` then relaunch |
 | No rooms in the dashboard | `tail ~/files/go2-nav2-wifi/ws/log/3d/rooms.log` |
