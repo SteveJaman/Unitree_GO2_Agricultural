@@ -37,6 +37,7 @@ anything?". Connecting it to the real arm is the open step (see
 | `scripts/tools/calibrate_arm.py` | Measures per-joint offset (commanded vs reported angle) with small ± test moves |
 | `scripts/tools/teach_arm.py` | Plant scanning: guide the arm by hand in compliance mode, save scan poses to `config/arm_waypoints.json` |
 | `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
+| `scripts/nodes/orbit_scan.py` | Orbit scan: scan pose, base sweep −90° → +90° with the wrist counter-rotating to keep the camera on a table-top object |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 | `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
@@ -304,6 +305,36 @@ locks the arm where it stopped.
 
 Both scripts take the usual `--iface`, `--ip`, `--domain`,
 `--skip-preflight` and `--file` (another waypoint file, e.g. one per crop).
+
+## Orbit scan (`start_arm.sh orbit`)
+
+A hardcoded scan around a table-top object, no teaching needed:
+
+```bash
+./scripts/runtime/start_arm.sh orbit                 # preflight, asks before moving
+./scripts/runtime/start_arm.sh orbit --yes           # no prompt
+python3 scripts/nodes/orbit_scan.py --dry-run        # print the 30 steps, no arm
+```
+
+1. Power on, enable (mode 80000), home.
+2. Move to `SCAN_POSE = [0, -40, 60, 0, 30, 0]` (camera facing down).
+3. Sweep joint 0 (base) from −90° to +90° in 30 steps (about 6.2° each). Each
+   step is one multi-joint move that also sets joint 5 (wrist) to
+   `-base * 0.8`, so the camera stays on the object.
+4. Home and release (mode 0).
+
+The movement runs in a `try/finally`: on Ctrl+C, an error or a lost link the
+arm is homed and then **always released** (mode 0). Homing first keeps the
+limp arm from dropping out of the scan pose. Clear the space around the arm
+first: the base turns ±90°.
+
+Works on either link like every `start_arm.sh` command: wired (the interface
+is auto-detected, override with `--iface` / `ARM_IFACE`), or with the arm
+plugged into the Go2 over Wi-Fi (chosen automatically when the wired port
+has no cable link, or `start_arm.sh --robot <Go2 IP> orbit`). Options:
+`--dwell` (s held per step, default 0.3), `--tolerance` (°, default 3),
+`--move-timeout` (s, default 15). The pose, range, step count and wrist gain
+are constants at the top of `orbit_scan.py`.
 
 ## Offset calibration
 
