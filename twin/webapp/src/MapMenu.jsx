@@ -55,6 +55,7 @@ export default function MapMenu({
           <Toggle label="Detected objects" on={layers.yolo} set={() => toggle('yolo')} />
           <Toggle label="Places & labels" on={layers.labels} set={() => toggle('labels')} />
           <Toggle label="Rooms" on={layers.rooms} set={() => toggle('rooms')} />
+          <Toggle label="D1 arm + camera" on={layers.arm} set={() => toggle('arm')} />
           <div className="menu-foot">
             {stats.triangles ? `${k(stats.triangles)} triangles · ` : ''}{stats.fps ? `${stats.fps} fps` : ''}
           </div>

@@ -78,7 +78,7 @@ function Dashboard() {
   useControlsHeight(appRef);
   const [quality, setQualityState] = useState(initialQuality);
   const lite = quality === 'lite';
-  const [layers, setLayers] = useState({ map: true, scan: false, yolo: true, labels: true, rooms: true });
+  const [layers, setLayers] = useState({ map: true, scan: false, yolo: true, labels: true, rooms: true, arm: true });
   const [view, setView] = useState(params.get('view') || 'solid');
   const [textured, setTextured] = useState(true);
   const [shadows, setShadows] = useState(!lite);

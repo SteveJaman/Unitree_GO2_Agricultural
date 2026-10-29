@@ -595,6 +595,11 @@ The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
 `lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.
 
+**D1 arm.** The arm is drawn on the Go2's back with live joint angles and its
+wrist camera's view cone; **Orbit Scan** in the controls sweeps it around an
+object (layer toggle: ⚙ → *D1 arm + camera*). Details and the no-robot mock:
+[d1arm.md → The arm in the web dashboard](../hardware/d1arm.md#the-arm-in-the-web-dashboard).
+
 **Performance mode.** A machine without 3D acceleration (`glxinfo -B`
 says `Accelerated: no`, e.g. no NVIDIA driver loaded) draws everything on the CPU. When the browser reports
 such a renderer (llvmpipe, SwiftShader, `LLVM`), the dashboard starts in

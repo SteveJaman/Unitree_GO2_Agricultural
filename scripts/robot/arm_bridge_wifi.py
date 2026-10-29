@@ -16,6 +16,10 @@ object per line:
     bridge -> laptop   {"bridge":"arm_bridge_wifi",...} once, then every
                        rt/arm_Feedback message (telemetry, status, acks)
 
+Monitor port (ARM_BRIDGE_PORT + 1): read-only. Any number of clients get
+every rt/arm_Feedback line and nothing they send is read, so the dashboard's
+arm_state_bridge.py can watch the arm while start_arm.sh drives it.
+
 TCP instead of DDS over Wi-Fi: arm traffic is small JSON at 10 Hz, and TCP
 needs no discovery and loses nothing. Safety: when the laptop disconnects or
 is silent for ARM_BRIDGE_TIMEOUT s while the arm is compliant (teach mode:
@@ -26,7 +30,8 @@ move sets a new target on this firmware. Only GO2_HOST_IP may connect (if
 set), and only arm commands (address 1) are forwarded.
 
 Started by arm_bridge_wifi.sh (wifi_nav.sh --arm-wifi copies and runs it).
-Env: ARM_BRIDGE_PORT=18100  ARM_BRIDGE_TIMEOUT=3  GO2_HOST_IP=<laptop>
+Env: ARM_BRIDGE_PORT=18100  ARM_BRIDGE_MONITOR_PORT=18101  ARM_BRIDGE_TIMEOUT=3
+     GO2_HOST_IP=<laptop>
 """
 
 import json
@@ -43,6 +48,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from unitree_arm.msg import ArmString
 
 PORT = int(os.environ.get("ARM_BRIDGE_PORT", "18100"))
+MONITOR_PORT = int(os.environ.get("ARM_BRIDGE_MONITOR_PORT", str(PORT + 1)))
 TIMEOUT = float(os.environ.get("ARM_BRIDGE_TIMEOUT", "3"))
 ALLOW = os.environ.get("GO2_HOST_IP", "")
 LOCK_MODE = 80000
@@ -67,17 +73,27 @@ class Bridge(Node):
         )
         self.conn = None
         self.conn_lock = threading.Lock()
+        self.monitors = []  # read-only clients of the monitor port
+        self.mon_lock = threading.Lock()
         self.feedback = 0
         self.mode = None  # last enable-all mode sent (None: unknown, 0: released)
         self.seq = int(time.time()) % 1000000 * 1000
 
     def on_feedback(self, msg):
         self.feedback += 1
+        line = (msg.data.strip() + "\n").encode()
+        with self.mon_lock:
+            for mon in list(self.monitors):
+                try:
+                    mon.sendall(line)
+                except OSError:  # gone, or too slow (send timeout): drop it
+                    self.monitors.remove(mon)
+                    mon.close()
         with self.conn_lock:
             if self.conn is None:
                 return
             try:
-                self.conn.sendall((msg.data.strip() + "\n").encode())
+                self.conn.sendall(line)
             except OSError:
                 self.conn = None  # the serving loop notices and cleans up
 
@@ -170,6 +186,23 @@ class Bridge(Node):
                 self.get_logger().info(f"{why} (arm {state}: nothing sent)")
 
 
+def serve_monitors(node):
+    """Accept read-only monitor clients; feedback reaches them in on_feedback."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", MONITOR_PORT))
+    srv.listen(4)
+    while True:
+        conn, (addr, _) = srv.accept()
+        if ALLOW and addr != ALLOW:
+            conn.close()
+            continue
+        conn.settimeout(0.5)  # a stalled monitor is dropped, never blocks the arm link
+        with node.mon_lock:
+            node.monitors.append(conn)
+        node.get_logger().info(f"monitor {addr} connected (read-only, :{MONITOR_PORT})")
+
+
 def _stop(signum, frame):
     raise KeyboardInterrupt  # SIGTERM (wifi_nav.sh teardown) runs the same cleanup as Ctrl+C
 
@@ -189,6 +222,7 @@ def main():
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     threading.Thread(target=executor.spin, daemon=True).start()
+    threading.Thread(target=serve_monitors, args=(node,), daemon=True).start()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", PORT))

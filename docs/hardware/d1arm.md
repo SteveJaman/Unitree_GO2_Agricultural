@@ -336,6 +336,38 @@ has no cable link, or `start_arm.sh --robot <Go2 IP> orbit`). Options:
 `--move-timeout` (s, default 15). The pose, range, step count and wrist gain
 are constants at the top of `orbit_scan.py`.
 
+## The arm in the web dashboard
+
+The 3D dashboard ([3d_nav.md](../ai_and_vision/3d_nav.md#web-dashboard)) draws the D1 on
+the Go2's back with live joint angles and a translucent blue cone for the
+wrist camera's view, and has an **Orbit Scan** button.
+
+The arm has no ROS `JointState` of its own (it speaks JSON on raw DDS), so
+[`scripts/nodes/arm_state_bridge.py`](../../scripts/nodes/arm_state_bridge.py), on the host:
+
+- reads `rt/arm_Feedback`: wired DDS on the arm's Ethernet, or, with the arm
+  plugged into the Go2, the bridge's **read-only monitor port** (TCP 18101,
+  `ARM_BRIDGE_PORT + 1`), so watching never blocks `start_arm.sh`;
+- publishes `/d1_arm/joint_states` (`sensor_msgs/JointState`, `Joint1`..`Joint6`
+  in radians, fingers `Joint7_1`/`Joint7_2`) and `/d1_arm/status` through rosbridge;
+- runs `start_arm.sh orbit --yes` on `{"op":"orbit"}` from `/d1_arm/command`
+  (the button, after a confirmation) and Ctrl+C's it on `{"op":"stop"}`.
+  `--no-commands` turns the button off.
+
+`wifi_3d_nav.sh` starts it with every session (`TWIN_ARM=0` turns it off;
+log `ws/log/3d/arm_state.log`, scan log `arm_orbit.log`). The arm bridge on the
+robot gets the monitor port the next time `start_arm.sh` or `wifi_nav.sh
+--arm-wifi` (re)starts it.
+
+**No robot:** `./scripts/tools/mock_arm_twin.sh` serves the dashboard with a
+fake arm (`cmu-legacy/mock_sim.py --arm --tf`) on an isolated ROS domain.
+Open `http://localhost:3000` and press Orbit Scan to see the same sweep as
+`orbit_scan.py`.
+
+The model is Unitree's `d1_description` (BSD), decimated from 133k to 9k
+triangles by [`scripts/tools/build_d1_model.py`](../../scripts/tools/build_d1_model.py)
+into `twin/webapp/public/d1_description/`, and loaded with `urdf-loader`.
+
 ## Offset calibration
 
 `calibrate_arm.py` moves each joint through ±`--test-deg` from zero and

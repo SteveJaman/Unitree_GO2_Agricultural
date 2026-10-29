@@ -62,6 +62,8 @@
 #
 # Environment:
 #   TWIN_WEB_PORT=3000  TWIN_ROSBRIDGE_PORT=9090  TWIN_FOXGLOVE_PORT=8765
+#   TWIN_ARM=1          D1 arm in the dashboard + its Orbit Scan button
+#                       (arm_state_bridge.py; 0 = off)
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=180 (s, camera auto-detect)
 #   TWIN_CAMERA_TF="0.327 0 0.043 -1.5708 0 -1.5708"  base_link -> camera optical
@@ -169,6 +171,7 @@ ai_default() { [ "${AI}" = "true" ] && [[ " ${NO_AI[*]} " != *" $1 "* ]] && echo
 TWIN_YOLO="${TWIN_YOLO:-$(ai_default yolo)}"
 TWIN_VLM="${TWIN_VLM:-$(ai_default vlm)}"
 TWIN_BATTERY="${TWIN_BATTERY:-$(ai_default battery)}"
+TWIN_ARM="${TWIN_ARM:-1}"
 TWIN_BATTERY_LOW="${TWIN_BATTERY_LOW:-15}"
 TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
 TWIN_DOCK="${TWIN_DOCK:-0 0 0}"
@@ -655,6 +658,23 @@ echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo
 
+# D1 arm -> /d1_arm/joint_states and the dashboard's Orbit Scan button, on the
+# host (arm_state_bridge.py; it waits for rosbridge and the arm by itself).
+# Wired DDS when the arm port has a cable link, else through the Go2's bridge.
+ARM_STATE_PID=""
+start_arm_state() {
+    [ "${TWIN_ARM}" = 1 ] || return 0
+    local robot args=()
+    # shellcheck disable=SC2016
+    robot="$(bash -c 'source "$1"; [ "$(cat "/sys/class/net/${ARM_IFACE}/carrier" 2>/dev/null)" = 1 ] \
+        || head -n1 "${GO2_IP_CACHE}" 2>/dev/null' _ "${SCRIPT_DIR}/go2_net.sh" 2>/dev/null || true)"
+    [ -n "${robot}" ] && args=(--robot "${robot}")
+    python3 -u "${NODES_DIR}/arm_state_bridge.py" "${args[@]}" --rosbridge "localhost:${TWIN_ROSBRIDGE_PORT}" \
+        --orbit-log "${TWIN_LOG_DIR}/arm_orbit.log" > "${TWIN_LOG_DIR}/arm_state.log" 2>&1 &
+    ARM_STATE_PID=$!
+    echo "[3d] D1 arm state: ${robot:+through the Go2 at ${robot}}${robot:-wired DDS} (log ${TWIN_LOG_DIR}/arm_state.log)"
+}
+
 WATCH_PID=""
 CLEANED_UP="false"
 cleanup() {
@@ -665,6 +685,10 @@ cleanup() {
         wait "${WATCH_PID}" 2>/dev/null || true
     fi
     kill_battery_manager
+    if [ -n "${ARM_STATE_PID}" ]; then
+        kill "${ARM_STATE_PID}" 2>/dev/null || true   # stops a running orbit scan first
+        wait "${ARM_STATE_PID}" 2>/dev/null || true
+    fi
     stop_twin
     if [ -f "${TWIN_DB_DIR}/${DB_NAME}" ]; then
         echo "[3d] Map saved: ${TWIN_DB_DIR}/${DB_NAME} ($(du -h "${TWIN_DB_DIR}/${DB_NAME}" | cut -f1))"
@@ -676,6 +700,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+mkdir -p "${TWIN_LOG_DIR}"
+start_arm_state
 start_twin_when_ready &
 WATCH_PID=$!
 

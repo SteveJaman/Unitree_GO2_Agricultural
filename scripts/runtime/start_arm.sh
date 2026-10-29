@@ -83,6 +83,10 @@ start_bridge() {
     # same remote shell would match and kill that shell.
     ssh "${GO2_SSH_OPTS[@]}" -T -n -o ConnectTimeout=5 "${robot}" \
         "pkill -TERM -f 'arm_bridge_[w]ifi'" >/dev/null 2>&1 || true
+    # This repo's bridge (e.g. the read-only monitor port), like wifi_nav.sh --arm-wifi.
+    scp -q "${GO2_SSH_OPTS[@]}" "${REPO_ROOT}/scripts/robot/arm_bridge_wifi.sh" \
+        "${REPO_ROOT}/scripts/robot/arm_bridge_wifi.py" "${robot}:go2-agri-arm/" 2>/dev/null \
+        || echo "  [!] could not copy the bridge to the robot; starting the copy already there"
     ssh "${GO2_SSH_OPTS[@]}" -T -n -o ConnectTimeout=5 "${robot}" \
         "GO2_HOST_IP=${GO2_HOST_IP} ARM_BRIDGE_PORT=${ARM_BRIDGE_PORT} setsid nohup bash ~/go2-agri-arm/arm_bridge_wifi.sh > /tmp/arm_bridge_wifi.log 2>&1 < /dev/null &" \
         2>/dev/null || { echo "  [!] could not start the arm bridge over SSH"; return 1; }

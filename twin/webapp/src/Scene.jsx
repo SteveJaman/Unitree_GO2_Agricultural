@@ -8,7 +8,11 @@ import { TfTree, toMatrix } from './ros/tf.js';
 import { QUALITY } from './ros/quality.js';
 import { fetchConfigJson } from './ros/config.js';
 import Go2Model from './Go2Model.jsx';
+import D1Model from './D1Model.jsx';
 
+// D1 base on the Go2 trunk (base_link): centre of the trunk top, as in
+// gazebo/sim/build_model.py --mount and the MoveIt model (d1_go2.urdf.xacro).
+const D1_MOUNT = [0, 0, 0.057];
 // ROS is z-up, three.js is y-up: everything ROS lives in this rotated group.
 const ROS_TO_THREE = [-Math.PI / 2, 0, 0];
 // Light blue/grey "architectural scan" surface.
@@ -57,6 +61,11 @@ function Scene({
   const joints = useRef(new Map());
   useTopic('/joint_states', 'sensor_msgs/msg/JointState', (m) => {
     (m.name || []).forEach((n, i) => joints.current.set(n, m.position[i]));
+  }, { throttle: 50 });
+  // D1 arm angles (arm_state_bridge.py, from the arm's rt/arm_Feedback).
+  const armJoints = useRef(new Map());
+  useTopic('/d1_arm/joint_states', 'sensor_msgs/msg/JointState', (m) => {
+    (m.name || []).forEach((n, i) => armJoints.current.set(n, m.position[i]));
   }, { throttle: 50 });
   const q = QUALITY[quality] || QUALITY.high;
   const voxelOpts = useMemo(() => (view === 'solid'
@@ -170,7 +179,8 @@ function Scene({
         {layers.labels && places.filter((p) => (!p.frame || p.frame === fixedFrame) && !/^dock$/i.test(p.label)).map((p) => (
           <Pin key={`place-${p.label}`} x={p.x} y={p.y} z={floorZ ?? p.z ?? 0} label={p.label.replace(/_/g, ' ')} kind="place" />
         ))}
-        <Robot tf={tf} fixed={fixedFrame} base={baseFrame} follow={follow} joints={joints} lambert={q.material === 'lambert'} />
+        <Robot tf={tf} fixed={fixedFrame} base={baseFrame} follow={follow} joints={joints} lambert={q.material === 'lambert'}
+               armJoints={layers.arm !== false ? armJoints : null} />
         <ClickPlane enabled={clickToGo} onPick={onPick} />
       </group>
     </Canvas>
@@ -407,7 +417,7 @@ function Dock() {
  * newest one (exponential lerp / slerp) instead of jumping; jumps > 2 m
  * (relocalization) snap.
  */
-function Robot({ tf, fixed, base, follow, joints, lambert }) {
+function Robot({ tf, fixed, base, follow, joints, lambert, armJoints }) {
   const ref = useRef();
   const s = useMemo(() => ({
     pos: new THREE.Vector3(), quat: new THREE.Quaternion(), tpos: new THREE.Vector3(),
@@ -442,8 +452,14 @@ function Robot({ tf, fixed, base, follow, joints, lambert }) {
   return (
     <group ref={ref} matrixAutoUpdate={false} visible={false}>
       <Go2Model joints={joints} lambert={lambert} fallback={<StandIn />} />
-      {/* Red navigation arrow above the body, pointing along +x (heading). */}
-      <group position={[0, 0, 0.4]}>
+      {armJoints && (
+        <group position={D1_MOUNT}>
+          <D1Model joints={armJoints} lambert={lambert} />
+        </group>
+      )}
+      {/* Red navigation arrow above the body, pointing along +x (heading);
+          above the D1 arm (~0.5 m tall) when it is shown. */}
+      <group position={[0, 0, armJoints ? 0.75 : 0.4]}>
         <mesh position={[-0.05, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
           <cylinderGeometry args={[0.05, 0.05, 0.5, 16]} />
           <meshStandardMaterial color="#ef4444" emissive="#b91c1c" emissiveIntensity={0.7} />

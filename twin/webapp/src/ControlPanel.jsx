@@ -1,4 +1,4 @@
-import { useLatest } from './RosProvider.jsx';
+import { useLatest, usePublisher } from './RosProvider.jsx';
 import SurveyCard from './SurveyCard.jsx';
 
 /**
@@ -30,6 +30,7 @@ export default function ControlPanel({
       <button className="action" disabled={!connected} onClick={onDock}>
         <span className="action-icon">⌂</span> Return to Dock
       </button>
+      <OrbitButton connected={connected} />
       {rooms.length > 0 && (
         <label className="room-go">
           <span className="action-icon">➜</span>
@@ -54,5 +55,39 @@ export default function ControlPanel({
         {hasWaypoint && <button className="chip" onClick={onClearWaypoint} title="Hide the waypoint">✕ Clear</button>}
       </div>
     </div>
+  );
+}
+
+/**
+ * D1 arm orbit scan (/d1_arm/command -> arm_state_bridge.py runs
+ * start_arm.sh orbit; mock_sim.py --arm fakes it). State from /d1_arm/status.
+ */
+function OrbitButton({ connected }) {
+  const [status] = useLatest('/d1_arm/status', 'std_msgs/msg/String', { throttle: 500 });
+  const send = usePublisher('/d1_arm/command', 'std_msgs/msg/String');
+  let st = null;
+  try { st = status ? JSON.parse(status.data) : null; } catch { st = null; }
+  const running = st?.orbit === 'running';
+  const ready = connected && st?.arm && st?.commands !== false;
+  const note = !connected ? 'Robot offline'
+    : !st ? 'Arm bridge not running'
+      : !st.arm ? 'Arm offline'
+        : st.commands === false ? 'Commands off' : running ? 'Sweeping ±90°'
+          : st.orbit === 'done' ? 'Last scan complete' : st.orbit === 'failed' ? 'Last scan failed'
+            : st.mock ? 'Simulated arm' : 'Sweep around the object';
+  const onClick = () => {
+    if (running) { send({ data: JSON.stringify({ op: 'stop' }) }); return; }
+    if (!st?.mock && !window.confirm('The D1 arm will sweep its base ±90° around the object. Is the space around the arm clear?')) return;
+    send({ data: JSON.stringify({ op: 'orbit' }) });
+  };
+  return (
+    <button className={`action orbit ${running ? 'on' : ''}`} disabled={!ready && !running} onClick={onClick}
+            title={note}>
+      <span className="action-icon">{running ? '■' : '◠'}</span>
+      <span className="orbit-text">
+        <span>{running ? 'Stop Orbit Scan' : 'Orbit Scan'}</span>
+        <span className="orbit-sub">{note}</span>
+      </span>
+    </button>
   );
 }
