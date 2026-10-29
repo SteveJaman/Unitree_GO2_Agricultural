@@ -58,6 +58,7 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --view          # dashboard + saved meshes only, no robot (presentations)
 #   ./scripts/runtime/wifi_3d_nav.sh --stop          # stop go2-3d, save DB
 #   ./scripts/runtime/wifi_3d_nav.sh --build         # rebuild the image now
+#   ./scripts/runtime/wifi_3d_nav.sh --setup-ssh / --sync-clock / --check   # wifi_nav.sh one-offs
 #   (--ai and --survey are the defaults now; still accepted.)
 #
 # Environment:
@@ -153,7 +154,7 @@ while [ $# -gt 0 ]; do
                       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then EXPORT_DB="$2"; shift; fi ;;
         --mesh)       MESH="true" ;;
         --view)       ACTION="view" ;;
-        --check|--clean|--setup-ssh)
+        --check|--clean|--setup-ssh|--sync-clock)
                       ACTION="passthru"; PASSTHRU+=("$1") ;;
         --host-ip|--robot-ip|--iface|--drive)
                       PASSTHRU+=("$1")

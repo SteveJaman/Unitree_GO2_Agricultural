@@ -25,8 +25,19 @@ Delayed heading feedback produces exactly this: over-turning, correcting back
 the Jetson has no time source; on 2026-10-20 it read February 1970.
 
 **Added:** `wifi_nav.sh` now measures the robot-to-laptop clock offset over
-SSH before every run (best of 5 round trips). It stops if the offset exceeds
-`CLOCK_MAX_SKEW` (default 0.1 s). Fix it with:
+SSH before every run. It opens one SSH session, skips the first reply (the
+connection setup), then takes the best of 8 timed round trips over that
+session. It stops if the offset exceeds `CLOCK_MAX_SKEW` (default 0.1 s), and
+prints the measurement's uncertainty (±half the round trip) next to it.
+
+Until 2026-10-28 it opened a new SSH connection per sample. The robot's
+`date` then runs after the key exchange, near the end of the round trip, so
+the robot read as **ahead by about half the SSH handshake** even with
+matching clocks: +0.27 s seen on the lab Wi-Fi while `date -u` matched on both.
+`--sync-clock` then set the robot that far wrong. Pull the current
+`wifi_nav.sh` if you see a steady ~0.2–0.3 s offset that syncing does not fix.
+
+Fix a real offset with:
 
 ```bash
 ./scripts/runtime/wifi_nav.sh --sync-clock   # asks for the robot's sudo password

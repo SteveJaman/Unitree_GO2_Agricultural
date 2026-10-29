@@ -148,24 +148,46 @@ robot_ssh() {
 # over-turns, then crawls/shudders (go2-nav2-wifi
 # docs/NAVIGATION-INCIDENT-2026-09-12.md: 5 s skew). Without internet the
 # Jetson has no time source (it has shown 1970). Four-timestamp estimate,
-# best of 5 by round trip: offset = robot - laptop midpoint, in seconds.
+# best of 8 by round trip: offset = robot - laptop midpoint, in seconds.
+#
+# All samples go over ONE ssh session, after its first reply. A fresh ssh per
+# sample is not symmetric: the remote `date` runs after the key exchange and
+# auth, near the end of the round trip, so the "midpoint" read the robot as
+# ahead by about half the handshake (+0.25 s for a 0.5 s Wi-Fi handshake,
+# with perfectly synced clocks), and --sync-clock then set it that far wrong.
 CLOCK_MAX_SKEW="${CLOCK_MAX_SKEW:-0.1}"
 ROBOT_CLOCK_OFFSET=""
 ROBOT_CLOCK_RTT=""
 measure_robot_clock_offset() {
-    local best_rtt="" best_off="" t0 r t1 rtt off
-    for _ in 1 2 3 4 5; do
+    local best_rtt="" best_off="" t0 r t1 rtt off i to_robot from_robot pid ok=1 pipe_trap
+    # A write to an ssh that already exited must fail, not SIGPIPE the script.
+    pipe_trap="$(trap -p PIPE)"; trap '' PIPE
+    coproc CLOCK_SSH { robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        'while IFS= read -r _; do date +%s.%N; done' 2>/dev/null; }
+    to_robot="${CLOCK_SSH[1]:-}"; from_robot="${CLOCK_SSH[0]:-}"; pid="${CLOCK_SSH_PID:-}"
+    if [ -z "${to_robot}" ] || [ -z "${from_robot}" ]; then
+        wait "${pid}" 2>/dev/null || true
+        eval "${pipe_trap:-trap - PIPE}"
+        return 1
+    fi
+    for i in 0 1 2 3 4 5 6 7 8; do
         t0="$(date +%s.%N)"
-        r="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" 'date +%s.%N' 2>/dev/null)" || return 1
+        { echo >&"${to_robot}"; } 2>/dev/null || { ok=0; break; }
+        IFS= read -r -t 10 r <&"${from_robot}" || { ok=0; break; }
         t1="$(date +%s.%N)"
-        [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+        [[ "${r}" =~ ^[0-9]+\.[0-9]+$ ]] || { ok=0; break; }
+        [ "${i}" -eq 0 ] && continue          # first reply: connection setup, not a sample
         read -r rtt off < <(awk -v a="$t0" -v b="$r" -v c="$t1" 'BEGIN {printf "%.6f %.6f\n", c - a, b - (a + c) / 2}')
         if [ -z "${best_rtt}" ] || awk -v x="$rtt" -v y="$best_rtt" 'BEGIN {exit !(x < y)}'; then
             best_rtt="$rtt"; best_off="$off"
         fi
     done
+    eval "exec ${to_robot}>&-" 2>/dev/null   # EOF ends the remote loop
+    kill "${pid}" 2>/dev/null || true; wait "${pid}" 2>/dev/null || true
+    eval "${pipe_trap:-trap - PIPE}"
+    [ "${ok}" = 1 ] && [ -n "${best_off}" ] || return 1
     ROBOT_CLOCK_OFFSET="${best_off}"
-    # Uncertainty is half the round trip (SSH connection setup dominates it).
+    # Uncertainty is half the round trip of one message on the open session.
     ROBOT_CLOCK_RTT="${best_rtt}"
 }
 
@@ -697,14 +719,14 @@ elif robot_ssh -T -o ConnectTimeout=3 \
     go2_save_robot_ip "${GO2_ROBOT_IP}"
     if measure_robot_clock_offset; then
         if clock_skew_too_large; then
-            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s (±$(awk -v r="${ROBOT_CLOCK_RTT}" 'BEGIN {printf "%.3f", r / 2}') s) ... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
             echo "         Skew makes Nav2 act on stale robot poses: over-turning, shudder, wall hits."
-            echo "         Fix:  ./wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
+            echo "         Fix:  ./scripts/runtime/wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
             if [ "${ACTION}" = "run" ] && [ "${GO2_ALLOW_CLOCK_SKEW:-0}" != 1 ]; then
                 exit 1
             fi
         else
-            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... OK"
+            echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s (±$(awk -v r="${ROBOT_CLOCK_RTT}" 'BEGIN {printf "%.3f", r / 2}') s) ... OK"
         fi
     else
         echo "[checks] robot clock offset ......................... UNKNOWN (could not read robot clock)"

@@ -31,6 +31,7 @@ Sections are self-contained. Search for the error message you see.
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
 | `(53) The Wi-Fi network could not be found` on the Go2 | No regulatory domain (`country 00`): 5 GHz is passive-scan only | `sudo iw reg set US` + make it permanent. See [Robot Wi-Fi](#the-wi-fi-network-could-not-be-found-53) |
 | `Secrets were required, but not provided` on the Go2 | Wi-Fi profile built in pieces; password unreadable | Delete it and recreate it with one `nmcli connection add`. See [Robot Wi-Fi](#secrets-were-required-but-not-provided) |
+| `robot clock offset … TOO LARGE`, still there after `--sync-clock`, `date -u` matches on both | Old measurement (before 2026-10-28) timed a new SSH connection, so it read +0.2–0.3 s from the handshake | `git pull` the new `wifi_nav.sh`; re-run. Real skew: `./scripts/runtime/wifi_nav.sh --sync-clock`. See [Drift and shudder](navigation/drift-and-shudder.md#1-clock-skew-between-the-jetson-and-the-laptop) |
 | `could not find the Go2 on enp0s3` | DHCP changed / discovery failed | `wifi_nav.sh --robot-ip <IP>` — see [Robot IP not found](#robot-ip-not-found--dhcp-changed) |
 | `DDS discovery failed` (arm) | No DDS match within 20 s | Arm powered and booted? No `--peer`, no ROS sourced; check `diag_arm.sh` |
 | RViz renders slowly | CPU rendering | Close the point cloud display while tuning |
