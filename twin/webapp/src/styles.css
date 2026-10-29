@@ -164,6 +164,10 @@ button { font: inherit; color: inherit; }
 .inspect-status.failed .inspect-dot, .inspect-status.unreachable .inspect-dot,
 .inspect-status.timeout .inspect-dot { background: var(--bad); }
 .tag-inspect { background: rgba(245, 158, 11, .9); color: #1f1300; }
+/* Periscope Scan (ControlPanel.jsx) */
+.periscope { display: flex; align-items: center; gap: 6px; }
+.periscope > .action { flex: 1; min-width: 0; }
+.periscope .orbit-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {
   flex: 1; padding: 8px 10px; border-radius: 999px; cursor: pointer; font-size: 12.5px; white-space: nowrap;

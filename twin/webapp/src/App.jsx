@@ -92,8 +92,16 @@ function Dashboard() {
   // Inspect mode: clicks pick a 3D target for inspection_mission.py instead of a goal.
   const [inspectMode, setInspectModeState] = useState(false);
   const [inspectTarget, setInspectTarget] = useState(null);
-  const setClickToGo = (on) => { setClickToGoState(on); if (on) setInspectModeState(false); };
-  const setInspectMode = (on) => { setInspectModeState(on); if (on) setClickToGoState(false); };
+  // Periscope mode: the next click is a table edge for table_search.py.
+  const [periscopeMode, setPeriscopeModeState] = useState(false);
+  const setClickMode = (mode) => {
+    setClickToGoState(mode === 'go');
+    setInspectModeState(mode === 'inspect');
+    setPeriscopeModeState(mode === 'periscope');
+  };
+  const setClickToGo = (on) => (on ? setClickMode('go') : setClickToGoState(false));
+  const setInspectMode = (on) => (on ? setClickMode('inspect') : setInspectModeState(false));
+  const setPeriscopeMode = (on) => (on ? setClickMode('periscope') : setPeriscopeModeState(false));
   const [follow, setFollow] = useState(false);
   const [stats, setStats] = useState({});
   const [toast, setToast] = useState(null);
@@ -103,6 +111,19 @@ function Dashboard() {
   const sendClick = usePublisher('/clicked_point', 'geometry_msgs/msg/PointStamped');
   const sendInspect = usePublisher('/inspect_point', 'geometry_msgs/msg/PointStamped');
   const sendInspectCmd = usePublisher('/inspection/command', 'std_msgs/msg/String');
+  const sendPeriscope = usePublisher('/periscope_point', 'geometry_msgs/msg/PointStamped');
+  const sendTableCmd = usePublisher('/table_search/command', 'std_msgs/msg/String');
+  // Table mapped (table_search.py): say so and let the user pick the object (Inspect).
+  const tableState = useRef('idle');
+  useTopic('/table_search/status', 'std_msgs/msg/String', (m) => {
+    let st;
+    try { st = JSON.parse(m.data); } catch { return; }
+    if (st.state !== tableState.current) {
+      if (st.state === 'mapped') { say(st.message); setClickMode('inspect'); }
+      else if (st.state === 'failed') say(st.message, 'warn');
+      tableState.current = st.state;
+    }
+  }, { throttle: 300 });
   const sendGoal = usePublisher('/goal_pose', 'geometry_msgs/msg/PoseStamped');
   const sendResume = usePublisher('/explore/resume', 'std_msgs/msg/Bool');
   const sendRoomCmd = usePublisher('/semantic_rooms/command', 'std_msgs/msg/String');
@@ -145,7 +166,9 @@ function Dashboard() {
     return () => { alive = false; clearInterval(id); };
   }, []);
   // Editing rooms takes over clicks from tap-to-go.
-  useEffect(() => { if (editing) { setClickToGoState(false); setInspectModeState(false); } }, [editing]);
+  useEffect(() => {
+    if (editing) { setClickToGoState(false); setInspectModeState(false); setPeriscopeModeState(false); }
+  }, [editing]);
 
   const askRoom = (id) => {
     if (!sendRoomAsk({ data: id })) return;
@@ -224,6 +247,14 @@ function Dashboard() {
   // snaps it to safe floor and sends the Nav2 goal; the pin glides to it.
   const onPick = useStable(({ x, y, z = 0, surface }) => {
     if (inspectMode) { onInspect({ x, y, z, surface }); return; }
+    if (periscopeMode) {
+      if (!sendPeriscope({ header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } }, point: { x, y, z } })) {
+        say('Not connected to the robot', 'warn'); return;
+      }
+      setPeriscopeModeState(false);
+      say('Periscope search: walking to the table edge');
+      return;
+    }
     const ok = sendClick({
       header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } },
       point: { x, y, z },
@@ -264,10 +295,10 @@ function Dashboard() {
       {/* keyed: antialiasing is fixed when the WebGL context is created */}
       <Scene key={quality} quality={quality} fixedFrame={FIXED_FRAME} baseFrame={BASE_FRAME} layers={layers} view={view}
              meshUrl={meshUrl} textured={textured} shadows={shadows} voxelSize={voxelSize}
-             assets={ASSETS} clickToGo={(clickToGo || inspectMode) && connected} follow={follow}
+             assets={ASSETS} clickToGo={(clickToGo || inspectMode || periscopeMode) && connected} follow={follow}
              inspectTarget={inspectTarget}
              waypoint={waypoint} onPick={onPick} onGoal={onGoal} onStats={onStats}
-             rooms={rooms} roomsInteractive={connected && (editing || merging || (!clickToGo && !inspectMode))}
+             rooms={rooms} roomsInteractive={connected && (editing || merging || (!clickToGo && !inspectMode && !periscopeMode))}
              selectedRooms={selected} onRoomClick={onRoomClick} />
 
       <MapMenu view={view} setView={setView} meshes={meshes} meshFile={meshFile} setMeshFile={setMeshFile}
@@ -279,6 +310,8 @@ function Dashboard() {
       <ControlPanel connected={connected} onExplore={setExplore} onDock={returnToDock}
                     clickToGo={clickToGo} setClickToGo={setClickToGo} follow={follow} setFollow={setFollow}
                     inspectMode={inspectMode} setInspectMode={setInspectMode} onCancelInspect={cancelInspect}
+                    periscopeMode={periscopeMode} setPeriscopeMode={setPeriscopeMode}
+                    onTableCmd={(op) => sendTableCmd({ data: JSON.stringify({ op }) })}
                     hasWaypoint={!!waypoint} onClearWaypoint={() => setWaypoint(null)}
                     rooms={rooms.rooms} onGoRoom={goToRoom} />
       <CameraFeed />

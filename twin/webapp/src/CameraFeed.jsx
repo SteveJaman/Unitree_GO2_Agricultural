@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTopic } from './RosProvider.jsx';
+import { useLatest, useTopic } from './RosProvider.jsx';
 
 // JPEG copies made in go2-3d by twin/image_compressor.py: the raw
 // /camera/image_raw (~2.7 MB per 720p frame) is too heavy for rosbridge.
 const SOURCES = {
   camera: { label: 'Live', topic: '/twin/camera/compressed' },
   yolo: { label: 'AI', topic: '/twin/yolo/compressed' },
+  // D1 wrist camera (not mounted yet), JPEG copy of /wrist_camera/image_raw.
+  wrist: { label: 'Wrist', topic: '/twin/wrist_camera/compressed', empty: 'Wrist camera not mounted' },
 };
+// While the arm looks at something (periscope, inspection scan), show its camera.
+const ARM_LOOKING = { table: ['raising', 'mapping', 'mapped'], inspect: ['scanning'] };
 
 /** Picture-in-picture camera, bottom right; click to enlarge. */
 export default function CameraFeed() {
@@ -16,6 +20,12 @@ export default function CameraFeed() {
   const [now, setNow] = useState(Date.now());
   const img = useRef();
   const url = useRef(null);
+  const [table] = useLatest('/table_search/status', 'std_msgs/msg/String', { throttle: 1000 });
+  const [inspect] = useLatest('/inspection/status', 'std_msgs/msg/String', { throttle: 1000 });
+  const looking = [[table, ARM_LOOKING.table], [inspect, ARM_LOOKING.inspect]].some(([m, states]) => {
+    try { return m && states.includes(JSON.parse(m.data).state); } catch { return false; }
+  });
+  useEffect(() => { if (looking) setSource('wrist'); }, [looking]);
 
   useTopic(SOURCES[source].topic, 'sensor_msgs/msg/CompressedImage', (m) => {
     if (!img.current) return;
@@ -41,7 +51,7 @@ export default function CameraFeed() {
   return (
     <div className={`pip ${big ? 'big' : ''}`}>
       <img ref={img} alt="" style={{ visibility: live ? 'visible' : 'hidden' }} onClick={() => setBig(!big)} />
-      {!live && <div className="pip-empty">Camera unavailable</div>}
+      {!live && <div className="pip-empty">{SOURCES[source].empty || 'Camera unavailable'}</div>}
       <div className="pip-bar">
         {live && <span className="live"><span className="live-dot" />LIVE</span>}
         <div className="pip-tabs">

@@ -9,7 +9,9 @@ the wrist counter-rotating, then home. /d1_arm/status reports it like
 scripts/nodes/arm_state_bridge.py. --tf also places the robot (lidar3d_map ->
 base_link) and walks it to each /goal_pose (0.3 m/s, turning to face the goal's
 yaw on arrival), so the dashboard's Inspect mode and inspection_mission.py run
-end to end; {"op": "scan_target"} plays a short aim-and-sweep as job "scan".
+end to end; {"op": "scan_target"} plays a short aim-and-sweep as job "scan",
+{"op": "periscope"} rises into arm_periscope.py's pose and holds it (job
+"periscope", running until stopped or a scan / orbit takes over).
 """
 
 import argparse
@@ -29,6 +31,7 @@ from tf2_ros import TransformBroadcaster
 # As scripts/nodes/orbit_scan.py (degrees, joints 0-5).
 SCAN_POSE = [0.0, -40.0, 60.0, 0.0, 30.0, 0.0]
 BASE_START, BASE_END, STEPS, WRIST_GAIN = -90.0, 90.0, 30, 0.8
+PERISCOPE_POSE = [0.0, 10.0, -45.0, 0.0, 80.0, 0.0]  # as scripts/nodes/arm_periscope.py
 ARM_JOINTS = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6', 'Joint7_1', 'Joint7_2']
 
 
@@ -124,6 +127,7 @@ class MockArm(Node):
         self.base = [0.0, 0.0, 0.0]  # x, y, yaw of the fake dog
         self.goal = None
         self.job = None
+        self.hold = False  # periscope: keep 'running' after the move, until stopped
         self.pose = [0.0] * 6
         self.plan = []  # [(t_end, start, target)] still to run
         self.state = 'idle'
@@ -136,6 +140,12 @@ class MockArm(Node):
         try:
             op = json.loads(msg.data).get('op')
         except (ValueError, AttributeError):
+            return
+        if op in ('scan_target', 'orbit') and self.job == 'periscope' and self.state == 'running':
+            self.plan, self.state, self.hold = [], 'stopped', False   # a real scan takes over
+        if op == 'periscope' and not self.plan and self.state != 'running':
+            self.start_plan('periscope', [list(PERISCOPE_POSE)], step=self.STEP_S)
+            self.hold = True
             return
         if op == 'scan_target' and not self.plan:
             # Stand-in for arm_ik_scanner.py (no ikpy here): look forward-down, sweep, home.
@@ -152,7 +162,8 @@ class MockArm(Node):
                 targets.append(t)
             targets.append([0.0] * 6)
             self.start_plan('orbit', targets, step=self.STEP_S)
-        elif op == 'stop' and self.plan:
+        elif op == 'stop' and (self.plan or self.hold):
+            self.hold = False
             self.plan = [(time.monotonic() + self.MOVE_S, self.MOVE_S, list(self.pose), [0.0] * 6)]
             self.state = 'stopped'
             self.get_logger().info('orbit scan stopped: homing')
@@ -197,7 +208,7 @@ class MockArm(Node):
             self.walk(0.05)
         while self.plan and now >= self.plan[0][0]:
             self.pose = list(self.plan.pop(0)[3])
-            if not self.plan and self.state == 'running':
+            if not self.plan and self.state == 'running' and not self.hold:
                 self.state = 'done'
         if self.plan:
             t_end, dur, start, target = self.plan[0]

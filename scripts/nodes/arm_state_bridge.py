@@ -16,12 +16,20 @@ Arm source, like start_arm.sh:
             arm_bridge_wifi.py (ARM_BRIDGE_PORT + 1), which never blocks
             start_arm.sh's own connection
 
-It also listens on /d1_arm/command (std_msgs/String, JSON):
-    {"op": "orbit"}   run ./scripts/runtime/start_arm.sh orbit --yes
-    {"op": "stop"}    Ctrl+C that run: orbit_scan.py homes, then releases
+It also runs one arm job at a time from /d1_arm/command (std_msgs/String, JSON):
+    {"op": "orbit"}   ./scripts/runtime/start_arm.sh orbit --yes (Orbit Scan button)
+    {"op": "scan_target", "target": [dx, dy, dz]}
+                      start_arm.sh scan --target dx dy dz --yes: IK aim at a point
+                      in the Go2's base_link (inspection_mission.py)
+    {"op": "periscope", "hold": s}
+                      start_arm.sh periscope --hold s --yes (0: until stopped):
+                      camera high, 45 deg down (table_search.py). An orbit or
+                      scan_target takes over from a periscope hold.
+    {"op": "stop"}    Ctrl+C the job: the script homes, then releases
 and reports on /d1_arm/status (std_msgs/String, JSON) every second:
-    {"arm": true|false, "orbit": "idle"|"running"|"done"|"failed"|"stopped"}
---no-commands turns the button off (status only).
+    {"arm": true|false, "orbit": "idle"|"running"|"done"|"failed"|"stopped",
+     "job": "orbit"|"scan"|"periscope"|null}   ("orbit": state of the last job)
+--no-commands turns the commands off (status only).
 
 Joint names are the D1 URDF's (Joint1..Joint6, fingers Joint7_1/Joint7_2):
 protocol angle i -> Joint(i+1) in radians, as in gazebo/sim/d1_arm_emulator.py.
@@ -311,8 +319,18 @@ class Orbit:
                 flush=True,
             )
             return
+        if op in ("orbit", "scan_target") and self.proc and self.job == "periscope":
+            # A periscope hold gives way to a real scan (table_search -> Inspect).
+            self.stop()
+            self.poll()
         if op == "orbit" and not self.proc:
             self._run("orbit", ["orbit"])
+        elif op == "periscope" and not self.proc:
+            try:
+                hold = max(0.0, min(600.0, float(msg.get("hold", 0))))
+            except (TypeError, ValueError):
+                hold = 0.0
+            self._run("periscope", ["periscope", "--hold", f"{hold:.0f}"])
         elif op == "scan_target" and not self.proc:
             try:
                 target = [float(v) for v in msg.get("target", [])]

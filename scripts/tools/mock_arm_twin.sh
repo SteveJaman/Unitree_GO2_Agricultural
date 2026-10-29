@@ -6,7 +6,9 @@
 # arm sits on its back, and the dashboard's Orbit Scan button plays the same
 # sweep as scripts/nodes/orbit_scan.py. scripts/nodes/inspection_mission.py
 # runs too: Inspect + a click walks the fake dog there and plays a fake arm
-# scan (no costmap here, so goals are not snapped). ROS stays on its own
+# scan (no costmap here, so goals are not snapped); scripts/nodes/table_search.py
+# and the arm's TF too, so Periscope Scan + a click walks there and raises the
+# arm into the periscope pose. ROS stays on its own
 # domain, localhost only, so it never meets a real session.
 #
 # Usage:
@@ -47,5 +49,10 @@ docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id 
         python3 -m http.server '"${WEB_PORT}"' --bind 0.0.0.0 --directory /tmp/view >/tmp/web.log 2>&1 &
         ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:='"${WS_PORT}"' >/tmp/rosbridge.log 2>&1 &
         python3 -u /nodes/inspection_mission.py >/tmp/inspection.log 2>&1 &
+        python3 -u /nodes/table_search.py >/tmp/table_search.log 2>&1 &
+        python3 /twin/d1_tf_urdf.py /twin/webapp/public/d1_description/urdf/d1_description.urdf > /tmp/d1_tf.urdf
+        ros2 run robot_state_publisher robot_state_publisher --ros-args -r __node:=d1_state_publisher \
+            -p robot_description:="$(cat /tmp/d1_tf.urdf)" -r robot_description:=/d1_arm/robot_description \
+            -r joint_states:=/d1_arm/joint_states >/tmp/d1_tf.log 2>&1 &
         trap "kill 0" EXIT
         exec python3 -u /cmu-legacy/mock_sim.py --arm --tf'

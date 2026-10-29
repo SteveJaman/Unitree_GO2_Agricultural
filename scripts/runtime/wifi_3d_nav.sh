@@ -36,7 +36,9 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --no-explore    # click-to-go only (no explorer, so no survey)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-ai         # 3D map only: no YOLO, VLM or battery docking
 #   ./scripts/runtime/wifi_3d_nav.sh --no-yolo       # leave one AI node out (also --no-vlm, --no-battery,
-#                                                    #   --no-inspect)
+#                                                    #   --no-inspect, --no-periscope)
+#   ./scripts/runtime/wifi_3d_nav.sh --wrist-camera  # D1 wrist camera mounted: its depth cloud
+#                                                    #   (/wrist_camera/depth/points) marks the costmap
 #                      The AI also: adds /yolo/obstacles to the Nav2 costmap config
 #                      (add-yolo-costmap-source.sh), VLM BLOCKED -> pause + dock,
 #                      and auto-localization at the dock.
@@ -140,7 +142,8 @@ while [ $# -gt 0 ]; do
         --no-build)   TWIN_AUTO_BUILD="0" ;;
         --no-explore|--plan|--nav)
                       SURVEY_AUTO="0"; PASSTHRU+=("$1") ;;   # no explorer: nothing for the survey to drive
-        --no-yolo|--no-vlm|--no-battery|--no-inspect)
+        --wrist-camera) TWIN_WRIST_CAMERA=1 ;;
+        --no-yolo|--no-vlm|--no-battery|--no-inspect|--no-periscope)
                       NO_AI+=("${1#--no-}") ;;
         --resume)     RESUME="true" ;;
         --no-localize) NO_LOCALIZE="true" ;;
@@ -174,6 +177,8 @@ TWIN_YOLO="${TWIN_YOLO:-$(ai_default yolo)}"
 TWIN_VLM="${TWIN_VLM:-$(ai_default vlm)}"
 TWIN_BATTERY="${TWIN_BATTERY:-$(ai_default battery)}"
 TWIN_INSPECT="${TWIN_INSPECT:-$(ai_default inspect)}"
+TWIN_PERISCOPE="${TWIN_PERISCOPE:-$(ai_default periscope)}"
+TWIN_WRIST_CAMERA="${TWIN_WRIST_CAMERA:-0}"
 TWIN_ARM="${TWIN_ARM:-1}"
 TWIN_BATTERY_LOW="${TWIN_BATTERY_LOW:-15}"
 TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
@@ -492,6 +497,7 @@ start_twin_when_ready() {
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
             -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" -e TWIN_INSPECT="${TWIN_INSPECT}" \
+            -e TWIN_PERISCOPE="${TWIN_PERISCOPE}" -e TWIN_WRIST_CAMERA_TF \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
             -v "${TWIN_DIR}:/twin:ro" -v "${NODES_DIR}:/nodes:ro" "${camera_args[@]}" \
@@ -625,6 +631,15 @@ if [ "${TWIN_YOLO}" = 1 ]; then
     fi
 fi
 
+# --wrist-camera: the D1 wrist camera's depth cloud also marks Nav2's costmap
+# (add-wrist-costmap-source.sh, idempotent; --undo there removes it).
+if [ "${TWIN_WRIST_CAMERA}" = 1 ]; then
+    echo "[3d] Adding /wrist_camera/depth/points to the Nav2 costmap config (add-wrist-costmap-source.sh)..."
+    NAV2_WIFI_DIR="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" \
+        bash "${REPO_DIR}/scripts/tools/add-wrist-costmap-source.sh" 2>&1 | sed 's/^/    /' \
+        || echo "[3d] WARN: wrist costmap patch failed; continuing without it"
+fi
+
 T0="$(date +%s)"
 if [ "${RESUME}" = "true" ]; then
     # Continue the newest map: RTAB-Map opens the existing database, adds this
@@ -656,6 +671,7 @@ echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialp
 echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
 echo "  Inspect     : $( [ "${TWIN_INSPECT}" = 1 ] && echo "on: dashboard Inspect -> walk to the point -> IK arm scan (inspection.log)" || echo "off (--ai)" )"
+echo "  Periscope   : $( [ "${TWIN_PERISCOPE}" = 1 ] && echo "on: dashboard Periscope Scan -> table edge -> arm periscope pose (table_search.log)" || echo "off (--ai)" ); wrist camera $( [ "${TWIN_WRIST_CAMERA}" = 1 ] && echo "in the costmap" || echo "not in the costmap (--wrist-camera)" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"

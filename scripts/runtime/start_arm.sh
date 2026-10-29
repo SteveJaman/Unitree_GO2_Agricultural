@@ -18,6 +18,7 @@
 #   ./start_arm.sh sweep --pct 90 --yes
 #   ./start_arm.sh orbit                      # orbit scan around a table-top object
 #   ./start_arm.sh scan --target 0.55 0 0     # IK: aim the camera at a point (base_link, m) and sweep
+#   ./start_arm.sh periscope                  # lift the camera, look 45 deg down, hold until Ctrl+C
 #   ./start_arm.sh --calibrate --test-deg 10 --yes
 #   ./start_arm.sh --robot 192.168.1.9 fold   # arm on the Go2, over Wi-Fi
 #
@@ -104,6 +105,7 @@ CALIBRATE="${REPO_ROOT}/scripts/tools/calibrate_arm.py"
 FOLD="${REPO_ROOT}/scripts/nodes/d1_arm_calibration.py"
 ORBIT="${REPO_ROOT}/scripts/nodes/orbit_scan.py"
 IK_SCAN="${REPO_ROOT}/scripts/nodes/arm_ik_scanner.py"
+PERISCOPE="${REPO_ROOT}/scripts/nodes/arm_periscope.py"
 
 preflight() {
     local fail=0
@@ -175,6 +177,11 @@ case "$cmd" in
         shift
         preflight || { echo "[!] preflight failed"; exit 1; }
         exec python3 "$ORBIT" --iface "$ARM_IFACE" --skip-preflight "$@"
+        ;;
+    --periscope|periscope)
+        shift
+        preflight || { echo "[!] preflight failed"; exit 1; }
+        exec python3 "$PERISCOPE" --iface "$ARM_IFACE" --skip-preflight "$@"
         ;;
     --scan|scan)
         shift

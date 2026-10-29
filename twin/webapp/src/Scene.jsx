@@ -68,8 +68,10 @@ function Scene({
   }, { throttle: 50 });
   // D1 arm angles (arm_state_bridge.py, from the arm's rt/arm_Feedback).
   const armJoints = useRef(new Map());
+  const armSeen = useRef(0);   // last /d1_arm/joint_states (ms): live vs. resting pose
   useTopic('/d1_arm/joint_states', 'sensor_msgs/msg/JointState', (m) => {
     (m.name || []).forEach((n, i) => armJoints.current.set(n, m.position[i]));
+    armSeen.current = Date.now();
   }, { throttle: 50 });
   // Inspection target (inspection_mission.py) and its state, for the marker.
   const [inspect, setInspect] = useState(null);
@@ -195,7 +197,7 @@ function Scene({
           <Pin key={`place-${p.label}`} x={p.x} y={p.y} z={floorZ ?? p.z ?? 0} label={p.label.replace(/_/g, ' ')} kind="place" />
         ))}
         <Robot tf={tf} fixed={fixedFrame} base={baseFrame} follow={follow} joints={joints} lambert={q.material === 'lambert'}
-               armJoints={layers.arm !== false ? armJoints : null} />
+               armJoints={layers.arm !== false ? armJoints : null} armSeen={armSeen} />
         <ClickPlane enabled={clickToGo} onPick={onPick} />
       </group>
     </Canvas>
@@ -433,7 +435,7 @@ function Dock() {
  * newest one (exponential lerp / slerp) instead of jumping; jumps > 2 m
  * (relocalization) snap.
  */
-function Robot({ tf, fixed, base, follow, joints, lambert, armJoints }) {
+function Robot({ tf, fixed, base, follow, joints, lambert, armJoints, armSeen }) {
   const ref = useRef();
   const s = useMemo(() => ({
     pos: new THREE.Vector3(), quat: new THREE.Quaternion(), tpos: new THREE.Vector3(),
@@ -470,7 +472,7 @@ function Robot({ tf, fixed, base, follow, joints, lambert, armJoints }) {
       <Go2Model joints={joints} lambert={lambert} fallback={<StandIn />} />
       {armJoints && (
         <group position={D1_MOUNT}>
-          <D1Model joints={armJoints} lambert={lambert} />
+          <D1Model joints={armJoints} seen={armSeen} lambert={lambert} />
         </group>
       )}
       {/* Red navigation arrow above the body, pointing along +x (heading);

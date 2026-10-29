@@ -18,6 +18,11 @@
 #   * auto_localize       (TWIN_AUTOLOCALIZE=1) one-shot /initialpose at the dock
 #   * room_segmentation   (TWIN_ROOMS=1) costmap -> rooms (/semantic_rooms), names
 #                         and merges from the dashboard -> config/semantic_rooms.json
+#   * d1_state_publisher  TF for the D1 arm (d1_* links, wrist_camera_optical_frame)
+#                         from /d1_arm/joint_states (d1_tf_urdf.py + robot_state_publisher)
+#   * wrist compressor    /wrist_camera/image_raw -> /twin/wrist_camera/compressed (dashboard)
+#   * table_search        (TWIN_PERISCOPE=1, --ai) dashboard Periscope Scan: table edge ->
+#                         0.6 m stand-off -> arm periscope pose -> "Table mapped"
 #   * inspection_mission  (TWIN_INSPECT=1, --ai) dashboard Inspect: /inspect_point ->
 #                         walk there facing it -> IK-aim the D1 arm at it (arm_ik_scanner.py)
 #   * survey_manager      (TWIN_SURVEY=1) autonomous survey: explore, rooms, visit and
@@ -103,6 +108,8 @@ TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_ROOMS="${TWIN_ROOMS:-1}"
 TWIN_SURVEY="${TWIN_SURVEY:-1}"
 TWIN_INSPECT="${TWIN_INSPECT:-0}"
+TWIN_PERISCOPE="${TWIN_PERISCOPE:-0}"
+TWIN_WRIST_CAMERA_TF="${TWIN_WRIST_CAMERA_TF:-0 0 0.09 0 0 0}"
 TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}"
 TWIN_ROOM_DOOR_WIDTH="${TWIN_ROOM_DOOR_WIDTH:-0.9}"
 TWIN_ROOM_MIN_AREA="${TWIN_ROOM_MIN_AREA:-1.5}"
@@ -203,6 +210,31 @@ if [ "$TWIN_SURVEY" = 1 ]; then
         -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" \
         -p map_frame:="$TWIN_MAP_FRAME" -p base_frame:="$TWIN_BASE_FRAME" \
         -p database:="$TWIN_DB"
+fi
+
+# D1 arm TF (d1_* links + the wrist camera frames) from /d1_arm/joint_states
+# (arm_state_bridge.py on the host, through rosbridge). Its own node name and
+# robot_description topic: the session's Go2 robot_state_publisher is untouched.
+D1_URDF=/twin/webapp/public/d1_description/urdf/d1_description.urdf
+[ -f /twin/webapp/dist/d1_description/urdf/d1_description.urdf ] && D1_URDF=/twin/webapp/dist/d1_description/urdf/d1_description.urdf
+if python3 /twin/d1_tf_urdf.py "$D1_URDF" "$TWIN_WRIST_CAMERA_TF" > /tmp/d1_tf.urdf 2>/logs/d1_tf.log; then
+    start d1_tf "$(exe robot_state_publisher robot_state_publisher)" --ros-args -r __node:=d1_state_publisher \
+        -p robot_description:="$(cat /tmp/d1_tf.urdf)" \
+        -r robot_description:=/d1_arm/robot_description -r joint_states:=/d1_arm/joint_states
+else
+    echo "[go2-3d] WARN: no D1 TF (see /logs/d1_tf.log)"
+fi
+# Wrist camera (once mounted): JPEG copy for the dashboard's Wrist view.
+if [ "$TWIN_ROSBRIDGE" = 1 ]; then
+    start wrist_compressor python3 -u /twin/image_compressor.py --ros-args -r __node:=wrist_compressor \
+        -p "pairs:=[\"/wrist_camera/image_raw:/twin/wrist_camera/compressed\"]"
+fi
+
+# Periscope search: a table edge from the dashboard -> 0.6 m stand-off ->
+# arm periscope pose (wrist camera over the table) -> "Table mapped".
+if [ "$TWIN_PERISCOPE" = 1 ]; then
+    start table_search python3 -u /nodes/table_search.py --ros-args \
+        -p map_frame:="$TWIN_MAP_FRAME" -p base_frame:="$TWIN_BASE_FRAME"
 fi
 
 # Inspection: a 3D point from the dashboard -> stand-off goal facing it -> arm scan.

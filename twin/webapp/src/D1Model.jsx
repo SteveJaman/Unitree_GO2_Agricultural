@@ -10,6 +10,12 @@ const URDF = './d1_description/urdf/d1_description.urdf';
 const PACKAGES = { d1_description: './d1_description' };
 // The wrist camera's field of view, drawn from the gripper along Link6 +z.
 const CAMERA = { offset: 0.09, range: 0.45, fovDeg: 60 };
+// Without live angles (no arm_state_bridge, arm off): the arm's real resting
+// pose, FOLDED_ANGLES of scripts/nodes/d1_arm_calibration.py (deg, joints 0-5),
+// drawn translucent so it never passes for a live reading.
+const FOLDED_DEG = [1.8, -88.8, 91.8, 1.3, 23.0, 0.6];
+const FOLDED = Object.fromEntries(FOLDED_DEG.map((d, i) => [`Joint${i + 1}`, THREE.MathUtils.degToRad(d)]));
+const LIVE_MS = 2000;
 
 let robotPromise = null;
 /** The URDF and its meshes, loaded once for the whole page. */
@@ -54,11 +60,13 @@ function cameraCone() {
 
 /**
  * The D1 arm on the Go2's back, its joints driven by `joints` (a ref to a Map
- * name -> position, filled from /d1_arm/joint_states). Positions glide toward
- * the newest value every frame, so 10 Hz telemetry still sweeps smoothly.
+ * name -> position, filled from /d1_arm/joint_states; `seen`: a ref to the
+ * time of the last message). Positions glide toward the newest value every
+ * frame, so 10 Hz telemetry still sweeps smoothly, like the dog's pose. With
+ * no message for 2 s the arm settles into its folded resting pose, translucent.
  * Renders nothing while loading or if the model files are missing.
  */
-export default function D1Model({ joints, lambert = false, cone = true }) {
+export default function D1Model({ joints, seen, lambert = false, cone = true }) {
   const [robot, setRobot] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -88,12 +96,19 @@ export default function D1Model({ joints, lambert = false, cone = true }) {
 
   useFrame((_, dt) => {
     if (!built) return;
-    if (built.coneObj) built.coneObj.visible = cone;
     const a = 1 - Math.exp(-dt * 12);
-    const live = joints?.current;
+    const isLive = !!seen && Date.now() - seen.current < LIVE_MS;
+    if (material.transparent === isLive) {   // live: solid; resting guess: translucent
+      material.transparent = !isLive;
+      material.opacity = isLive ? 1 : 0.4;
+      material.depthWrite = isLive;
+      material.needsUpdate = true;
+    }
+    if (built.coneObj) built.coneObj.visible = cone && isLive;
+    const live = isLive ? joints?.current : null;
     for (const m of built.movers) {
       let target = live?.get(m.joint.name);
-      if (target === undefined) target = 0;
+      if (target === undefined) target = FOLDED[m.joint.name] ?? 0;
       if (Number.isFinite(m.lo) && Number.isFinite(m.hi) && m.hi > m.lo) {
         target = Math.min(m.hi, Math.max(m.lo, target));
       }
