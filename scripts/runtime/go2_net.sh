@@ -209,17 +209,26 @@ _go2_pick() {
 # --setup-ssh has pinned the robot's key, the answer must prove it is the Go2
 # (MAC prefix or that key); before that, Wi-Fi + ping. Prints the IP.
 go2_robot_by_name() {
-    local h ip
-    for h in "${GO2_ROBOT_HOSTNAME}.local" "${GO2_ROBOT_HOSTNAME}"; do
-        ip="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1; exit}' || true)"
-        [ -n "${ip}" ] && [ "${ip}" != "${GO2_HOST_IP}" ] || continue
-        if ssh-keygen -F go2-robot >/dev/null 2>&1; then
-            go2_is_go2 "${ip}" || { go2_log "[net] ${h} -> ${ip} is not the Go2 (SSH key differs); skipped"; continue; }
-        elif ! { go2_on_wifi_segment "${ip}" && go2_ping "${ip}"; }; then
-            continue
-        fi
-        go2_log "[net] Robot found by hostname ${h} -> ${ip}"
-        echo "${ip}"; return 0
+    local h ip try seen=" "
+    # The Jetson announces the name for its Wi-Fi AND its internal wired
+    # address (192.168.123.18); which answer comes first varies. Ask a few
+    # times and keep only an address on this Wi-Fi segment.
+    for try in 1 2 3; do
+        for h in "${GO2_ROBOT_HOSTNAME}.local" "${GO2_ROBOT_HOSTNAME}"; do
+            for ip in $(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1}' | sort -u); do
+                [ "${ip}" != "${GO2_HOST_IP}" ] && [[ "${seen}" != *" ${ip} "* ]] || continue
+                seen+="${ip} "
+                go2_on_wifi_segment "${ip}" || continue
+                if ssh-keygen -F go2-robot >/dev/null 2>&1; then
+                    go2_is_go2 "${ip}" || { go2_log "[net] ${h} -> ${ip} is not the Go2 (SSH key differs); skipped"; continue; }
+                elif ! go2_ping "${ip}"; then
+                    continue
+                fi
+                go2_log "[net] Robot found by hostname ${h} -> ${ip}"
+                echo "${ip}"; return 0
+            done
+        done
+        [ "${try}" -lt 3 ] && sleep 0.3
     done
     return 1
 }

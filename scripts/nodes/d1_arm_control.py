@@ -108,8 +108,83 @@ def default_arm_iface():
 
 
 def robot_host():
-    """The Go2's Wi-Fi IP when the arm is reached through its bridge, else None."""
-    return os.environ.get("ARM_ROBOT") or None
+    """The Go2's Wi-Fi IP when the arm is reached through its bridge, else None.
+
+    ARM_ROBOT if set. Otherwise, like start_arm.sh: if the wired arm port has
+    no cable link, the arm is taken to be plugged into the Go2, found by name
+    (GO2_ROBOT_HOSTNAME, default ubuntu -> ubuntu.local), and its bridge is
+    started if needed. So teach_arm.py, play_arm.py, ... work either way.
+    """
+    return os.environ.get("ARM_ROBOT") or _auto_robot()
+
+
+_AUTO_ROBOT = None  # "" once looked up and not used
+
+
+def _robot_wifi_ip(name):
+    """The Go2's Wi-Fi address: `name` (mDNS), else wifi_nav.sh's cached IP.
+
+    The Jetson announces the name for its Wi-Fi and its internal wired address
+    (192.168.123.x, the arm's subnet); which answer comes first varies, so ask
+    a few times and skip the internal one.
+    """
+    for _ in range(3):
+        try:
+            addrs = {a[4][0] for a in socket.getaddrinfo(name, None, socket.AF_INET)}
+        except OSError:
+            addrs = set()
+        wifi = sorted(a for a in addrs if not a.startswith("192.168.123."))
+        if wifi:
+            return wifi[0]
+        time.sleep(0.3)
+    cache = os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+        "go2_wifi_nav",
+        "robot_ip",
+    )
+    try:
+        with open(cache) as f:
+            return f.readline().strip() or None
+    except OSError:
+        return None
+
+
+def _auto_robot():
+    global _AUTO_ROBOT
+    if _AUTO_ROBOT is not None:
+        return _AUTO_ROBOT or None
+    _AUTO_ROBOT = ""
+    iface = os.environ.get("ARM_IFACE") or default_arm_iface()
+    try:
+        with open(f"/sys/class/net/{iface}/carrier") as f:
+            if f.read().strip() == "1":
+                return None  # cable link: the arm is wired here
+    except OSError:
+        pass
+    name = os.environ.get("GO2_ROBOT_HOSTNAME", "ubuntu") + ".local"
+    ip = _robot_wifi_ip(name)
+    if not ip:
+        print(
+            f"[arm] {iface} has no cable link and {name} has no Wi-Fi address: "
+            "is the dog on the same Wi-Fi? (or set ARM_ROBOT=<Go2 IP>)"
+        )
+        return None
+    print(
+        f"[arm] {iface} has no cable link; using the arm through the Go2 at {ip} ({name})"
+    )
+    try:
+        socket.create_connection((ip, BRIDGE_PORT), timeout=3).close()
+    except OSError:
+        start_arm = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "runtime",
+            "start_arm.sh",
+        )
+        print("[arm] starting the arm bridge on the Go2 (start_arm.sh --check)...")
+        subprocess.run([start_arm, "--robot", ip, "--check"], timeout=90, check=False)
+    _AUTO_ROBOT = ip
+    os.environ["ARM_ROBOT"] = ip
+    return ip
 
 
 class TcpLink:
