@@ -39,8 +39,7 @@ camera relay ─► /camera/image_raw ──────────────
                                                       yolo_node (YOLO11s) ─► /yolo/detections, /yolo/image,
 Nav2 costmap ◄── /yolo/obstacles (auto with --ai) ◄──     /yolo/markers, /yolo/obstacles     (--ai)
                                                       vlm_reasoning_node ─► Ollama ─► /vlm_decision (--ai)
-explorer, Nav2 ◄── /recovery/sidestep, /explore/resume ┘ (2x BLOCKED → sidestep, else pause + dock)
-stuck recovery ◄─► /vlm_verify_request / _result ──┘ (costmap blocked ahead: camera checks, LiDAR ghost → clear + retry)
+explorer, Nav2 ◄── /explore/resume False, /goal_pose ─┘ (2x BLOCKED → pause + dock)
 /cmd_vel ◄──────────────────────────────────────────── go2_teleop ◄── /teleop/joy, /teleop/command (dashboard Drive pad)
                                                       auto_localize ─► /initialpose (0,0,0) once (--ai / --resume)
 Nav2 ◄── /goal_pose ◄───────────────────────────────── go2_click_to_goal ◄── /clicked_point
@@ -251,14 +250,14 @@ iterations, see [Developing the dashboard](#developing-the-dashboard).
 ./scripts/runtime/wifi_3d_nav.sh --sim            # against the Gazebo simulation
 ```
 
-**Drive mode: always `hybrid`.** Nav2 drives the dog facing forward, like
-a differential robot, so the LiDAR on its head looks where it walks. It steps
-back or sideways only to get unstuck (stuck recovery, the VLM sidestep) and
-when you use the Drive pad. `--drive`, `--diff` and `--omni` are ignored here,
-with a message. In the sim, `omni` explored worse and `hybrid` matched `diff`
-plus an escape when a wall is behind the dog
-([locomotion comparison](../navigation/locomotion_comparison.md)). To
-compare modes, use `wifi_nav.sh --drive …`.
+**Drive mode: `hybrid` by default.** Nav2 drives the dog facing forward,
+like a differential robot, so the LiDAR on its head looks where it walks. It
+steps back or sideways only to get unstuck (stuck recovery) and when you use
+the Drive pad. `--omni` (MPPI: also reverses and sidesteps while driving),
+`--diff` or `--drive diff|hybrid|omni` pick another mode, as in `wifi_nav.sh`;
+the banner shows it (`Drive : omni (...)`). In the sim, `omni` explored worse
+and `hybrid` matched `diff` plus an escape when a wall is behind the dog
+([locomotion comparison](../navigation/locomotion_comparison.md)).
 
 Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 `--no-camera`, …). The 3D-specific options are:
@@ -368,58 +367,19 @@ desk?…"*.
 - It asks every 5 s at most, and only after the previous answer has arrived.
 - While Ollama is unreachable it logs a warning and publishes nothing.
 
-**It acts on `BLOCKED`: an emergency sidestep.** After `TWIN_VLM_CONFIRM` (2)
-`BLOCKED` answers in a row:
+**It acts on `BLOCKED`.** After `TWIN_VLM_CONFIRM` (2) `BLOCKED` answers in a
+row:
 
-1. It shows the same frame to the model again with a different question:
-   *"CLEAR, BLOCKED LEFT or BLOCKED RIGHT"*. **Unless this second look also
-   says BLOCKED, nothing happens.** In a corridor lined with cabinets,
-   `llava:7b` said BLOCKED to 48 of 63 frames (run 2026-10-30), so one prompt
-   alone is not enough.
-2. It sends that side to
-   [`go2_stuck_recovery.py`](../../scripts/nodes/go2_stuck_recovery.py)
-   (`/recovery/sidestep`). Recovery acts only while Nav2 is driving (Auto
-   Explore on, or a goal running), and at most twice in 2 minutes; otherwise
-   nothing happens, not even docking. It checks the side in the local costmap,
-   and if it is occupied or unknown it tries the other side. The camera picks
-   the side, but the costmap has the last word, so the dog never steps into
-   something the LiDAR sees.
-3. If a side is free, recovery pauses Nav2 (the explorer, or the current goal),
-   steps 0.35 m sideways at 0.12 m/s, and lets Nav2 continue from there: the
-   explorer resumes, or your goal is re-sent (this does not use up its
-   retries). The VLM waits 20 s before it can act again.
-4. If neither side is free (or recovery does not answer within 20 s), it falls
-   back to the old action: `False` on `/explore/resume`, then `/goal_pose` to
-   the dock (`TWIN_DOCK`, default 0 0 0), then 60 s before acting again. The
-   explorer is not restarted; click START in the dashboard.
+1. It publishes `False` on `/explore/resume`, so the explorer stops and
+   cancels its goal.
+2. One second later it publishes `/goal_pose` to the dock (`TWIN_DOCK`,
+   default 0 0 0).
+3. It then waits 60 s before it can act again.
 
-`TWIN_VLM_BLOCKED=dock` skips the sidestep and always docks. Any other
-answer resets the count, since a single misread frame must not abort a
-mission. `TWIN_VLM_ACT=0` makes the VLM report only. Nothing happens while
-the dashboard's **Drive** pad has control. `HYDROPONIC` does not trigger
-anything yet.
-
-**It checks LiDAR obstacles (no lower thresholds).** The LiDAR sometimes
-marks obstacles that are not there: reflections, dust, a smeared scan. Then
-Nav2 aborts a leg with *"collision ahead"* although there is room. Lowering
-the costmap thresholds would hide real obstacles too, so instead, when a leg
-is aborted **and the costmap is blocked right in front of the dog**, stuck
-recovery asks the VLM first (`/vlm_verify_request`, answered ahead of the
-routine check):
-
-| Camera says | Meaning | Recovery does |
-|---|---|---|
-| `CLEAR` | a LiDAR ghost | clears both Nav2 costmaps, re-sends the goal (twice per goal at most; then the usual step back) |
-| `BLOCKED LEFT` / `RIGHT` | a real obstacle | sidesteps that way (the other way if the costmap says it is occupied), re-sends the goal |
-| no answer in 25 s / unsure | | the usual recovery: step back or aside, retry |
-
-The dashboard shows each step as a toast (*Checking the obstacle with the
-camera*, *LiDAR ghost: camera sees the way clear*, *Stepping round the
-obstacle*). Limits: the camera only sees forward and above the floor, so
-something low or right at the dog's feet may be missed. A ghost that comes
-back after the clear stops the dog again, and after two clears per goal
-recovery falls back to stepping away. A real obstacle the LiDAR sees always
-wins, because sidesteps only go into free costmap space.
+Any other answer resets the count, since a single misread frame must not
+abort a mission. The explorer is not restarted automatically; click START in
+the dashboard. `TWIN_VLM_ACT=0` makes the VLM report only. `HYDROPONIC`
+does not trigger anything yet.
 
 Ollama setup (once):
 
@@ -690,7 +650,7 @@ as frosted-glass panels, and no topic names or frame IDs are shown:
 | Where | What | Behind it |
 |---|---|---|
 | **Top left** | Brand, map style (**Solid** / **3D Scan** / **Points**), ⚙ settings: performance mode, real colours, shadows, detail (voxel size), layers (map, live scan, detected objects, places & labels), triangle count and frame rate | |
-| **Top centre** | **AI vision**: a toast for 5 s when the VLM reports *Path blocked* or *Hydroponic station spotted*, then a small badge; recovery steps (camera check, LiDAR ghost, sidestep) as toasts | `/vlm_decision`, `/recovery/status` |
+| **Top centre** | **AI vision**: a toast for 5 s when the VLM reports *Path blocked* or *Hydroponic station spotted*, then a small badge | `/vlm_decision` |
 | **Top right** | Robot link · speed · **battery icon** (amber below 30 %, red and blinking below 15 %, *Docking* / *Docked* while the battery manager acts) | `/battery_state`, `/battery_manager/status`, `/cmd_vel` |
 | **Bottom left** | **Auto Explore** toggle (shows *Mapping the area*, *Heading home*, …) · **Return to Dock** · **Tap to go** · **Follow** · **Clear** | `/explore/resume`, `/explore/status`, `/goal_pose`, `/clicked_point` |
 | **Bottom right** | **Drive** pad (above the camera; on a phone, bottom left) · camera picture-in-picture: **Live** / **AI** (YOLO boxes), click to enlarge | `/teleop/*`, `/twin/camera/compressed`, `/twin/yolo/compressed` |
@@ -785,7 +745,7 @@ costmap fill up with obstacles that are not there, so the dog would not move:
 clears it, and sets `cost_scaling_factor` to 5.0. **What counts as an
 obstacle is unchanged:** the same heights (0.12–1.5 m), footprint and
 inflation radius. Real obstacles are kept; obstacles that are only in the
-LiDAR's imagination go to the camera check above. Undo:
+LiDAR's imagination are cleared by the next scan through them. Undo:
 `./scripts/tools/relax-costmap.sh --undo`.
 
 If the dog still sees walls that are not there, check the LiDAR stream first.
@@ -911,7 +871,6 @@ camera images. The database also opens in
 | `TWIN_VLM_URL` | `http://localhost:11434/api/generate` | Ollama endpoint |
 | `TWIN_VLM_MODEL` / `TWIN_VLM_PERIOD` | `llava:7b` / `5` | VLM model, minimum seconds between requests |
 | `TWIN_VLM_ACT` / `TWIN_VLM_CONFIRM` | `1` / `2` | Act on `BLOCKED` (0 = report only) / answers in a row needed |
-| `TWIN_VLM_BLOCKED` | `sidestep` | Confirmed `BLOCKED`: VLM-picked sidestep, else pause + dock; `dock` = always pause + dock |
 | `TWIN_TELEOP` | `1` | Dashboard Drive pad (`go2_teleop.py`); 0 = off |
 | `TWIN_RELAX_COSTMAP` | `1` | `relax-costmap.sh` at start: clear stray LiDAR marks, faster inflation decay |
 | `TWIN_AUTOLOCALIZE` | `1` (`0` with `--no-ai`, unless `--resume`) | `/initialpose` at the dock on start (`--no-localize` = 0) |
@@ -956,8 +915,7 @@ The RTAB-Map LiDAR defaults (ICP registration, proximity loop closures,
 | `/camera/lidar_depth` empty | `tail …/ws/log/3d/lidar_depth.log`. TF `lidar3d_map → front_camera_optical` must resolve |
 | YOLO boxes in `/yolo/image` but no `/yolo/markers` | Box bottom above the horizon and no LiDAR points inside it, or farther than 6 m. `tail …/ws/log/3d/yolo.log` |
 | Nav2 ignores YOLO obstacles | Banner `YOLO → Nav2 : FAILED`? Run `./scripts/tools/add-yolo-costmap-source.sh` by hand to see why. With a VoxelLayer, check its z range covers the boxes |
-| Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)` and `sidestep not possible`? The VLM acted and no side was free. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
-| Dog stops at a gap the LiDAR thinks is closed | `docker exec go2-lidar3d tail /tmp/stuck_recovery.log`: `asking the camera` then `LiDAR ghost … clearing the costmaps` means the check ran. No question asked? The VLM must be running (`--ai`, camera on) |
+| Dog suddenly stops and returns to the dock | `vlm.log` shows `path BLOCKED (confirmed)`? The VLM acted. Raise `TWIN_VLM_CONFIRM` or set `TWIN_VLM_ACT=0`. Otherwise `battery.log` (low battery) |
 | Drive pad greyed out | *Web drive not running*: `ws/log/3d/teleop.log`; the dashboard needs a `go2-3d` started with this version |
 | `initial pose NOT published` in `auto_localize.log` | The robot was more than 0.5 m from the origin at start: start the session with the dog at the dock |
 | `Ollama not reachable` in `vlm.log` | `… timed out`: llava:7b on CPU only needs ~2 min per frame (check `nvidia-smi`), over the 120 s timeout; use a GPU host (`TWIN_VLM_URL`). Otherwise start Ollama (`ollama serve`), `ollama pull llava:7b`, or set `TWIN_VLM_URL` |
@@ -1127,8 +1085,8 @@ list. Use them to confirm the data is arriving.
   (`--foxglove`). Named locations are drawn.
 - **Live mesh.** The live view is voxels. A triangle mesh exists only after
   `--export --mesh`.
-- **More VLM actions and named locations.** Only `BLOCKED` acts (sidestep,
-  else pause + dock). `HYDROPONIC` and `config/semantic_locations.json` are not yet used
+- **More VLM actions and named locations.** Only `BLOCKED` acts (pause +
+  dock). `HYDROPONIC` and `config/semantic_locations.json` are not yet used
   to steer the dog. For example, nothing yet does "go to Hydroponic_Station"
   (roadmap 4.19).
 - **Automatic docking/charging.** The battery manager only drives back to the

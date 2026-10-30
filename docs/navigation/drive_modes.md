@@ -3,13 +3,13 @@
 [← Back to README](../../README.md) · [3D Nav](../ai_and_vision/3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](../troubleshooting.md)
 
 `wifi_nav.sh` takes `--drive diff|hybrid|omni`; all three stay supported there, one per session.
-**`wifi_3d_nav.sh` always drives `hybrid`** (it ignores `--drive` / `--diff` / `--omni` and says so):
+`wifi_3d_nav.sh` takes the same options (default `hybrid`) and passes them on:
 
 ```bash
 ./scripts/runtime/wifi_nav.sh                            # --drive hybrid (default): faces forward, omni moves only to get unstuck
 ./scripts/runtime/wifi_nav.sh --drive diff               # forward arcs only (the original setup)
 ./scripts/runtime/wifi_nav.sh --drive omni               # MPPI reverse + sidestep while driving; --omni is short for this
-./scripts/runtime/wifi_3d_nav.sh --camera-obstacles         # always hybrid
+./scripts/runtime/wifi_3d_nav.sh --omni                   # the 3D twin with MPPI omni
 GO2_DRIVE=omni ./scripts/runtime/wifi_nav.sh             # same, from the environment
 ```
 
@@ -61,20 +61,18 @@ to Unitree's `Move()`, and so does the simulator.
   left, then right. It steps 0.3 m there at 0.12 m/s, then re-sends the last
   goal, whether the explorer's frontier or your 2D Goal Pose (up to 2 times).
   If nothing is free, it doesn't move.
+  - **Pressed to a wall.** When the planner refuses goals and the dog's own
+    footprint is in inscribed or lethal cost (Smac: *Starting point in lethal
+    space*; MPPI omni can slide the dog sideways that close), no goal can
+    succeed from that spot. Recovery steps into a free patch the same way, at
+    most 3 times a minute (`max_start_escapes`). In the sim with `--omni` this
+    ended 40 refusals in a row; afterwards one step was enough (2026-10-30).
   - With `omni`, the step goes through the velocity smoother.
   - With `diff`, it goes through the smoother too, so it can only back up:
     the smoother clamps sideways speed.
   - With `hybrid`, it publishes straight to `/cmd_vel` 1.5 s after the abort
     (`escape_delay_s`), once the smoother has braked and stopped publishing,
     so the sidestep isn't clamped. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
-  - **Camera check first.** If the costmap is blocked right in front of the
-    dog and the camera VLM runs (`--ai`), it first asks whether the obstacle is
-    real. `CLEAR` (a LiDAR ghost) clears the costmaps and retries;
-    `BLOCKED LEFT/RIGHT` sidesteps that way. See
-    [3D nav → VLM reasoning](../ai_and_vision/3d_nav.md#vlm-reasoning-ollama).
-  - **Sidestep on request** (`/recovery/sidestep`, from the VLM): it pauses
-    Nav2, steps 0.35 m on `/cmd_vel` (never clamped) into free costmap space,
-    then resumes.
 
 ### Why the dog used to stare at walls
 
@@ -100,7 +98,7 @@ repo's version over it.
 |---|---|---|
 | `vx_max` / `vx_min` | 0.30 / −0.20 | Forward / backward speed (m/s) |
 | `vy_max` | 0.20 | Sideways speed (m/s) |
-| `wz_max` | 0.70 | Turn rate (rad/s) |
+| `wz_max` | 0.35 | Turn rate (rad/s), also the smoother's limit. Was 0.70: fast turns tip gyro-only Point-LIO ([map tilts after a turn](../troubleshooting.md#the-3d-map-tilts-after-a-turn)) |
 | `time_steps` × `model_dt` | 40 × 0.1 s | 4 s look-ahead |
 | `batch_size` | 1000 | Sampled trajectories per cycle (CPU cost) |
 | `PreferForwardCritic.cost_weight` | 2.0 | Weak: forward when free, reverse when it helps. Raise it to reverse less |
@@ -128,7 +126,7 @@ removes every hook.
 **Not yet tested on the real dog: actual movement.** Try it with the remote
 in hand:
 
-1. `./scripts/runtime/wifi_nav.sh --no-explore --omni` (`wifi_3d_nav.sh` is hybrid only)
+1. `./scripts/runtime/wifi_nav.sh --no-explore --omni` (or `wifi_3d_nav.sh --no-explore --omni`)
 2. Set **2D Goal Pose** 1 m behind the dog, facing the same way. It should
    walk backwards, not turn around.
 3. Set one 1 m to its side. It should sidestep.

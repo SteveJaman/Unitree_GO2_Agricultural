@@ -33,7 +33,7 @@ controller:
     vx_max: 0.30
     vx_min: -0.20           # walks backwards
     vy_max: 0.20            # sidesteps
-    wz_max: 0.70
+    wz_max: 0.35            # slow turns keep gyro-only Point-LIO level (see docs/troubleshooting.md)
     temperature: 0.3
     gamma: 0.015
     prune_distance: 1.7
@@ -104,8 +104,8 @@ controller:
 
 # Velocity smoother (only it publishes /cmd_vel): allow sideways and reverse.
 smoother:
-  max_velocity: [0.30, 0.20, 0.70]
-  min_velocity: [-0.20, -0.20, -0.70]
-  max_accel: [0.5, 0.4, 0.8]
-  max_decel: [-0.5, -0.4, -0.8]
+  max_velocity: [0.30, 0.20, 0.35]
+  min_velocity: [-0.20, -0.20, -0.35]
+  max_accel: [0.5, 0.4, 0.5]
+  max_decel: [-0.5, -0.4, -0.5]
   deadband_velocity: [0.03, 0.03, 0.08]

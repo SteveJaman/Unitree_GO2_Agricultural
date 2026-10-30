@@ -26,9 +26,9 @@
 # autonomous survey with no user input: the dog maps the area, splits it into
 # rooms, names each, writes config/survey_report.json and returns to the dock.
 #
-# Drive mode: always hybrid (forward-facing Nav2; steps back or sideways only
-# to get unstuck). --drive / --diff / --omni are ignored here; wifi_nav.sh
-# keeps all three for locomotion comparisons.
+# Drive mode: hybrid by default (forward-facing Nav2; steps back or sideways
+# only to get unstuck). --omni (MPPI: also reverses and sidesteps while
+# driving), --diff or --drive diff|hybrid|omni pick another, as in wifi_nav.sh.
 #
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
@@ -82,8 +82,6 @@
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
 #   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
-#   TWIN_VLM_BLOCKED=sidestep (confirmed BLOCKED: VLM picks left/right, step round;
-#                    neither side free -> pause + dock) | dock (always pause + dock)
 #   TWIN_TELEOP=1 (dashboard Drive pad; 0 = off)
 #   TWIN_RELAX_COSTMAP=1 (relax-costmap.sh at start: clear stray LiDAR marks, faster
 #                    inflation decay; 0 = leave the costmap config alone)
@@ -137,7 +135,7 @@ RESUME="false"
 SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
-IGNORED_DRIVE=""
+DRIVE="${GO2_DRIVE:-hybrid}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -174,30 +172,25 @@ while [ $# -gt 0 ]; do
         --host-ip|--robot-ip|--iface)
                       PASSTHRU+=("$1")
                       if [ $# -ge 2 ]; then PASSTHRU+=("$2"); shift; fi ;;
-        # Hybrid only (see DRIVE below): other modes are for wifi_nav.sh comparisons.
-        --drive)      if [ "${2:-}" != hybrid ]; then IGNORED_DRIVE="--drive ${2:-}"; fi
-                      [ $# -ge 2 ] && shift ;;
-        --diff|--omni) IGNORED_DRIVE="$1" ;;
-        --hybrid)     ;;
+        --drive)      DRIVE="${2:-}"; [ $# -ge 2 ] && shift ;;
+        --diff|--hybrid|--omni) DRIVE="${1#--}" ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)            PASSTHRU+=("$1") ;;
     esac
     shift
 done
 
-# Drive: always hybrid. Nav2 drives forward-facing like a differential robot
-# (the LiDAR looks where the dog walks); stepping back or sideways happens only
-# to get unstuck (go2_stuck_recovery.py, the VLM sidestep) and from the Drive
-# pad. diff / omni stay available in wifi_nav.sh for locomotion comparisons
-# (docs/navigation/locomotion_comparison.md: omni explored worse, hybrid = diff
-# plus an escape when a wall is behind the dog).
-DRIVE="hybrid"
+# Drive: hybrid by default. Nav2 drives forward-facing like a differential
+# robot (the LiDAR looks where the dog walks); stepping back or sideways
+# happens only to get unstuck (go2_stuck_recovery.py) and from the Drive pad.
+# omni (MPPI) also reverses and sidesteps while driving; in the sim it explored
+# worse (docs/navigation/locomotion_comparison.md). wifi_nav.sh does the rest.
+case "${DRIVE}" in
+    diff|hybrid|omni) ;;
+    *) echo "[3d] ERROR: --drive must be diff, hybrid or omni (got '${DRIVE}')" >&2; exit 2 ;;
+esac
 export GO2_DRIVE="${DRIVE}"
 PASSTHRU+=(--drive "${DRIVE}")
-if [ -n "${IGNORED_DRIVE}" ]; then
-    echo "[3d] ${IGNORED_DRIVE} ignored: wifi_3d_nav.sh always drives hybrid" \
-         "(other modes: ./scripts/runtime/wifi_nav.sh ${IGNORED_DRIVE})" >&2
-fi
 
 # --ai turns the AI nodes on; --no-yolo / --no-vlm / --no-battery / --no-inspect win.
 # inspect: inspection_mission.py (dashboard Inspect: walk to a 3D point, IK-aim the arm at it).
@@ -214,7 +207,6 @@ TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
 TWIN_DOCK="${TWIN_DOCK:-0 0 0}"
 TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
 TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
-TWIN_VLM_BLOCKED="${TWIN_VLM_BLOCKED:-sidestep}"
 # Zero-touch localization at the dock whenever --ai or --resume is used.
 if { [ "${AI}" = "true" ] || [ "${RESUME}" = "true" ]; } && [ "${NO_LOCALIZE:-false}" != "true" ]; then
     TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-1}"
@@ -523,7 +515,7 @@ start_twin_when_ready() {
             -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC -e TWIN_CAMERA_TF -e TWIN_CAMERA_FRAME \
             -e TWIN_YOLO_MODEL -e TWIN_YOLO_RATE -e TWIN_YOLO_CLASSES -e TWIN_RTAB_ARGS \
             -e TWIN_VLM_URL -e TWIN_VLM_MODEL -e TWIN_VLM_PERIOD \
-            -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" -e TWIN_VLM_BLOCKED="${TWIN_VLM_BLOCKED}" \
+            -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
             -e TWIN_TELEOP="${TWIN_TELEOP:-1}" -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" -e TWIN_INSPECT="${TWIN_INSPECT}" \
@@ -705,7 +697,7 @@ export CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}"
 on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ] || [ "${TWIN_MODE}" = fusion ]; } && echo "on if the camera publishes" || echo off; }
 echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
 echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"
-echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> $( [ "${TWIN_VLM_BLOCKED}" = dock ] && echo "pause + dock" || echo "VLM-picked sidestep, else pause + dock" )" || echo "report only" ))" )"
+echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> pause + dock" || echo "report only" ))" )"
 echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialpose at the dock (0 0 0) on start" || echo "manual" )"
 echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
@@ -713,7 +705,11 @@ echo "  Inspect     : $( [ "${TWIN_INSPECT}" = 1 ] && echo "on: dashboard Inspec
 echo "  Periscope   : $( [ "${TWIN_PERISCOPE}" = 1 ] && echo "on: dashboard Periscope Scan -> table edge -> arm periscope pose (table_search.log)" || echo "off (--ai)" ); wrist camera $( [ "${TWIN_WRIST_CAMERA}" = 1 ] && echo "in the costmap" || echo "not in the costmap (--wrist-camera)" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
-echo "  Drive       : hybrid (forward-facing like diff; steps back / sideways only to get unstuck)"
+case "${DRIVE}" in
+    hybrid) echo "  Drive       : hybrid (forward-facing like diff; steps back / sideways only to get unstuck)" ;;
+    omni)   echo "  Drive       : omni (MPPI: forward, reverse and sidestep while driving)" ;;
+    diff)   echo "  Drive       : diff (forward arcs; recovery only steps back)" ;;
+esac
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo

@@ -70,7 +70,7 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_teleop.py             # dashboard Drive pad -> gentle /cmd_vel
 │   │   ├── go2_camera_info.py        # camera_info for the Go2 camera
 │   │   ├── battery_manager.py        # AI (default): low battery -> dock
-│   │   ├── vlm_reasoning_node.py     # AI (default): Ollama llava -> /vlm_decision; BLOCKED -> sidestep / dock
+│   │   ├── vlm_reasoning_node.py     # AI (default): Ollama llava -> /vlm_decision; BLOCKED -> dock
 │   │   ├── auto_localize.py          # AI (default)/--resume: /initialpose at the dock
 │   │   ├── save_location.py          # --save-location: named points
 │   │   ├── d1_arm_control.py         # D1-T arm control (chain CLI, lift, sweep)

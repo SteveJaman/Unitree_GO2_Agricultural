@@ -2,7 +2,20 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-28
+Last updated: 2026-10-30
+
+---
+
+## 2026-10-30: nav reliability
+
+| Change | State |
+|---|---|
+| VLM back to the pre-10 am logic: 2× `BLOCKED` → pause the explorer + dock; no camera ghost check, no VLM sidestep | Done. In the sim `llava:7b` confirmed `BLOCKED` 4 times in 4 min in an empty room and docked each time: `TWIN_VLM_ACT=0` keeps it report-only |
+| `wifi_3d_nav.sh` takes `--omni` / `--diff` / `--drive` again (default `hybrid`) | Verified in Gazebo: MPPI active, sidesteps while driving, 3D stack `READY` |
+| Stuck recovery also steps away when the planner refuses goals with the dog pressed to a wall (*Starting point in lethal space*) | Verified in Gazebo `--omni`: 40 refusals in a row before, one step after |
+| `[link]` warning when the dog's data does not reach the computer (`go2_link_watch.py`) | Tested offline; pending a real run |
+| RViz closing ~78 s in on the real dog | Cause: the dog → computer Wi-Fi (workstation RTL8822BU dongle) delivered nothing from the start; one RViz crash (OGRE segfault) when the backlog arrived. Fix: Ethernet to the router, or restart on the `[link]` warning |
+| Unattended survey does not start the explorer (waits for an `/explore/status` the idle explorer never sends) | **Open**: start with Auto Survey / Auto Explore |
 
 ---
 
@@ -327,7 +340,7 @@ relay is unconfirmed.
 | 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
 | 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
 | 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
-| 50 | Drive `omni` | `wifi_nav.sh --no-explore --drive omni` (`wifi_3d_nav.sh` is hybrid only), remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
+| 50 | Drive `omni` | `wifi_nav.sh --no-explore --drive omni` (or `wifi_3d_nav.sh --no-explore --omni`), remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
 | 51 | Drive `hybrid` recovery | default drive, explorer next to a wall until a leg aborts | `/tmp/stuck_recovery.log`: steps back or aside 0.3 m, goal re-sent |
 | 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the workstation | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
 | 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |

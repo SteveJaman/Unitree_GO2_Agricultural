@@ -344,6 +344,23 @@ rebuilding the profile in one clean command lets it log in.
 
 ## Motion
 
+### The 3D map tilts after a turn
+
+The floor in the map ends up sloped and walls lean, from some point in the
+run on. Point-LIO here uses the gyro only (no accelerometer), so it has no
+gravity reference: a fast turn can tip its attitude estimate, and every scan
+after that is stored tilted. On 2026-10-29 a 230° walking turn at 25–28°/s
+tilted the map by 17.7°.
+
+- Check a run: `./scripts/tools/check_map_tilt.sh` (latest run on the robot)
+  or `./scripts/tools/check_map_tilt.sh run-…`. It reports the floor angle
+  per tenth of the run and the fastest turn; a level run stays within ~2°.
+- Turn slower: `--drive omni` uses `wz_max` 0.35 rad/s
+  ([`config/nav2/go2_omni.yaml`](../config/nav2/go2_omni.yaml), was 0.70).
+  Turning by hand with the remote, do the same.
+- Keep the dog still until the first map appears: the start pose sets the
+  floor plane.
+
 ### `/cmd_vel` publishes but the dog doesn't move
 
 The Jetson motion relay failed to bind port 17999. Check on the Jetson:
@@ -664,6 +681,17 @@ Compare the raw telemetry to what you commanded (angles are **degrees**):
 Full camera setup: [camera.md](ai_and_vision/camera.md). Relay code:
 [`go2_camera_relay.py`](../scripts/nodes/go2_camera_relay.py).
 
+### Overlay, YOLO distances or fusion are off on the real dog
+
+`config/camera/front_camera.yaml` is the real camera's calibration
+([`calibrate_camera.sh`](../scripts/tools/calibrate_camera.sh)); the real
+dog's sessions use it for `/camera/camera_info`. It must not be a copy of
+`sim_front_camera.yaml` (640 × 360, the Gazebo lens): its first line then
+says *Exact intrinsics of the Gazebo front camera*. The real frames are 960
+wide with a different lens, so every projection is wrong. Delete the copy
+(`wifi_3d_nav.sh` then estimates intrinsics from the field of view;
+`wifi_nav.sh` publishes no `camera_info`) or run the calibration. `--sim` uses `sim_front_camera.yaml` by itself.
+
 ### Relay crashes on start
 
 Check `docker exec go2-lidar3d tail /tmp/camera_relay.log`.
@@ -806,6 +834,22 @@ only how RViz dies while being stopped. `mapping.sh` stops everything when
 motion bridge. Both robot parts run over one shared SSH link, so losing that
 link ends the run.
 
+- **The dog's data never arrives.** The terminal shows `[link] WARNING: no
+  data from the dog after 20 s` (`go2_link_watch.py`, started by
+  `wifi_nav.sh` and so by `wifi_3d_nav.sh`; `GO2_LINK_WATCH=0` turns it off).
+  Nav2 has no position for the dog, and about 78 s in the shared SSH link
+  times out and the session closes. On 2026-10-30 every run that got the
+  dog's position within ~15 s kept going and every run that did not closed,
+  whichever script started it: the dog → computer direction of the Wi-Fi was
+  not delivering (the workstation's RTL8822BU dongle; the dog itself lost no
+  pings). Press Ctrl+C and start again, or use an Ethernet cable to the
+  router. When the backlog finally arrives all at once, RViz itself can crash
+  (`[ros2run]: Segmentation fault` in `rviz.log`, `rviz2 … segfault … in
+  libOgreMain.so` in `journalctl -k`), with the same result.
+- **Wi-Fi power saving.** `./scripts/tools/fix_wifi_powersave.sh` turns it
+  off on this computer, `--robot` on the dog (reboot it once); `--check`
+  shows the state. Both Realtek dongles stall the link with it on. The
+  start-up checks say `Wi-Fi power saving ... ON` when it is.
 - **Wi-Fi stalls.** The shared link gives up after about a minute without
   an answer (`mapping_stop_timeouts.py`; a 15 s limit ended runs on ordinary
   stalls, 2026-10-30). Check the robot ping on the debug page

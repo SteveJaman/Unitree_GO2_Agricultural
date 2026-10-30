@@ -429,7 +429,6 @@ if [ "$TWIN_VLM" = 1 ] && { [ "$TWIN_MODE" = camera ] || [ "$TWIN_MODE" = fusion
         -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")" \
         -p act_on_blocked:="$( [ "$TWIN_VLM_ACT" = 1 ] && echo true || echo false )" \
         -p blocked_confirmations:="$TWIN_VLM_CONFIRM" \
-        -p blocked_action:="${TWIN_VLM_BLOCKED:-sidestep}" \
         -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" -p dock_yaw:="$(float "$DOCK_YAW")" \
         -p map_frame:="$TWIN_MAP_FRAME"
 elif [ "$TWIN_VLM" = 1 ]; then

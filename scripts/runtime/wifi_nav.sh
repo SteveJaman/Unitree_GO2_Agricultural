@@ -43,6 +43,7 @@ ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
+LINK_WATCH_SCRIPT="${NODES_DIR}/go2_link_watch.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # scripts/robot: go2_camera_wifi.*, arm_bridge_wifi.* (run on the robot)
@@ -962,6 +963,7 @@ export GO2_HOST_IP GO2_ROBOT_IP GO2_RELAY_DOMAIN_ID
 
 EXPLORE_HOST_PID=""
 ARM_PID=""
+LINK_WATCH_PID=""
 
 CLEANED_UP="false"
 cleanup() {
@@ -983,7 +985,11 @@ cleanup() {
     if [ -n "${EXPLORE_HOST_PID}" ]; then
         kill "${EXPLORE_HOST_PID}" 2>/dev/null || true
     fi
+    if [ -n "${LINK_WATCH_PID}" ]; then
+        kill "${LINK_WATCH_PID}" 2>/dev/null || true
+    fi
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
+        docker exec -u root "${CONTAINER_NAME}" pkill -f "^python3 /tmp/go2_link_watch.py" 2>/dev/null || true
         kill_explore_inside_container
         kill_floor_filter_inside_container
         kill_camera_relay_inside_container
@@ -1206,6 +1212,31 @@ else
     # Pass the DISPLAY variable explicitly
     if [ -z "${DISPLAY}" ]; then
         export DISPLAY=:0
+    fi
+
+    # Say at once when the dog's data is not reaching this computer: such a
+    # session otherwise just closes (RViz too) ~78 s in (go2_link_watch.py).
+    # Its clock starts with this session's go2_odom_tf node (newer than this
+    # launch; the container and its DDS config outlive sessions): on
+    # 2026-10-30 good runs had the dog's pose 13-15 s after that.
+    if [ "${GO2_LINK_WATCH:-1}" = 1 ]; then
+        (
+            launched=$(date +%s)
+            up=""
+            for _ in $(seq 1 120); do
+                up=$(docker exec -u root "${CONTAINER_NAME}" ps -eo etimes=,args= 2>/dev/null \
+                    | awk -v max="$(( $(date +%s) - launched ))" '$1 <= max && index($0, "--ros-args") \
+                          && index($0, "__node:=go2_odom_tf") && !index($0, "awk") {print; exit}')
+                [ -n "${up}" ] && break
+                sleep 1
+            done
+            [ -n "${up}" ] || exit 0
+            docker cp "${LINK_WATCH_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_link_watch.py" 2>/dev/null || exit 0
+            exec docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; \
+                 exec python3 /tmp/go2_link_watch.py" 2>/dev/null
+        ) &
+        LINK_WATCH_PID=$!
     fi
 
     ./mapping.sh --3d ${MODE} || true

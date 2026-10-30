@@ -34,9 +34,9 @@ GO2_DRIVE=diff ./scripts/runtime/wifi_nav.sh   # or from the environment
 `--diff`, `--hybrid` and `--omni` are short for these. The start-up banner
 shows the mode (`Drive : hybrid (...)`).
 
-**`wifi_3d_nav.sh` (the 3D twin, dashboard and AI) always drives `hybrid`.**
-It ignores `--drive`, `--diff` and `--omni` and says so at start-up. Use
-`wifi_nav.sh` to run the other modes, for example for the comparisons below.
+**`wifi_3d_nav.sh` (the 3D twin, dashboard and AI) drives `hybrid` by
+default** and takes `--drive`, `--diff` and `--omni` like `wifi_nav.sh`. The
+comparisons below use `wifi_nav.sh`.
 
 | | `diff` | `hybrid` (default) | `omni` |
 |---|---|---|---|
@@ -107,9 +107,8 @@ here means the original real-dog setup **plus** these fixes, not plain Nav2.
 | **Sidestep escape** (`hybrid`) | Impossible: the velocity smoother clamps `vy` to 0 | If the space behind is blocked, it tries left, then right. The command goes straight to `/cmd_vel`, 1.5 s after the abort |
 | **Inflation counts as free** for recovery (`free_threshold` 99, was 50) | In a doorway every cell is inflation, so recovery reported `no free space` every time | It still refuses inscribed and lethal cells and unknown space |
 | **Recovery on the stack's DDS setup** (`DDS_EXEC_ENV`) | Recovery never saw the aborts | It sees and handles them |
+| **Planner refusals with the dog at a wall** | The planner refused every goal (*Starting point in lethal space*) and the explorer blacklisted one frontier after another; seen with `omni` | Recovery steps into free space (at most 3 times a minute), then planning works again |
 | **Explorer waits for recovery** (`recovery_wait_s` 8 s) | The explorer dropped the goal at once and sent a new one mid-escape | It keeps the goal until recovery retries it, then gives up if nothing happens |
-| **Camera check of a blocked front** (with `--ai`, the default) | A LiDAR ghost in front of the nose (reflection, dust, a smeared scan) stops the dog for good | Recovery asks the camera VLM first. `CLEAR` clears both costmaps and retries (twice per goal); `BLOCKED LEFT/RIGHT` sidesteps that way. See [3d_nav.md](../ai_and_vision/3d_nav.md#vlm-reasoning-ollama) |
-| **VLM sidestep** (with `--ai`) | The VLM could only pause and dock | Both VLM answers must say BLOCKED. Only while Nav2 drives, at most twice in 2 minutes: pause Nav2, step 0.35 m to the free side (costmap-checked), continue. The step goes on `/cmd_vel` in every drive mode |
 
 ### Not hitting obstacles
 
