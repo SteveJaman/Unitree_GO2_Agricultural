@@ -497,6 +497,17 @@ ensure_container() {
         docker logs --tail 20 "${CONTAINER_NAME}" 2>&1 | sed 's/^/    /'
         return 1
     fi
+    ensure_ros_log_dir
+}
+
+# ROS_LOG_DIR (/tmp/go2-lidar3d-ros-log in the container) must stay writable for
+# the container user: the root `docker exec`s here (ros2 topic pub, ...) create
+# it owned by root otherwise, and RViz / the motion bridge, which run as the
+# user, then abort with "Permission denied" and the whole session stops.
+ensure_ros_log_dir() {
+    docker exec -u root "${CONTAINER_NAME}" bash -c \
+        'd="${ROS_LOG_DIR:-/tmp/go2-lidar3d-ros-log}"; mkdir -p "$d" && chmod 1777 "$d"' \
+        >/dev/null 2>&1 || true
 }
 
 patch_upstream_dockerfiles() {
@@ -544,6 +555,23 @@ pin_container_numpy() {
     fi
     if ! docker exec "${CONTAINER_NAME}" python3 -c 'import scipy.spatial' >/dev/null 2>&1; then
         echo "[numpy] WARN: scipy still fails to import with numpy $(container_numpy_version)."
+    fi
+}
+
+# The camera relay (go2_camera_relay.py) needs OpenCV; the go2-lidar3d image
+# has none, and a recreated container (new host / robot IP) loses anything
+# installed by hand. Headless wheel, no deps: it must not replace the pinned numpy
+# (4.8+ needs numpy >= 1.22 at import).
+OPENCV_PIN="${OPENCV_PIN:-opencv-python-headless==4.7.0.72}"
+ensure_container_opencv() {
+    if docker exec "${CONTAINER_NAME}" python3 -c 'import cv2' >/dev/null 2>&1; then
+        echo "[camera] container OpenCV ................. OK"
+        return 0
+    fi
+    echo "[camera] OpenCV missing in ${CONTAINER_NAME} — installing '${OPENCV_PIN}'..."
+    if ! docker exec -u root "${CONTAINER_NAME}" python3 -m pip install -q --no-cache-dir --no-deps "${OPENCV_PIN}" ||
+       ! docker exec "${CONTAINER_NAME}" python3 -c 'import cv2' >/dev/null 2>&1; then
+        echo "[camera] WARN: OpenCV install failed (no internet?): no camera relay, YOLO/VLM get no images."
     fi
 }
 
@@ -827,6 +855,7 @@ if ! ensure_container; then
     exit 1
 fi
 pin_container_numpy
+[ "${CAMERA}" = "true" ] && ensure_container_opencv
 check_dds_bind || exit 1
 echo
 
@@ -954,6 +983,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+ensure_ros_log_dir   # again: the pre-flight root execs may have created it
 if [ "${SIM}" = "true" ]; then
     echo "Launching: laptop session (go2-session.sh lidar3d-viz) against the simulator"
 else

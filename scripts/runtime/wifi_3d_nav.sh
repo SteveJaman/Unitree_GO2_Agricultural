@@ -692,7 +692,7 @@ start_arm_state() {
     python3 -u "${NODES_DIR}/arm_state_bridge.py" "${args[@]}" --rosbridge "localhost:${TWIN_ROSBRIDGE_PORT}" \
         --orbit-log "${TWIN_LOG_DIR}/arm_orbit.log" > "${TWIN_LOG_DIR}/arm_state.log" 2>&1 &
     ARM_STATE_PID=$!
-    echo "[3d] D1 arm state: ${robot:+through the Go2 at ${robot}}${robot:-wired DDS} (log ${TWIN_LOG_DIR}/arm_state.log)"
+    echo "[3d] D1 arm state: $([ -n "${robot}" ] && echo "through the Go2 at ${robot}" || echo "wired DDS") (log ${TWIN_LOG_DIR}/arm_state.log)"
 }
 
 WATCH_PID=""
