@@ -32,8 +32,9 @@
 #   ARM_ROBOT  (unset = wired; Go2 Wi-Fi IP = through its bridge. Unset and
 #              no cable link on ARM_IFACE: the Go2 found by go2_net.sh is used)
 #   ARM_BRIDGE_PORT (default: 18100)
-#   ARM_MAX_VEL ARM_MAX_ACC ARM_KP ARM_KI ARM_KD ARM_DEADBAND ARM_PID=0
-#              smooth-motion defaults for play (scripts/nodes/d1_motion.py)
+#   ARM_PLANNER (ruckig|minjerk) ARM_MAX_VEL ARM_MAX_ACC ARM_MAX_JERK ARM_ON_INTERRUPT
+#   ARM_KP ARM_KI ARM_KD ARM_DEADBAND ARM_PID=0
+#              motion defaults for play (scripts/nodes/d1_motion.py)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 

@@ -166,4 +166,5 @@ part of the active pipeline. See [`cmu-legacy/README.md`](../../cmu-legacy/READM
 | [three.js](https://threejs.org) / [React Three Fiber](https://github.com/pmndrs/react-three-fiber) / [roslib](https://github.com/RobotWebTools/roslibjs) / [rosbridge](https://github.com/RobotWebTools/rosbridge_suite) | Web dashboard (`twin/webapp`) |
 | [Foxglove](https://foxglove.dev) / [`foxglove_bridge`](https://github.com/foxglove/ros-foxglove-bridge) | Alternative 3D visualization (`--foxglove`); [Lichtblick](https://github.com/lichtblick-suite/lichtblick) works too |
 | [`cyclonedds`](https://pypi.org/project/cyclonedds/) | Python DDS bindings used by the D1-T arm scripts (`python3 -m pip install --user cyclonedds` on the host) |
+| [`ruckig`](https://pypi.org/project/ruckig/) | Jerk-limited (S-curve) trajectories for `play_arm.py` (`python3 -m pip install --user ruckig` on the host; not needed on the Go2) |
 | [`JeewanthaSadaruwan/unitree-D1-550-Robot-ARM`](https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM) | Reference only: ideas behind an earlier smooth-motion version of the arm control (reimplemented, no code copied) |

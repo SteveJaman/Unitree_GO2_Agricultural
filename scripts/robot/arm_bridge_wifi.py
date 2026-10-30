@@ -25,7 +25,10 @@ Trajectories on the robot: {"traj": {"target": [6 deg], "gripper": g,
 runs a minimum-jerk move here, streaming setpoints to the arm over the wired
 DDS link (d1_motion.py's profile). Streamed over Wi-Fi instead, latency
 spikes (200 ms) bunch the setpoints into bursts and the arm shakes on every
-move. {"traj_stop": 1}, any arm command, or the laptop leaving stops it.
+move. {"traj_points": {"dt": s, "points": [[6 deg], ...], "gripper": g,
+"mode": 0}} plays a trajectory the laptop already sampled (Ruckig S-curve,
+d1_motion.ruckig_move) at exactly dt, so the robot needs no planner of its own.
+{"traj_stop": 1}, any arm command, or the laptop leaving stops either.
 
 TCP instead of DDS over Wi-Fi: arm traffic is small JSON at 10 Hz, and TCP
 needs no discovery and loses nothing. Safety: when the laptop disconnects or
@@ -166,6 +169,39 @@ class Bridge(Node):
             target=self._run_traj, args=(target, gripper, vmax, amax, rate, mode, tmin), daemon=True)
         self.traj_thread.start()
 
+    def start_points(self, spec):
+        """Play a sampled trajectory from the laptop: one point every spec["dt"] s."""
+        self.stop_traj()
+        try:
+            dt = min(0.1, max(0.005, float(spec.get("dt", 0.02))))
+            points = [[float(v) for v in p][:6] for p in spec["points"]]
+            gripper = float(spec.get("gripper", 0.0))
+            mode = int(spec.get("mode", 0))
+        except (KeyError, TypeError, ValueError):
+            self.get_logger().warn("bad traj_points request ignored")
+            return
+        if not points or len(points) > 6000 or any(
+                len(p) != 6 or any(abs(v) > TRAJ_REACH for v in p) for p in points):
+            self.get_logger().warn(f"traj_points refused ({len(points)} points; 6 joints within +/-{TRAJ_REACH:.0f})")
+            return
+        self.traj_stop.clear()
+        self.traj_thread = threading.Thread(
+            target=self._play_points, args=(points, dt, gripper, mode), daemon=True)
+        self.traj_thread.start()
+
+    def _play_points(self, points, dt, gripper, mode):
+        t0 = time.monotonic()
+        for i, p in enumerate(points, 1):
+            if self.traj_stop.is_set():
+                return
+            self._send_joints(p, gripper, mode)
+            time.sleep(max(0.0, t0 + i * dt - time.monotonic()))
+        for _ in range(2):   # the last point (the target), reliably
+            time.sleep(0.1)
+            if self.traj_stop.is_set():
+                return
+            self._send_joints(points[-1], gripper, mode)
+
     def _send_joints(self, angles, gripper, mode):
         self.seq += 1
         data = {"mode": mode, **{f"angle{j}": round(a, 2) for j, a in enumerate(angles)}, "angle6": gripper}
@@ -205,6 +241,9 @@ class Bridge(Node):
         if "traj" in msg:
             self.start_traj(msg["traj"] if isinstance(msg["traj"], dict) else {})
             return
+        if "traj_points" in msg:
+            self.start_points(msg["traj_points"] if isinstance(msg["traj_points"], dict) else {})
+            return
         if "traj_stop" in msg:
             self.stop_traj()
             return
@@ -222,7 +261,7 @@ class Bridge(Node):
             "bridge": "arm_bridge_wifi",
             "port": PORT,
             "feedback_msgs": self.feedback,
-            "features": ["traj"],
+            "features": ["traj", "traj_points"],
         }
         conn.sendall((json.dumps(hello) + "\n").encode())
         with self.conn_lock:

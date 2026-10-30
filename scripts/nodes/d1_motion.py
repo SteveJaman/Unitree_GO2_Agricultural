@@ -300,3 +300,127 @@ def steady_gripper(arm, samples=5):
             vals.append(a[6])
     vals.sort()
     return round(vals[len(vals) // 2], 1) if vals else 0.0
+
+
+# --------------------------------------------------------------------------
+# Ruckig: jerk-limited (S-curve) trajectories, like an industrial robot.
+# --------------------------------------------------------------------------
+@dataclass
+class RuckigConfig:
+    max_vel: float = 60.0  # deg/s per joint
+    max_acc: float = 90.0  # deg/s^2
+    max_jerk: float = 300.0  # deg/s^3
+    rate: float = 50.0  # Hz, streamed setpoints (every 0.02 s)
+    mode: int = 0  # funcode 2 "mode": 0 = direct tracking of each setpoint
+    robot_side: bool = True  # Go2 bridge with "traj_points": the robot plays the points
+    tolerance: float = 2.0  # deg: final error counted as reached
+
+
+def ruckig_points(start, target, cfg):
+    """Time-optimal S-curve from start to target (degrees, joints 0-5), at rest at
+    both ends, all joints synchronised. Returns (duration s, [points every 1/rate s])."""
+    from ruckig import InputParameter, Result, Ruckig, Trajectory
+
+    n = len(start)
+    otg, inp, traj = Ruckig(n), InputParameter(n), Trajectory(n)
+    inp.current_position = [float(v) for v in start]
+    inp.current_velocity = [0.0] * n
+    inp.current_acceleration = [0.0] * n
+    inp.target_position = [float(v) for v in target]
+    inp.target_velocity = [0.0] * n
+    inp.target_acceleration = [0.0] * n
+    inp.max_velocity = [cfg.max_vel] * n
+    inp.max_acceleration = [cfg.max_acc] * n
+    inp.max_jerk = [cfg.max_jerk] * n
+    result = otg.calculate(inp, traj)
+    if result not in (Result.Working, Result.Finished):
+        raise ValueError(f"Ruckig could not plan the move ({result})")
+    dt = 1.0 / cfg.rate
+    steps = max(1, math.ceil(traj.duration / dt))
+    points = [
+        list(traj.at_time(min(traj.duration, i * dt))[0]) for i in range(1, steps + 1)
+    ]
+    points[-1] = [float(v) for v in target]
+    return traj.duration, points
+
+
+def robot_has(arm, feature):
+    """True if the arm is reached through a Go2 bridge that advertises `feature`."""
+    link = getattr(arm, "link", None)
+    return link is not None and f'"{feature}"' in (getattr(link, "hello", None) or "")
+
+
+def ruckig_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
+    """Move joints 0-5 to `target` (degrees) along a Ruckig S-curve.
+
+    The trajectory is generated here and streamed at cfg.rate as funcode 2
+    (cfg.mode, 0 = direct). Through a Go2 bridge with "traj_points" the whole
+    sampled trajectory goes over Wi-Fi in one message and the robot plays it
+    at the exact rate (streamed over Wi-Fi, latency spikes bunch the points
+    and the arm shakes). The stream runs for exactly the trajectory's
+    duration, without waiting on telemetry; one reading afterwards gives the
+    final error. Ctrl+C (KeyboardInterrupt) propagates: the caller stops the
+    robot's playback (stop_stream) and releases or locks the arm.
+    """
+    cfg = cfg or RuckigConfig()
+    target = [float(v) for v in target[:ARM_JOINTS]]
+    if limits:
+        target = [max(-limits[j], min(limits[j], a)) for j, a in enumerate(target)]
+
+    def send(angles, repeat=1):
+        data = {
+            "mode": cfg.mode,
+            **{f"angle{j}": round(a, 2) for j, a in enumerate(angles)},
+            "angle6": gripper,
+        }
+        arm._send(FUNC_JOINTS, data, repeat=repeat)
+
+    now_angles = read_angles(arm, timeout=2.0)
+    if now_angles is None:
+        if log:
+            log("  [!] no joint telemetry: one direct move, no trajectory")
+        send(target, repeat=3)
+        return MoveResult(False, 0.0, float("nan"), float("nan"), float("nan"))
+
+    duration, points = ruckig_points(now_angles[:ARM_JOINTS], target, cfg)
+    dt = 1.0 / cfg.rate
+    t0 = time.monotonic()
+    if cfg.robot_side and robot_has(arm, "traj_points"):
+        arm.link.write(
+            json.dumps(
+                {
+                    "traj_points": {
+                        "dt": dt,
+                        "points": [[round(a, 2) for a in p] for p in points],
+                        "gripper": gripper,
+                        "mode": cfg.mode,
+                    }
+                },
+                separators=(",", ":"),
+            )
+        )
+        time.sleep(duration + 0.25)  # the robot plays it; its final sends follow
+    else:
+        for i, p in enumerate(points, 1):
+            send(p)
+            time.sleep(max(0.0, t0 + i * dt - time.monotonic()))
+        send(target, repeat=3)
+    final_angles = read_angles(arm, timeout=0.5)
+    final = (
+        max(abs(t - m) for t, m in zip(target, final_angles[:ARM_JOINTS]))
+        if final_angles
+        else float("nan")
+    )
+    return MoveResult(
+        final <= cfg.tolerance, time.monotonic() - t0, float("nan"), final, float("nan")
+    )
+
+
+def stop_stream(arm):
+    """Stop a trajectory the Go2 bridge is playing (no-op when streaming from here)."""
+    link = getattr(arm, "link", None)
+    if link is not None and robot_has(arm, "traj"):
+        try:
+            link.write(json.dumps({"traj_stop": 1}))
+        except ConnectionError:
+            pass

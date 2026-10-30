@@ -315,7 +315,40 @@ arm powers on, locks, goes to the **recorded home** (the factory zero pose,
 pose, prints *"Waypoint N reached"* (with its name) and holds `--dwell`
 seconds (1.5).
 
-**Smooth motion (PID), no shaking.** One big `funcode 2` jump makes the servos
+**Ruckig S-curve motion (default).** Every move is planned with
+[Ruckig](https://github.com/pantor/ruckig), an online trajectory generator: a
+time-optimal, **jerk-limited (S-curve)** path from the measured angles to the
+waypoint, at rest at both ends, all six joints synchronised so they start and
+arrive together. Acceleration ramps up and down instead of jumping, which is
+what made the arm wobble. The limits (per joint) sit at the top of
+[`play_arm.py`](../../scripts/tools/play_arm.py) and are overridable:
+
+| Limit | Constant | Option / env | Default |
+|---|---|---|---|
+| velocity | `RUCKIG_MAX_VEL` | `--max-vel` / `ARM_MAX_VEL` | 60 °/s |
+| acceleration | `RUCKIG_MAX_ACC` | `--max-acc` / `ARM_MAX_ACC` | 90 °/s² |
+| jerk | `RUCKIG_MAX_JERK` | `--max-jerk` / `ARM_MAX_JERK` | 300 °/s³ |
+
+The trajectory is sampled at **50 Hz** (`STREAM_HZ`, every 0.02 s) with
+`traj.at_time(t)` and sent as `funcode 2` in **mode 0** (direct tracking),
+for exactly `traj.duration` seconds; nothing waits on telemetry during the
+move (one reading afterwards reports the final error). A 90° move takes about
+2.5 s; each setpoint is at most 1.2° from the last.
+
+Ruckig runs **on the workstation only** (`pip install --user ruckig`); the
+Go2 needs nothing new. With the arm on the Go2, the sampled points go over
+Wi-Fi in **one** `traj_points` message and the robot's bridge plays them at
+the exact 50 Hz over its wired link (streamed point by point over Wi-Fi,
+latency spikes would bunch them and shake the arm). Wired, or with an older
+bridge, the laptop streams them itself.
+
+**Ctrl+C** during a move stops the stream at once (the robot's playback too,
+`traj_stop`) and **releases the arm** (`funcode 5`, mode 0): it goes limp, so
+keep a hand under it. `--on-interrupt lock` (`ARM_ON_INTERRUPT=lock`) holds
+it where it stopped instead.
+
+**Min-jerk + PID (`--planner minjerk`).** The earlier planner, still
+available (`ARM_PLANNER=minjerk`). One big `funcode 2` jump makes the servos
 accelerate hard, overshoot and ring around the target, and corrections near
 the target make it hunt. So every move ([`d1_motion.py`](../../scripts/nodes/d1_motion.py)):
 
@@ -345,7 +378,8 @@ the target make it hunt. So every move ([`d1_motion.py`](../../scripts/nodes/d1_
 While holding each pose it prints `holding: steady` or the joints that wander
 (`--jitter-warn`, 0.8°).
 
-**Restart the arm bridge on the robot once** to get the `traj` feature (the
+**Restart the arm bridge on the robot once** to get the `traj` and
+`traj_points` features (the
 bridge is copied when `start_arm.sh` starts it):
 `ssh unitree@ubuntu.local "pkill -TERM -f arm_bridge_[w]ifi"`, then
 `./scripts/runtime/start_arm.sh --check`.
@@ -357,15 +391,18 @@ sag). The cost is time: an 87° move takes ~5 s at 30 °/s.
 
 | Option | Env (also for `start_arm.sh play`) | Default | Effect |
 |---|---|---|---|
-| `--max-vel` | `ARM_MAX_VEL` | 30 °/s | faster / slower moves |
-| `--max-acc` | `ARM_MAX_ACC` | 60 °/s² | gentler starts and stops when lower |
+| `--planner` | `ARM_PLANNER` | `ruckig` | `minjerk`: the min-jerk + PID move |
+| `--max-vel` | `ARM_MAX_VEL` | 60 °/s (minjerk: 30) | faster / slower moves |
+| `--max-acc` | `ARM_MAX_ACC` | 90 °/s² (minjerk: 60) | gentler starts and stops when lower |
+| `--max-jerk` | `ARM_MAX_JERK` | 300 °/s³ | ruckig: smoother ramps when lower |
+| `--on-interrupt` | `ARM_ON_INTERRUPT` | `release` | Ctrl+C: `lock` holds the arm instead of releasing it |
 | `--kp` / `--ki` / `--kd` | `ARM_KP` / `ARM_KI` / `ARM_KD` | 0.3 / 0.4 / 0.02 | correction strength; lower `kp` if it still oscillates, raise `ki` if it stops short |
 | `--deadband` | `ARM_DEADBAND` | 0.5° | larger if it twitches at rest |
-| `--no-pid` | `ARM_PID=0` | off | one jump per pose (the old behaviour) |
+| `--no-pid` | `ARM_PID=0` | off | one jump per pose, no trajectory (the old behaviour) |
 
 At the end it goes home again and **stays locked**; `--release` releases it at home (support
-it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
-locks the arm where it stopped.
+it first, or fold it with `start_arm.sh fold` instead). An error locks the arm
+where it stopped; Ctrl+C releases it (see above).
 
 To take the holding tension off afterwards (or after teaching, which leaves
 the arm locked):
