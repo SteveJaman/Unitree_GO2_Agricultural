@@ -16,6 +16,48 @@ Sections are self-contained. Search for the error message you see.
 
 ---
 
+## Debug page: why isn't it moving?
+
+A second local web page shows what the navigation stack is doing, next to
+the dashboard (port 3000). Start it in another terminal while a
+`wifi_nav.sh` / `wifi_3d_nav.sh` session runs (or before; it waits for one):
+
+```bash
+python3 scripts/tools/debug_dashboard.py      # then open http://localhost:3001
+```
+
+- **Why isn't it moving?** The chain from the LiDAR to the legs, checked in
+  order, each green / amber / red with what to do:
+  - Nav2 nodes up;
+  - LiDAR scans arriving, and how fast;
+  - position (TF) fresh;
+  - manual control (Drive pad) on;
+  - a goal set;
+  - planner found a path;
+  - the dog standing in an obstacle, or one right ahead (costmap);
+  - controller and smoother sending commands;
+  - the dog actually walking (speed from TF);
+  - recovery stuck, battery, recent ROS errors;
+  - robot ping and Wi-Fi.
+- **Command chain:** `/cmd_vel_nav` (controller) → `/cmd_vel` (to the robot) →
+  speed actually walked.
+- **Local costmap** as Nav2 sees it, with the footprint and the plan: ghost
+  obstacles show up here.
+- **Topic health:** rate and age of each topic Nav2 depends on.
+- **ROS warnings and errors** from every node (`/rosout`), counts per node.
+- **Logs** in one viewer: the 3D twin, the explorer, the session (SLAM,
+  motion bridge, RViz), Nav2 (controller, planner, smoother), recovery, the
+  LiDAR self-filter, and the robot's camera and arm bridge. Filter to warnings
+  and errors, or auto-refresh.
+- **System:** containers, robot ping, Wi-Fi signal, UDP buffers, Ollama.
+
+The data come from a read-only probe
+([`go2_debug_probe.py`](../scripts/nodes/go2_debug_probe.py)), started inside
+`go2-lidar3d` with the session's DDS settings. It only subscribes, so the page
+cannot move the dog. It measures only topics made on this computer, so it adds
+no Wi-Fi traffic. By default it is reachable only from this computer; add
+`--host 0.0.0.0` to open it from the LAN, and `--port` to change the port.
+
 ## At a glance
 
 | Symptom | Cause | Fix |

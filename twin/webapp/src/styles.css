@@ -176,6 +176,40 @@ button { font: inherit; color: inherit; }
 .chip:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); }
 .chip.active { color: #04131a; background: var(--accent); border-color: var(--accent); font-weight: 600; }
 
+/* ------------------------------------------- bottom right, above the camera: Drive pad */
+.drive-fab, .drive { position: absolute; right: var(--gap); bottom: calc(2 * var(--gap) + 180px); z-index: 20; }
+.drive-fab {
+  display: flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; cursor: pointer;
+  color: var(--text); font-size: 14px; font-weight: 600; border: 1px solid var(--stroke-strong);
+}
+.drive-fab:disabled { opacity: .45; cursor: not-allowed; }
+.drive { width: 300px; padding: 12px; display: flex; flex-direction: column; gap: 10px; touch-action: none; user-select: none; }
+.drive.on { border-color: rgba(245, 165, 36, .55); box-shadow: 0 10px 40px rgba(245, 165, 36, .18); }
+.drive-head { display: flex; align-items: center; justify-content: space-between; }
+.drive-title { font-weight: 650; }
+.drive-sub { color: var(--muted); font-size: 12px; margin-top: -6px; }
+.drive-body { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.drive-stick {
+  position: relative; width: 150px; height: 150px; border-radius: 50%; flex: none; touch-action: none; cursor: grab;
+  background: radial-gradient(circle, rgba(255, 255, 255, .06) 0 40%, rgba(255, 255, 255, .02) 41%);
+  border: 1px solid var(--stroke-strong);
+}
+.drive-knob {
+  position: absolute; left: 30%; top: 30%; width: 40%; height: 40%; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 4px 16px rgba(34, 211, 238, .45); pointer-events: none;
+}
+.drive-strafe {
+  width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--stroke-strong); cursor: pointer; touch-action: none;
+  background: rgba(255, 255, 255, .06); color: var(--text); font-size: 18px;
+}
+.drive-strafe:active { background: rgba(34, 211, 238, .25); }
+.drive-stop {
+  width: 100%; padding: 12px; border: 0; border-radius: 14px; cursor: pointer; font-size: 16px; font-weight: 800; letter-spacing: .08em;
+  color: #fff; background: linear-gradient(135deg, #f43f5e, #be123c); box-shadow: 0 8px 24px rgba(244, 63, 94, .35);
+}
+.drive-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.drive-keys { color: var(--muted); font-size: 11px; }
+
 /* ---------------------------------------------------------- bottom right: camera PiP */
 .pip {
   position: absolute; right: var(--gap); bottom: var(--gap); width: 320px; aspect-ratio: 16 / 9;
@@ -314,6 +348,7 @@ button { font: inherit; color: inherit; }
   .controls { width: 330px; }
   .menu { width: 280px; }
   .pip { width: 400px; }
+  .drive-fab, .drive { bottom: calc(2 * var(--gap) + 225px); }
   .rooms { width: 320px; }
 }
 
@@ -334,6 +369,7 @@ button { font: inherit; color: inherit; }
   .room-go select { padding: 9px 0; }
   .chip { padding: 6px 10px; }
   .pip { width: 260px; }
+  .drive-fab, .drive { bottom: calc(2 * var(--gap) + 147px); }
   .rooms-fab, .rooms { top: 66px; }
   .rooms { width: 280px; }
 }
@@ -343,6 +379,7 @@ button { font: inherit; color: inherit; }
   .explore-sub { display: none; }
   .survey-steps, .survey-results { display: none; }
   .pip { width: 220px; }
+  .drive-fab, .drive { bottom: calc(2 * var(--gap) + 124px); }
 }
 
 /* Phones / narrow windows */
@@ -359,6 +396,10 @@ button { font: inherit; color: inherit; }
     max-height: calc(100vh - 4 * var(--gap) - 216px - var(--controls-h, 0px));
     max-height: calc(100dvh - 4 * var(--gap) - 216px - var(--controls-h, 0px));
   }
+  /* Drive: a button above the small camera; open, a sheet over the controls. */
+  .drive-fab { right: auto; left: var(--gap); bottom: calc(var(--gap) + 30px); }
+  .drive { left: var(--gap); right: var(--gap); width: auto; bottom: var(--gap); z-index: 1400; background: var(--glass-strong); }
+  .drive-keys { display: none; }
   .vlm-badge, .vlm-toast { top: auto; bottom: calc(2 * var(--gap) + 120px + var(--controls-h, 0px)); }
   /* Settings open as a full-width sheet over everything, not squeezed
      between the top bar and the controls. */

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Go2 Debug</title>
+<style>
+  :root {
+    --bg: #05070b; --card: #0e131c; --card2: #131a26; --stroke: rgba(255,255,255,.09);
+    --text: #f1f5f9; --muted: #94a3b8; --accent: #22d3ee;
+    --ok: #34d399; --warn: #f5a524; --bad: #ff3b5c; --info: #60a5fa;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+           background: rgba(5,7,11,.92); border-bottom: 1px solid var(--stroke); backdrop-filter: blur(8px); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; }
+  header h1 span { color: var(--accent); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+          background: var(--card2); border: 1px solid var(--stroke); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  header .grow { flex: 1; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; padding: 14px 16px 40px; max-width: 1600px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--stroke); border-radius: 14px; padding: 14px; min-width: 0; }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
+  .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; }
+  .check { display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--card2); border-left: 4px solid var(--muted); }
+  .check.ok { border-color: var(--ok); } .check.warn { border-color: var(--warn); } .check.bad { border-color: var(--bad); } .check.info { border-color: var(--info); }
+  .check .ic { font-size: 16px; line-height: 1.2; }
+  .check b { display: block; font-weight: 650; }
+  .check small { color: var(--muted); display: block; margin-top: 2px; word-break: break-word; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--stroke); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  .tag { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--card2); }
+  .ok-t { color: var(--ok); } .warn-t { color: var(--warn); } .bad-t { color: var(--bad); } .muted { color: var(--muted); }
+  .chain { display: flex; align-items: stretch; gap: 6px; flex-wrap: wrap; }
+  .chain .box { flex: 1; min-width: 120px; background: var(--card2); border-radius: 10px; padding: 8px 10px; }
+  .chain .box small { color: var(--muted); display: block; }
+  .chain .box .v { font-family: var(--mono); font-size: 13px; margin-top: 4px; }
+  .chain .arrow { align-self: center; color: var(--muted); }
+  canvas { width: 100%; max-width: 480px; aspect-ratio: 1; display: block; margin: 0 auto; background: #000; border-radius: 10px; image-rendering: pixelated; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 8px; justify-content: center; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); word-break: break-word; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; }
+  select, button, input { background: var(--card2); color: var(--text); border: 1px solid var(--stroke); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; }
+  button { cursor: pointer; } button.on { background: var(--accent); color: #04131a; border-color: var(--accent); font-weight: 600; }
+  pre.log { margin: 0; max-height: 460px; overflow: auto; background: #000; border-radius: 10px; padding: 10px; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  pre.log .e { color: var(--bad); } pre.log .w { color: var(--warn); }
+  .ros { max-height: 360px; overflow: auto; }
+  .ros td.msg { font-family: var(--mono); font-size: 12px; word-break: break-word; }
+  @media (max-width: 760px) { main { padding: 10px; gap: 10px; } header { flex-wrap: wrap; } .checks { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Go2 <span>Debug</span></h1>
+  <span class="pill"><span id="liveDot" class="dot"></span><span id="liveText">connecting…</span></span>
+  <span class="grow"></span>
+  <span class="pill" id="updated">–</span>
+</header>
+<main>
+  <section class="card wide">
+    <h2>Why isn't it moving? — checked from the LiDAR to the legs</h2>
+    <div class="checks" id="checks"></div>
+  </section>
+
+  <section class="card">
+    <h2>Command chain</h2>
+    <div class="chain" id="chain"></div>
+    <h2 style="margin-top:14px">Navigation</h2>
+    <dl class="kv" id="nav"></dl>
+  </section>
+
+  <section class="card">
+    <h2>Local costmap (what Nav2 sees)</h2>
+    <canvas id="costmap" width="480" height="480"></canvas>
+    <div class="legend">
+      <span><i style="background:#ff3b5c"></i>obstacle</span>
+      <span><i style="background:#22d3ee"></i>too close (inscribed)</span>
+      <span><i style="background:#7c3aed"></i>inflation</span>
+      <span><i style="background:#334155"></i>unknown</span>
+      <span><i style="background:#facc15"></i>footprint</span>
+      <span><i style="background:#34d399"></i>plan</span>
+    </div>
+    <div class="muted" id="cmNote" style="text-align:center;font-size:12px;margin-top:4px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Topic health</h2>
+    <table><thead><tr><th>Topic</th><th class="num">Hz</th><th class="num">Last</th></tr></thead><tbody id="topics"></tbody></table>
+  </section>
+
+  <section class="card">
+    <h2>System</h2>
+    <dl class="kv" id="system"></dl>
+  </section>
+
+  <section class="card wide">
+    <div class="toolbar">
+      <h2 style="margin:0;flex:1">ROS warnings &amp; errors (/rosout)</h2>
+      <button id="rosAll" class="on">All</button><button id="rosErr">Errors only</button>
+    </div>
+    <div class="toolbar" id="rosCounts"></div>
+    <div class="ros"><table><thead><tr><th>Time</th><th>Level</th><th>Node</th><th>Message</th></tr></thead><tbody id="rosout"></tbody></table></div>
+  </section>
+
+  <section class="card wide">
+    <div class="toolbar">
+      <h2 style="margin:0;flex:1">Logs</h2>
+      <select id="logSel"></select>
+      <select id="logN"><option>100</option><option selected>300</option><option>1000</option></select>
+      <button id="logWarn">Warnings + errors</button>
+      <button id="logAuto">Auto-refresh</button>
+      <button id="logGo">Refresh</button>
+    </div>
+    <pre class="log" id="log">Pick a log.</pre>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ICON = { ok: '✓', warn: '!', bad: '✕', info: 'i' };
+const fmtAge = (a) => a == null ? '—' : a < 1 ? 'now' : a < 90 ? `${a.toFixed(0)} s ago` : `${(a / 60).toFixed(0)} min ago`;
+let grid = null, rosErrOnly = false, lastState = null;
+
+function renderChecks(checks) {
+  const order = { bad: 0, warn: 1, info: 2, ok: 3 };
+  $('checks').innerHTML = checks.slice().sort((a, b) => order[a.level] - order[b.level]).map((c) => `
+    <div class="check ${c.level}"><span class="ic ${c.level}-t">${ICON[c.level] || '•'}</span>
+      <div><b>${esc(c.title)}</b>${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</div></div>`).join('');
+}
+
+function renderChain(st) {
+  const box = (title, c, sub) => {
+    if (!c) return `<div class="box"><small>${title}</small><div class="v muted">no messages</div><small>${sub}</small></div>`;
+    const stale = c.age > 1.5;
+    return `<div class="box"><small>${title}</small><div class="v ${stale ? 'muted' : ''}">vx ${c.vx.toFixed(2)} vy ${c.vy.toFixed(2)} wz ${c.wz.toFixed(2)}</div><small>${sub} · ${fmtAge(c.age)}</small></div>`;
+  };
+  const sp = st.pose?.speed;
+  $('chain').innerHTML = box('Controller', st.cmd['/cmd_vel_nav'], '/cmd_vel_nav') + '<span class="arrow">→</span>'
+    + box('To the robot', st.cmd['/cmd_vel'], '/cmd_vel') + '<span class="arrow">→</span>'
+    + `<div class="box"><small>Actually walking</small><div class="v">${sp ? `${sp.lin.toFixed(2)} m/s, ${sp.ang.toFixed(2)} rad/s` : '—'}</div><small>from TF</small></div>`;
+  const s = st.status || {}, n = st.nav || {};
+  const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+  const act = (a) => a ? `${esc(a.state || '—')}${a.for != null ? ` <span class="muted">(${fmtAge(a.for).replace(' ago', '')})</span>` : ''}${a.abort_ago != null && a.abort_ago < 120 ? ` <span class="bad-t">abort ${fmtAge(a.abort_ago)}</span>` : ''}` : '—';
+  const str = (k) => s[k] ? `${esc(s[k].data)} <span class="muted">${fmtAge(s[k].age)}</span>` : '<span class="muted">—</span>';
+  $('nav').innerHTML = row('Planner', act(n['/compute_path_to_pose'])) + row('Controller', act(n['/follow_path']))
+    + row('Goal', st.goal ? `${st.goal.x}, ${st.goal.y} <span class="muted">${fmtAge(st.goal.age)}</span>` : '—')
+    + row('Position', st.pose ? `${st.pose.x}, ${st.pose.y}, yaw ${(st.pose.yaw * 57.3).toFixed(0)}° <span class="muted">TF ${st.pose.tf_age ?? '?'} s</span>` : '<span class="bad-t">none</span>')
+    + row('Explorer', str('/explore/status')) + row('Recovery', str('/recovery/status'))
+    + row('Drive pad', str('/teleop/status')) + row('VLM', str('/vlm_decision'))
+    + row('Battery', st.battery ? `${st.battery.pct} % · ${st.battery.v} V` : '—');
+}
+
+function renderTopics(st) {
+  $('topics').innerHTML = Object.entries(st.topics).map(([t, v]) => {
+    const cls = v.age == null ? 'bad-t' : v.age > 3 ? 'warn-t' : 'ok-t';
+    return `<tr><td><span class="tag">${esc(t)}</span></td><td class="num ${cls}">${v.hz.toFixed(1)}</td><td class="num ${cls}">${v.age == null ? 'never' : fmtAge(v.age)}</td></tr>`;
+  }).join('') + `<tr><td colspan="3" class="muted">ROS nodes seen: ${st.nodes.length}</td></tr>`;
+}
+
+function renderSystem(h, probe) {
+  const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+  const p = h.ping, w = h.wifi;
+  $('system').innerHTML = row('Probe', esc(probe.note))
+    + row('Robot', h.robot_ip ? `${h.robot_ip}${p ? ` · <span class="${p.loss ? 'bad-t' : 'ok-t'}">${p.loss}% loss</span>, avg ${p.avg_ms ?? '–'} / max ${p.max_ms ?? '–'} ms` : ''}` : '<span class="muted">unknown</span>')
+    + row('Wi-Fi', w ? `${esc(w.ssid || '?')} · ${w.signal_dbm != null
+        ? `<span class="${w.signal_dbm < -70 ? 'warn-t' : 'ok-t'}">${w.signal_dbm} dBm</span>`
+        : `<span class="${(w.signal_pct ?? 0) < 50 ? 'warn-t' : 'ok-t'}">${w.signal_pct ?? '?'} %</span>`} · ${esc(w.tx || '?')}` : '<span class="muted">—</span>')
+    + row('UDP buffers', h.rmem_max ? `${(h.rmem_max / 1048576).toFixed(1)} MB${h.rmem_max < 8e6 ? ' <span class="warn-t">(raise to 16 MB)</span>' : ''}` : '—')
+    + row('Ollama', h.ollama ? esc(h.ollama.join(', ') || 'running, no models') : '<span class="muted">not running</span>')
+    + row('Containers', (h.containers || []).map((c) => `${esc(c.name)} <span class="${/^Up/.test(c.status) ? 'ok-t' : 'muted'}">${esc(c.status)}</span>`).join('<br>') || '—')
+    + row('Sessions', (h.sessions || []).map((s) => esc(s.replace(/^\d+\s+/, '').slice(0, 90))).join('<br>') || '<span class="muted">none</span>');
+}
+
+function renderRos(st) {
+  const counts = st.rosout_counts || {};
+  $('rosCounts').innerHTML = Object.entries(counts).sort((a, b) => (b[1].ERROR + b[1].WARN) - (a[1].ERROR + a[1].WARN)).slice(0, 12)
+    .map(([n, c]) => `<span class="pill">${esc(n)} <span class="bad-t">${c.ERROR + c.FATAL}</span>/<span class="warn-t">${c.WARN}</span></span>`).join('');
+  const rows = (st.rosout || []).filter((e) => !rosErrOnly || e.level !== 'WARN').slice().reverse();
+  $('rosout').innerHTML = rows.length ? rows.map((e) => `<tr><td class="num">${new Date(e.t * 1000).toLocaleTimeString()}</td>
+    <td class="${e.level === 'WARN' ? 'warn-t' : 'bad-t'}">${e.level}</td><td><span class="tag">${esc(e.node)}</span></td><td class="msg">${esc(e.msg)}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">No warnings or errors since the probe started.</td></tr>';
+}
+
+// --- costmap drawing (map frame, y up)
+const COLORS = (() => {
+  const c = new Uint8ClampedArray(256 * 4);
+  for (let v = 0; v < 256; v++) {
+    let rgb;
+    if (v === 255) rgb = [51, 65, 85];
+    else if (v >= 100) rgb = [255, 59, 92];
+    else if (v === 99) rgb = [34, 211, 238];
+    else if (v === 0) rgb = [12, 16, 24];
+    else { const f = v / 98; rgb = [Math.round(40 + 84 * f), Math.round(20 + 38 * f), Math.round(60 + 177 * f)]; }
+    c.set([...rgb, 255], v * 4);
+  }
+  return c;
+})();
+function drawCostmap(st) {
+  const cm = st.costmap, cv = $('costmap'), ctx = cv.getContext('2d');
+  if (cm?.grid) grid = { ...cm, bytes: Uint8Array.from(atob(cm.grid), (ch) => ch.charCodeAt(0)), plan: st.plan || [] };
+  if (!cm) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height); $('cmNote').textContent = 'No local costmap.'; return; }
+  if (!grid) return;
+  const { w, h, res, ox, oy, bytes } = grid;
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) {
+    const v = bytes[i * w + j], o = ((h - 1 - i) * w + j) * 4;
+    img.data.set(COLORS.subarray(v * 4, v * 4 + 4), o);
+  }
+  const off = new OffscreenCanvas(w, h); off.getContext('2d').putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(off, 0, 0, cv.width, cv.height);
+  const sx = cv.width / w, sy = cv.height / h;
+  const px = (x, y) => [((x - ox) / res) * sx, (h - (y - oy) / res) * sy];
+  if (grid.plan.length > 1) {
+    ctx.strokeStyle = '#34d399'; ctx.lineWidth = 2; ctx.beginPath();
+    grid.plan.forEach(([x, y], k) => { const [a, b] = px(x, y); k ? ctx.lineTo(a, b) : ctx.moveTo(a, b); }); ctx.stroke();
+  }
+  const p = st.pose;
+  if (p) {
+    const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+    const corner = ([fx, fy]) => px(p.x + c * fx - s * fy, p.y + s * fx + c * fy);
+    ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2; ctx.beginPath();
+    [[0.36, 0.2], [0.36, -0.2], [-0.45, -0.2], [-0.45, 0.2]].map(corner).forEach(([a, b], k) => (k ? ctx.lineTo(a, b) : ctx.moveTo(a, b)));
+    ctx.closePath(); ctx.stroke();
+    const [ax, ay] = corner([0.36, 0]), [bx, by] = corner([0.75, 0]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  const u = cm.under, a = cm.ahead;
+  $('cmNote').textContent = `${(w * res).toFixed(1)} × ${(h * res).toFixed(1)} m` + (u ? ` · under footprint: max cost ${u.max}` : '') + (a ? ` · ahead: max ${a.max}` : '');
+}
+
+async function tick() {
+  try {
+    const r = await fetch('/api/state', { cache: 'no-store' });
+    const d = await r.json();
+    const live = !!d.probe.state;
+    $('liveDot').className = 'dot ' + (live ? 'ok' : 'bad');
+    $('liveText').textContent = live ? 'live' : d.probe.note;
+    $('updated').textContent = new Date().toLocaleTimeString();
+    renderChecks(d.checks);
+    renderSystem(d.health || {}, d.probe);
+    if (live) { lastState = d.probe.state; renderChain(lastState); renderTopics(lastState); renderRos(lastState); drawCostmap(lastState); }
+  } catch (e) {
+    $('liveDot').className = 'dot bad'; $('liveText').textContent = 'debug server not reachable';
+  }
+}
+$('rosAll').onclick = () => { rosErrOnly = false; $('rosAll').classList.add('on'); $('rosErr').classList.remove('on'); if (lastState) renderRos(lastState); };
+$('rosErr').onclick = () => { rosErrOnly = true; $('rosErr').classList.add('on'); $('rosAll').classList.remove('on'); if (lastState) renderRos(lastState); };
+
+// --- logs
+let logWarn = false, logTimer = null;
+async function loadLogs() {
+  const list = await (await fetch('/api/logs')).json();
+  $('logSel').innerHTML = list.map((l) => `<option value="${esc(l.id)}">${esc(l.label)}</option>`).join('');
+  try { const saved = localStorage.getItem('go2debug.log'); if (saved && list.some((l) => l.id === saved)) $('logSel').value = saved; } catch { /* no storage */ }
+}
+async function showLog() {
+  const id = $('logSel').value; if (!id) return;
+  try { localStorage.setItem('go2debug.log', id); } catch { /* no storage */ }
+  $('log').textContent = 'loading…';
+  const d = await (await fetch(`/api/log?id=${encodeURIComponent(id)}&n=${$('logN').value}`)).json();
+  let lines = (d.text || d.error || '(empty)').split('\n');
+  if (logWarn) lines = lines.filter((l) => /warn|error|fatal|fail|abort|exception|traceback/i.test(l));
+  $('log').innerHTML = lines.map((l) => {
+    const cls = /error|fatal|fail|exception|traceback/i.test(l) ? 'e' : /warn/i.test(l) ? 'w' : '';
+    return cls ? `<span class="${cls}">${esc(l)}</span>` : esc(l);
+  }).join('\n') || '(no matching lines)';
+  $('log').scrollTop = $('log').scrollHeight;
+}
+$('logGo').onclick = showLog; $('logSel').onchange = showLog; $('logN').onchange = showLog;
+$('logWarn').onclick = () => { logWarn = !logWarn; $('logWarn').classList.toggle('on', logWarn); showLog(); };
+$('logAuto').onclick = () => {
+  if (logTimer) { clearInterval(logTimer); logTimer = null; } else { logTimer = setInterval(showLog, 3000); showLog(); }
+  $('logAuto').classList.toggle('on', !!logTimer);
+};
+
+loadLogs();
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

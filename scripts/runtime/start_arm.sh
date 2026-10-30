@@ -77,7 +77,7 @@ bridge_open() { (exec 3<>"/dev/tcp/${ARM_ROBOT}/${ARM_BRIDGE_PORT}") 2>/dev/null
 # copies and builds it once). Detached with setsid, so it outlives this run.
 start_bridge() {
     local robot="${GO2_ROBOT_USER}@${ARM_ROBOT}"
-    if ! ssh "${GO2_SSH_OPTS[@]}" -T -n -o ConnectTimeout=5 "${robot}" \
+    if ! timeout 20 ssh "${GO2_SSH_OPTS[@]}" -T -n -o ConnectTimeout=5 "${robot}" \
             "test -f ~/go2-agri-arm/ws/install/setup.bash" 2>/dev/null; then
         echo "  [!] the arm bridge is not deployed/built on the robot (or no SSH)"
         echo "      Once: ./scripts/runtime/wifi_nav.sh --arm-wifi, then on the robot:"

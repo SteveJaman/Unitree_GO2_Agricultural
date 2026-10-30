@@ -105,18 +105,23 @@ here means the original real-dog setup **plus** these fixes, not plain Nav2.
 | **Inflation counts as free** for recovery (`free_threshold` 99, was 50) | In a doorway every cell is inflation, so recovery reported `no free space` every time | It still refuses inscribed and lethal cells and unknown space |
 | **Recovery on the stack's DDS setup** (`DDS_EXEC_ENV`) | Recovery never saw the aborts | It sees and handles them |
 | **Explorer waits for recovery** (`recovery_wait_s` 8 s) | The explorer dropped the goal at once and sent a new one mid-escape | It keeps the goal until recovery retries it, then gives up if nothing happens |
+| **Camera check of a blocked front** (with `--ai`, the default) | A LiDAR ghost in front of the nose (reflection, dust, a smeared scan) stops the dog for good | Recovery asks the camera VLM first. `CLEAR` clears both costmaps and retries (twice per goal); `BLOCKED LEFT/RIGHT` sidesteps that way. See [3d_nav.md](../ai_and_vision/3d_nav.md#vlm-reasoning-ollama) |
+| **VLM sidestep** (with `--ai`) | The VLM could only pause and dock | Both VLM answers must say BLOCKED. Only while Nav2 drives, at most twice in 2 minutes: pause Nav2, step 0.35 m to the free side (costmap-checked), continue. The step goes on `/cmd_vel` in every drive mode |
 
 ### Not hitting obstacles
 
 | Change | Why |
 |---|---|
 | **Lidar mount from the official Go2 URDF** (`lidar3d_robot_viz.yaml`) | The shipped value came from another robot. On ours it tilted the body about 20° and turned the heading about 120°, so Nav2 steered on the wrong heading |
-| **Regulated Pure Pursuit instead of DWB**, behind a rotation shim (turns in place when more than 0.8 rad off the path) | DWB plans from the measured velocity, which is noisy over Wi-Fi (about ±0.1 m/s while standing still). RPP follows the path geometrically |
+| **Regulated Pure Pursuit instead of DWB**, behind a rotation shim (turns in place when more than 0.5 rad off the path, at 0.3 rad/s: faster turns tilted Point-LIO's map) | DWB plans from the measured velocity, which is noisy over Wi-Fi (about ±0.1 m/s while standing still). RPP follows the path geometrically |
 | **Velocity smoother** (acceleration limits, deadband) | Smooth starts and stops. No stepping in place on tiny commands |
-| **Floor filter** ([`go2_floor_filter.py`](../../scripts/nodes/go2_floor_filter.py)) | Fits the ground plane in each scan and removes floor points, so a slightly tilted floor is not marked as an obstacle |
-| **Camera obstacles** (`--camera-obstacles`, [`go2_camera_obstacles.py`](../../scripts/nodes/go2_camera_obstacles.py)) | Adds glass, thin legs, dark surfaces and the area right in front of the dog (all missed by the lidar) to the costmap. Monocular depth is scaled to metres with the lidar |
+| **LiDAR self-filter** (go2-nav2-wifi `go2_urdf_self_filter`, on in 3D sessions) | Removes the dog's own legs and body from the scan (`/lidar3d/obstacle_points`, which both costmaps read), using the URDF and `/joint_states` |
+| **Costmap clearing** ([`relax-costmap.sh`](../../scripts/tools/relax-costmap.sh), every `wifi_3d_nav.sh` start) | Marks were cleared only to 5 m but made to 12 m, so stray points stayed for good. Now cleared as far as they are marked, and inflation decays twice as fast (`cost_scaling_factor` 5). Obstacle heights unchanged |
+| **Floor filter** ([`go2_floor_filter.py`](../../scripts/nodes/go2_floor_filter.py), **off by default**, `--floor-filter`) | Fits the ground plane in each scan and removes floor points, so a slightly tilted floor is not marked as an obstacle. Not for 3D sessions as is: it publishes on `/lidar3d/obstacle_points` too and reads the unfiltered scan, so the dog's legs would come back |
+| **Camera obstacles** (**off by default**, `--camera-obstacles`, [`go2_camera_obstacles.py`](../../scripts/nodes/go2_camera_obstacles.py)) | Adds glass, thin legs, dark surfaces and the area right in front of the dog (all missed by the lidar) to the costmap. Monocular depth is scaled to metres with the lidar. Needs the lens calibration (`config/camera/front_camera.yaml`, `scripts/tools/calibrate_camera.sh`) |
 | **Safe click-to-goal** ([`go2_click_to_goal.py`](../../scripts/nodes/go2_click_to_goal.py)) | A click on a wall or desk is moved to the nearest known free floor cell |
-| **Stop on exit** | Ctrl+C sends a burst of zero commands, so the dog does not keep walking on its last command |
+| **Stop on exit** | Ctrl+C sends a burst of zero commands, so the dog does not keep walking on its last command. Every cleanup step has a time limit ([`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py)), so a stalled Wi-Fi link no longer makes Ctrl+C hang |
+| **Driving by hand** (dashboard **Drive** pad, [`go2_teleop.py`](../../scripts/nodes/go2_teleop.py)) | Through the same `/cmd_vel` and gait as Nav2, at Nav2's limits with ramps and a deadman, Nav2 paused meanwhile: Point-LIO keeps tracking. It sends `vy` (sidestep) straight to `/cmd_vel` in every drive mode |
 
 Details: [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md),
 [camera_lidar_fusion.md](../ai_and_vision/camera_lidar_fusion.md#camera-obstacles-for-nav2).
@@ -140,6 +145,7 @@ Parameters: [explorer.md](explorer.md#parameters).
 
 - **One DDS setup for every helper** (explorer, floor filter, recovery, stop).
   Before, START in RViz did nothing.
+- **Debug page** (`python3 scripts/tools/debug_dashboard.py`, <http://localhost:3001>): checks the chain from the LiDAR to the legs and shows why the dog is not moving ([troubleshooting](../troubleshooting.md#debug-page-why-isnt-it-moving)).
 - **Clock-skew check** between the robot and the laptop at start-up. Skew
   causes drift and shudder ([drift-and-shudder.md](drift-and-shudder.md)).
 - **Sim fixes:**

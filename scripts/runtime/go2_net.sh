@@ -68,7 +68,10 @@ GO2_IP_CACHE="${GO2_IP_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/go2_wifi_nav/robot
 # Host keys are pinned to an alias, not an IP: a DHCP change does not trigger
 # "REMOTE HOST IDENTIFICATION HAS CHANGED", and a different device that picks
 # up the old IP fails key verification instead of being trusted.
-GO2_SSH_OPTS=(-o BatchMode=yes -o HostKeyAlias=go2-robot -o StrictHostKeyChecking=accept-new)
+# ServerAlive: a link that stalls (Wi-Fi drop) fails after ~15 s instead of
+# hanging the run forever (ConnectTimeout only covers opening the connection).
+GO2_SSH_OPTS=(-o BatchMode=yes -o HostKeyAlias=go2-robot -o StrictHostKeyChecking=accept-new
+              -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 
 # Discovery logs go to stderr so $(find_go2_ip) captures only the IP.
 go2_log() { echo "$@" >&2; }

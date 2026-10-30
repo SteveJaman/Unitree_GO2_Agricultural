@@ -66,6 +66,14 @@ to Unitree's `Move()`, and so does the simulator.
   - With `hybrid`, it publishes straight to `/cmd_vel` 1.5 s after the abort
     (`escape_delay_s`), once the smoother has braked and stopped publishing,
     so the sidestep isn't clamped. Its log is `/tmp/stuck_recovery.log` in `go2-lidar3d`.
+  - **Camera check first.** If the costmap is blocked right in front of the
+    dog and the camera VLM runs (`--ai`), it first asks whether the obstacle is
+    real. `CLEAR` (a LiDAR ghost) clears the costmaps and retries;
+    `BLOCKED LEFT/RIGHT` sidesteps that way. See
+    [3D nav → VLM reasoning](../ai_and_vision/3d_nav.md#vlm-reasoning-ollama).
+  - **Sidestep on request** (`/recovery/sidestep`, from the VLM): it pauses
+    Nav2, steps 0.35 m on `/cmd_vel` (never clamped) into free costmap space,
+    then resumes.
 
 ### Why the dog used to stare at walls
 

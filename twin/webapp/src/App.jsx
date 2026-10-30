@@ -9,6 +9,7 @@ import Scene from './Scene.jsx';
 import StatusBar from './StatusBar.jsx';
 import CameraFeed from './CameraFeed.jsx';
 import ControlPanel from './ControlPanel.jsx';
+import DrivePad from './DrivePad.jsx';
 import MapMenu from './MapMenu.jsx';
 import VlmBadge from './VlmBadge.jsx';
 
@@ -315,6 +316,7 @@ function Dashboard() {
                     hasWaypoint={!!waypoint} onClearWaypoint={() => setWaypoint(null)}
                     rooms={rooms.rooms} onGoRoom={goToRoom} />
       <CameraFeed />
+      <DrivePad connected={connected} />
       <RoomsPanel rooms={rooms.rooms} connected={connected} open={roomsOpen} setOpen={setRoomsOpen}
                   editing={editing} setEditing={setEditing} merging={merging}
                   setMerging={(m) => { setMerging(m); setSelected([]); }}

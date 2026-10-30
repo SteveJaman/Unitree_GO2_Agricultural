@@ -78,6 +78,11 @@
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
 #   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
+#   TWIN_VLM_BLOCKED=sidestep (confirmed BLOCKED: VLM picks left/right, step round;
+#                    neither side free -> pause + dock) | dock (always pause + dock)
+#   TWIN_TELEOP=1 (dashboard Drive pad; 0 = off)
+#   TWIN_RELAX_COSTMAP=1 (relax-costmap.sh at start: clear stray LiDAR marks, faster
+#                    inflation decay; 0 = leave the costmap config alone)
 #   TWIN_ROOMS=1 (room segmentation)  TWIN_ROOM_DOOR_WIDTH=0.9  TWIN_ROOM_MIN_AREA=1.5
 #   TWIN_SURVEY=1 (survey node)  TWIN_SURVEY_AUTO=1 (start it unattended; --manual = 0)
 #   TWIN_AUTO_BUILD=1 (build a missing/outdated image; --no-build = 0)
@@ -185,6 +190,7 @@ TWIN_BATTERY_RESUME="${TWIN_BATTERY_RESUME:-20}"
 TWIN_DOCK="${TWIN_DOCK:-0 0 0}"
 TWIN_VLM_ACT="${TWIN_VLM_ACT:-1}"
 TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM:-2}"
+TWIN_VLM_BLOCKED="${TWIN_VLM_BLOCKED:-sidestep}"
 # Zero-touch localization at the dock whenever --ai or --resume is used.
 if { [ "${AI}" = "true" ] || [ "${RESUME}" = "true" ]; } && [ "${NO_LOCALIZE:-false}" != "true" ]; then
     TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-1}"
@@ -493,10 +499,10 @@ start_twin_when_ready() {
             -e TWIN_DEPTH_TOPIC -e TWIN_CAMINFO_TOPIC -e TWIN_CAMERA_TF -e TWIN_CAMERA_FRAME \
             -e TWIN_YOLO_MODEL -e TWIN_YOLO_RATE -e TWIN_YOLO_CLASSES -e TWIN_RTAB_ARGS \
             -e TWIN_VLM_URL -e TWIN_VLM_MODEL -e TWIN_VLM_PERIOD \
-            -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" \
+            -e TWIN_VLM_ACT="${TWIN_VLM_ACT}" -e TWIN_VLM_CONFIRM="${TWIN_VLM_CONFIRM}" -e TWIN_VLM_BLOCKED="${TWIN_VLM_BLOCKED}" \
             -e TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE}" -e TWIN_DOCK="${TWIN_DOCK}" \
             -e TWIN_ROOMS -e TWIN_ROOM_DOOR_WIDTH -e TWIN_ROOM_MIN_AREA \
-            -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" -e TWIN_INSPECT="${TWIN_INSPECT}" \
+            -e TWIN_TELEOP="${TWIN_TELEOP:-1}" -e TWIN_SURVEY -e TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-0}" -e TWIN_INSPECT="${TWIN_INSPECT}" \
             -e TWIN_PERISCOPE="${TWIN_PERISCOPE}" -e TWIN_WRIST_CAMERA_TF \
             -v "${TWIN_DB_DIR}:/data" -v "${TWIN_LOG_DIR}:/logs" \
             -v "${REPO_DIR}/config:/config" \
@@ -631,6 +637,15 @@ if [ "${TWIN_YOLO}" = 1 ]; then
     fi
 fi
 
+# Stray LiDAR marks clear as far as they are marked, and inflation decays
+# faster (relax-costmap.sh, idempotent; obstacle heights unchanged).
+if [ "${TWIN_RELAX_COSTMAP:-1}" = 1 ]; then
+    echo "[3d] Costmap: clear stray marks, faster inflation decay (relax-costmap.sh)..."
+    NAV2_WIFI_DIR="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" \
+        bash "${REPO_DIR}/scripts/tools/relax-costmap.sh" 2>&1 | sed 's/^/    /' ||
+        echo "[3d] WARN: relax-costmap.sh failed; continuing with the costmap as it is"
+fi
+
 # --wrist-camera: the D1 wrist camera's depth cloud also marks Nav2's costmap
 # (add-wrist-costmap-source.sh, idempotent; --undo there removes it).
 if [ "${TWIN_WRIST_CAMERA}" = 1 ]; then
@@ -666,7 +681,7 @@ export CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}"
 on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ] || [ "${TWIN_MODE}" = fusion ]; } && echo "on if the camera publishes" || echo off; }
 echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
 echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"
-echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> pause + dock" || echo "report only" ))" )"
+echo "  VLM         : $(on_if_camera "${TWIN_VLM}")$( [ "${TWIN_VLM}" = 1 ] && echo " (${TWIN_VLM_MODEL:-llava:7b} at ${TWIN_VLM_URL:-http://localhost:11434/api/generate}; $( [ "${TWIN_VLM_ACT}" = 1 ] && echo "${TWIN_VLM_CONFIRM}x BLOCKED -> $( [ "${TWIN_VLM_BLOCKED}" = dock ] && echo "pause + dock" || echo "VLM-picked sidestep, else pause + dock" )" || echo "report only" ))" )"
 echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialpose at the dock (0 0 0) on start" || echo "manual" )"
 echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"

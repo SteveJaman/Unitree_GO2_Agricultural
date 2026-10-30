@@ -254,7 +254,7 @@ stop_exploration() {
     docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c '
         source /opt/ros/humble/setup.bash
         source /ws/install/setup.bash 2>/dev/null
-        timeout 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
+        timeout -k 2 3 ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}" 2>/dev/null || true
     ' 2>/dev/null || true
 }
 
@@ -1129,6 +1129,12 @@ elif [ "${ARM}" = "true" ]; then
         fi
     ) &
     ARM_PID=$!
+fi
+
+# mapping.sh's Ctrl+C cleanup waits on the robot over one shared SSH link; give
+# that link keep-alives and every cleanup step a time limit (idempotent).
+if [ "${SIM}" != "true" ]; then
+    python3 "${SCRIPT_DIR}/../tools/mapping_stop_timeouts.py" "${NAV2_WIFI_DIR}" || true
 fi
 
 # Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.

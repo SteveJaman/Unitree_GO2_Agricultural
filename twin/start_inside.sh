@@ -8,6 +8,8 @@
 #                         (/twin/webapp/dist if newer than the image's copy)
 #   * foxglove_bridge     :8765, only with TWIN_FOXGLOVE=1 (alternative viewer)
 #   * go2_click_to_goal   /clicked_point -> nearest safe floor -> /goal_pose
+#   * go2_teleop         (TWIN_TELEOP=1) dashboard Drive pad -> /cmd_vel, gentle,
+#                         Nav2 and the explorer paused while driving by hand
 #   * camera support      (if the camera publishes) base_link -> camera TF,
 #                         go2_camera_info.py (intrinsics), image_compressor.py
 #                         (JPEG copies for the dashboard)
@@ -194,6 +196,8 @@ if [ "$TWIN_FOXGLOVE" = 1 ]; then
 fi
 start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
     -p map_frame:="$TWIN_MAP_FRAME" -p robot_base_frame:="$TWIN_BASE_FRAME"
+# Dashboard Drive pad: joystick -> /cmd_vel at Nav2's limits, Nav2 paused meanwhile.
+[ "${TWIN_TELEOP:-1}" = 1 ] && start teleop python3 -u /nodes/go2_teleop.py
 
 # Rooms: costmap -> room polygons (/semantic_rooms), names/merges from the
 # dashboard, saved to config/semantic_rooms.json.
@@ -425,6 +429,7 @@ if [ "$TWIN_VLM" = 1 ] && { [ "$TWIN_MODE" = camera ] || [ "$TWIN_MODE" = fusion
         -p model:="$TWIN_VLM_MODEL" -p period:="$(float "$TWIN_VLM_PERIOD")" \
         -p act_on_blocked:="$( [ "$TWIN_VLM_ACT" = 1 ] && echo true || echo false )" \
         -p blocked_confirmations:="$TWIN_VLM_CONFIRM" \
+        -p blocked_action:="${TWIN_VLM_BLOCKED:-sidestep}" \
         -p dock_x:="$(float "$DOCK_X")" -p dock_y:="$(float "$DOCK_Y")" -p dock_yaw:="$(float "$DOCK_YAW")" \
         -p map_frame:="$TWIN_MAP_FRAME"
 elif [ "$TWIN_VLM" = 1 ]; then
