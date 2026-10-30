@@ -36,7 +36,8 @@ anything?". Connecting it to the real arm is the open step (see
 | `scripts/nodes/d1_arm_calibration.py` | `--read` the folded pose, `--move` fold (power on → enable → move → release → power off) |
 | `scripts/tools/calibrate_arm.py` | Measures per-joint offset (commanded vs reported angle) with small ± test moves |
 | `scripts/tools/teach_arm.py` | Plant scanning: guide the arm by hand in compliance mode, save scan poses to `config/arm_waypoints.json` |
-| `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home) |
+| `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home), smooth + PID (`start_arm.sh play`) |
+| `scripts/nodes/d1_motion.py` | Shake-free moves: minimum-jerk trajectory streamed as setpoints + outer PID on the measured angles |
 | `scripts/nodes/orbit_scan.py` | Orbit scan: scan pose, base sweep −90° → +90° with the wrist counter-rotating to keep the camera on a table-top object |
 | `scripts/tools/release_arm.py` | Release the holding tension: ramps the stiffness down to 0 so the arm sinks slowly, `--now` at once, `--power-off` |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
@@ -288,11 +289,10 @@ python3 scripts/tools/teach_arm.py --new    # new home + new sweep
    angles (telemetry address 2, funcode 1) go to `config/arm_waypoints.json`,
    written after every pose. At the prompt: **u** undoes the last pose, **h**
    re-records home, **l** lists home and the poses.
-4. Poses are saved exactly as measured. They are checked against the arm's
-   **reach**, `JOINT_REACH`: the published ranges + 10°, because a pose placed
-   by hand can go a little past them (the folded rest pose reads joint 2 at
-   +91.8°, a taught pose had joint 4 at +97.6°). Readings without telemetry or
-   beyond the reach (a telemetry glitch) are refused.
+4. Poses are saved exactly as measured, up to ±150° on any joint (the arm
+   reaches a little past Unitree's published ranges when placed by hand: its
+   fold reads joint 2 at +91.8°). Readings without telemetry or beyond ±150°
+   are refused.
 5. Type **q** to finish. The arm locks (`mode 80000`) where it is; Ctrl+C or
    Ctrl+D lock it too, so it never drops.
 
@@ -305,16 +305,48 @@ stiffens a partly compliant one); quitting always locks it.
 
 ```bash
 python3 scripts/tools/play_arm.py --dry-run  # check the file and print the poses
-python3 scripts/tools/play_arm.py            # run the sweep
+./scripts/runtime/start_arm.sh play          # run the sweep (preflight first)
+python3 scripts/tools/play_arm.py            # the same, directly
 ```
 
-Home and every waypoint are checked against the arm's reach (as when
-teaching) before anything moves. Then the arm powers on, locks, goes to the **recorded home** (the same
-smooth trajectory; the factory zero pose, `funcode 7`, if the file has no home
-or with `--factory-home`) and visits each pose
-with a smooth trajectory (`funcode 2`, `mode 1`). It waits until the pose is
-reached (within `--tolerance`, 3°), prints *"Waypoint N reached. [Camera
-should capture photo here]"* (with its name) and holds `--dwell` seconds (3).
+Home and every waypoint are checked (±150°) before anything moves. Then the
+arm powers on, locks, goes to the **recorded home** (the factory zero pose,
+`funcode 7`, if the file has no home or with `--factory-home`), visits each
+pose, prints *"Waypoint N reached"* (with its name) and holds `--dwell`
+seconds (1.5).
+
+**Smooth motion (PID), no shaking.** One big `funcode 2` jump makes the servos
+accelerate hard, overshoot and ring around the target, and corrections near
+the target make it hunt. So every move ([`d1_motion.py`](../../scripts/nodes/d1_motion.py)):
+
+1. follows a **minimum-jerk trajectory** from the measured angles to the
+   target (zero speed and acceleration at both ends), timed so no joint
+   exceeds `--max-vel` (30 °/s) or `--max-acc` (60 °/s²); all joints arrive
+   together;
+2. is streamed as small setpoints at 20 Hz (`--mode` is still the funcode 2
+   mode, 1 by default);
+3. runs an **outer PID** per joint on (setpoint − measured), which removes
+   gravity sag on the shoulder and elbow. P and D act only outside a
+   `--deadband` (0.5°), so telemetry noise never makes the arm hunt. The
+   integral only builds near the end of the move and is capped, as is the
+   whole correction (±6°). D uses the filtered measured rate;
+4. **settles**: it holds the target until every joint stays within
+   `--tolerance` (2°) for 0.5 s, or `--move-timeout` passes ("not reached …;
+   moving on").
+
+In a simulation of an underdamped, sagging arm (10 Hz telemetry, 0.2° noise),
+a single jump of the base by 87° overshot 42° and rang; the smooth PID move
+overshot 1.3° with no ringing and finished within 1.2° (the jump left 2.5° of
+sag). The cost is time: an 87° move takes ~5 s at 30 °/s.
+
+| Option | Env (also for `start_arm.sh play`) | Default | Effect |
+|---|---|---|---|
+| `--max-vel` | `ARM_MAX_VEL` | 30 °/s | faster / slower moves |
+| `--max-acc` | `ARM_MAX_ACC` | 60 °/s² | gentler starts and stops when lower |
+| `--kp` / `--ki` / `--kd` | `ARM_KP` / `ARM_KI` / `ARM_KD` | 0.3 / 0.4 / 0.02 | correction strength; lower `kp` if it still oscillates, raise `ki` if it stops short |
+| `--deadband` | `ARM_DEADBAND` | 0.5° | larger if it twitches at rest |
+| `--no-pid` | `ARM_PID=0` | off | one jump per pose (the old behaviour) |
+
 At the end it goes home again and **stays locked**; `--release` releases it at home (support
 it first, or fold it with `start_arm.sh fold` instead). Ctrl+C or an error
 locks the arm where it stopped.

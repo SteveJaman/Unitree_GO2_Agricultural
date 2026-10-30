@@ -49,6 +49,9 @@ WAYPOINTS = os.path.join(_repo, "config", "arm_waypoints.json")
 FREE = 0           # stiffness 0: no resistance at all (the arm does not hold itself up)
 ARM_JOINTS = 6     # joints 0-5; joint 6 (gripper) is not taught
 
+# OVERRIDE: Allow teaching up to 150 degrees instead of the official specs
+MAX_TEACH_REACH = 150.0
+
 
 def read_joints(arm, timeout=2.0):
     """The six arm joint angles (degrees) from telemetry, or None."""
@@ -73,17 +76,17 @@ def fmt(angles):
 
 
 def capture(arm):
-    """Current joints, saved exactly as measured, if telemetry answers and they
-    are within the arm's reach (JOINT_REACH: the published ranges + a margin,
-    since a hand-placed pose can go a little past them); else None (says why)."""
+    """Current joints, saved exactly as measured."""
     angles = read_joints(arm)
     if angles is None:
         print("  [!] no joint telemetry (address 2, funcode 1): not saved, try again")
         return None
-    bad = [f"joint {j} {a:+.1f}° (reach ±{JOINT_REACH[j]:.0f}°)"
-           for j, a in enumerate(angles) if abs(a) > JOINT_REACH[j]]
+
+    # Check against the new 150-degree limit
+    bad = [f"joint {j} {a:+.1f}° (reach ±{MAX_TEACH_REACH:.0f}°)"
+           for j, a in enumerate(angles) if abs(a) > MAX_TEACH_REACH]
     if bad:
-        print(f"  [!] beyond the arm's reach, not saved (telemetry glitch?): {', '.join(bad)}")
+        print(f"  [!] beyond the 150° limit, not saved: {', '.join(bad)}")
         return None
     return angles
 

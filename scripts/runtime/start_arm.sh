@@ -19,6 +19,8 @@
 #   ./start_arm.sh orbit                      # orbit scan around a table-top object
 #   ./start_arm.sh scan --target 0.55 0 0     # IK: aim the camera at a point (base_link, m) and sweep
 #   ./start_arm.sh periscope                  # lift the camera, look 45 deg down, hold until Ctrl+C
+#   ./start_arm.sh play                       # replay the taught poses, smooth + PID (no shaking)
+#   ./start_arm.sh play --max-vel 45 --kp 0.4 # faster, stiffer correction; --no-pid = old jumps
 #   ./start_arm.sh --calibrate --test-deg 10 --yes
 #   ./start_arm.sh --robot 192.168.1.9 fold   # arm on the Go2, over Wi-Fi
 #
@@ -30,6 +32,8 @@
 #   ARM_ROBOT  (unset = wired; Go2 Wi-Fi IP = through its bridge. Unset and
 #              no cable link on ARM_IFACE: the Go2 found by go2_net.sh is used)
 #   ARM_BRIDGE_PORT (default: 18100)
+#   ARM_MAX_VEL ARM_MAX_ACC ARM_KP ARM_KI ARM_KD ARM_DEADBAND ARM_PID=0
+#              smooth-motion defaults for play (scripts/nodes/d1_motion.py)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -106,6 +110,7 @@ FOLD="${REPO_ROOT}/scripts/nodes/d1_arm_calibration.py"
 ORBIT="${REPO_ROOT}/scripts/nodes/orbit_scan.py"
 IK_SCAN="${REPO_ROOT}/scripts/nodes/arm_ik_scanner.py"
 PERISCOPE="${REPO_ROOT}/scripts/nodes/arm_periscope.py"
+PLAY="${REPO_ROOT}/scripts/tools/play_arm.py"
 
 preflight() {
     local fail=0
@@ -177,6 +182,11 @@ case "$cmd" in
         shift
         preflight || { echo "[!] preflight failed"; exit 1; }
         exec python3 "$ORBIT" --iface "$ARM_IFACE" --skip-preflight "$@"
+        ;;
+    --play|play)
+        shift
+        preflight || { echo "[!] preflight failed"; exit 1; }
+        exec python3 "$PLAY" --iface "$ARM_IFACE" --ip "$ARM_IP" --skip-preflight "$@"
         ;;
     --periscope|periscope)
         shift

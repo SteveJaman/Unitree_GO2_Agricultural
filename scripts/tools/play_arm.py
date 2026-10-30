@@ -3,24 +3,22 @@
 play_arm.py
 
 Replay the home and plant-scan poses taught with teach_arm.py
-(config/arm_waypoints.json): lock, go home, then visit every pose with a
-smooth trajectory (funcode 2, mode 1) and hold it for the camera.
+(config/arm_waypoints.json): lock, go home, then visit every pose and hold it
+for the camera.
 
-Home is the pose recorded with teach_arm.py (reached with the same smooth
-trajectory). Without one, or with --factory-home, it is the arm's factory
-zero pose (funcode 7), as before.
-
-Workflow:
-    1. Check home and every pose against the joint limits (nothing moves if one fails)
-    2. Power on, lock (funcode 5, {"mode": 80000}), go home
-    3. Per pose: move, wait until it is reached, hold --dwell s
-       ("Waypoint N reached. [Camera should capture photo here]")
-    4. Home again. The arm stays locked; --release releases it at home
-Ctrl+C or an error locks the arm where it is (it never drops).
+Moves are shake-free by default (scripts/nodes/d1_motion.py): a minimum-jerk
+trajectory from the measured angles, streamed as small setpoints, with an
+outer PID loop that removes gravity sag without hunting around the target.
+--no-pid sends one funcode 2 jump per pose instead (the old behaviour).
+Tune with --max-vel / --max-acc (speed) and --kp / --ki / --kd / --deadband,
+or the matching ARM_* environment variables (start_arm.sh play passes them).
 
 Usage:
-    python3 scripts/tools/play_arm.py                  # replay once
-    python3 scripts/tools/play_arm.py --dwell 5
+    python3 scripts/tools/play_arm.py                  # replay once (fast defaults)
+    python3 scripts/tools/play_arm.py --dwell 3.0      # wait longer at each pose
+    python3 scripts/tools/play_arm.py --mode 0         # use fast mode (might shake)
+    python3 scripts/tools/play_arm.py --max-vel 45     # faster smooth moves
+    python3 scripts/tools/play_arm.py --no-pid         # one jump per pose (old)
     python3 scripts/tools/play_arm.py --dry-run        # print the plan, no arm
 """
 import argparse
@@ -35,30 +33,29 @@ _repo = os.path.dirname(os.path.dirname(_here))
 sys.path.insert(0, os.path.join(_repo, "scripts", "nodes"))
 try:
     from d1_arm_control import (
-        D1Arm, ENABLE_FULL, FUNC_JOINTS, JOINT_REACH, preflight,
+        D1Arm, ENABLE_FULL, FUNC_JOINTS, preflight,
         T_ENABLE, T_HOME, T_RELEASE, default_arm_iface,
     )
+    from d1_motion import MotionConfig, smooth_move
 except ImportError as e:
-    sys.exit(f"cannot import d1_arm_control: {e}")
+    sys.exit(f"cannot import d1_arm_control / d1_motion: {e}")
 
 WAYPOINTS = os.path.join(_repo, "config", "arm_waypoints.json")
 ARM_JOINTS = 6
+MAX_TEACH_REACH = 150.0
 
 
 def check_pose(label, a):
     if len(a) != ARM_JOINTS:
         sys.exit(f"[!] {label}: {len(a)} angles, expected {ARM_JOINTS}")
-    # Taught by hand: checked against the arm's reach, not the narrower spec.
-    bad = [f"joint {j} {v:+.1f}° (reach ±{JOINT_REACH[j]:.0f}°)"
-           for j, v in enumerate(a) if abs(v) > JOINT_REACH[j]]
+    bad = [f"joint {j} {v:+.1f}° (max ±150°)"
+           for j, v in enumerate(a) if abs(v) > MAX_TEACH_REACH]
     if bad:
-        sys.exit(f"[!] {label} beyond the arm's reach: {', '.join(bad)}")
+        sys.exit(f"[!] {label} beyond the 150° limit: {', '.join(bad)}")
     return [float(v) for v in a]
 
 
 def load_waypoints(path):
-    """(home angles or None, [(name, angles), ...]) from teach_arm.py's file;
-    exits with a message on errors."""
     if not os.path.isfile(path):
         sys.exit(f"[!] {path} not found: teach poses first (scripts/tools/teach_arm.py)")
     with open(path) as f:
@@ -75,20 +72,18 @@ def load_waypoints(path):
 
 
 def current(arm):
-    """All seven reported angles (joints 0-5 + gripper), or None."""
     d = (arm.angles(timeout=2.0) or {}).get("data", {})
     vals = [d.get(f"angle{i}") for i in range(7)]
     return None if any(v is None for v in vals) else [float(v) for v in vals]
 
 
 def wait_reached(arm, target, tol, timeout):
-    """Wait until joints 0-5 are within tol degrees of target; True if reached."""
     t0 = time.time()
     while time.time() - t0 < timeout:
         now = current(arm)
         if now and max(abs(n - t) for n, t in zip(now[:ARM_JOINTS], target)) <= tol:
             return True
-        time.sleep(0.2)
+        time.sleep(0.05) # Check more frequently for faster transitions
     return False
 
 
@@ -98,31 +93,54 @@ def main():
     )
     ap.add_argument("--iface", default=default_arm_iface())
     ap.add_argument("--domain", type=int, default=int(os.environ.get("ARM_DOMAIN", "0")))
-    ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.100"))
-    ap.add_argument("--file", default=WAYPOINTS, help="waypoint file (default: %(default)s)")
-    ap.add_argument("--dwell", type=float, default=3.0, help="s held at each waypoint")
-    ap.add_argument("--tolerance", type=float, default=3.0, help="degrees counted as reached")
-    ap.add_argument("--move-timeout", type=float, default=15.0, help="s allowed per move")
-    ap.add_argument("--release", action="store_true", help="release the arm at home when done")
-    ap.add_argument("--factory-home", action="store_true",
-                    help="use the arm's factory zero pose as home, not the recorded one")
-    ap.add_argument("--dry-run", action="store_true", help="print the plan, do not connect")
+    ap.add_argument("--ip", default=os.environ.get("ARM_IP", "192.168.123.150"))
+    ap.add_argument("--file", default=WAYPOINTS)
+
+    # --- FASTER DEFAULTS ---
+    ap.add_argument("--dwell", type=float, default=1.5, help="Seconds held at each waypoint (default: 1.0)")
+    ap.add_argument("--tolerance", type=float, default=2.0, help="Degrees counted as reached (default: 2.0)")
+    ap.add_argument("--move-timeout", type=float, default=8.0, help="Seconds allowed per move (default: 8.0)")
+    ap.add_argument("--mode", type=int, default=1, choices=[0, 1],
+                    help="Trajectory mode: 0=fast/jerky, 1=smooth/slower (default: 1)")
+
+    # --- Smooth motion + PID (d1_motion.py) ---
+    env = os.environ.get
+    ap.add_argument("--no-pid", action="store_true", default=env("ARM_PID", "1") == "0",
+                    help="one funcode 2 jump per pose instead of the smooth PID move")
+    ap.add_argument("--max-vel", type=float, default=float(env("ARM_MAX_VEL", "30")),
+                    help="deg/s, fastest joint (default %(default)s)")
+    ap.add_argument("--max-acc", type=float, default=float(env("ARM_MAX_ACC", "60")),
+                    help="deg/s^2 (default %(default)s)")
+    ap.add_argument("--kp", type=float, default=float(env("ARM_KP", "0.3")), help="default %(default)s")
+    ap.add_argument("--ki", type=float, default=float(env("ARM_KI", "0.4")), help="per s, default %(default)s")
+    ap.add_argument("--kd", type=float, default=float(env("ARM_KD", "0.02")), help="s, default %(default)s")
+    ap.add_argument("--deadband", type=float, default=float(env("ARM_DEADBAND", "0.5")),
+                    help="deg: no P/D inside it, so the arm never hunts (default %(default)s)")
+
+    ap.add_argument("--release", action="store_true")
+    ap.add_argument("--factory-home", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip-preflight", action="store_true")
     args = ap.parse_args()
 
     home, wps = load_waypoints(args.file)
     if args.factory_home:
         home = None
+
     print(f"{len(wps)} waypoints from {args.file}")
-    print(f"  home: {' '.join(f'{v:+7.1f}' for v in home) if home else 'factory zero pose (funcode 7)'}")
-    for n, (name, a) in enumerate(wps, 1):
-        print(f"  {n}: {' '.join(f'{v:+7.1f}' for v in a)}  {name}")
+    print(f"  mode: {args.mode} | dwell: {args.dwell}s | timeout: {args.move_timeout}s")
+    print("  motion: " + ("one jump per pose (--no-pid)" if args.no_pid else
+          f"smooth + PID ({args.max_vel:g} deg/s, kp {args.kp:g} ki {args.ki:g} kd {args.kd:g}, "
+          f"deadband {args.deadband:g} deg)"))
+    print(f"  home: {' '.join(f'{v:+7.1f}' for v in home) if home else 'factory zero pose'}")
+
     if args.dry_run:
         return 0
 
     if not args.skip_preflight and not preflight(args.iface, args.ip):
         print("\n[!] Preflight failed")
         return 2
+
     arm = D1Arm(args.iface, args.domain)
     if not arm.ok:
         print("[!] DDS discovery failed")
@@ -131,25 +149,33 @@ def main():
     locked = False
     try:
         arm.power(True)
-        time.sleep(1.5)
+        time.sleep(1.0)
         arm.enable(ENABLE_FULL)
         time.sleep(T_ENABLE)
-        st = (arm.state() or {}).get("data", {})
-        if st.get("enable_status") != 1:
-            print(f"[!] the arm did not enable (state: {st or 'none'}); nothing moved")
-            return 3
+
         locked = True
-        gripper = (current(arm) or [0.0] * 7)[6]   # keep the end effector as it is
+        gripper = (current(arm) or [0.0] * 7)[6]
+
+        cfg = MotionConfig(max_vel=args.max_vel, max_acc=args.max_acc, kp=args.kp, ki=args.ki,
+                           kd=args.kd, deadband=args.deadband, tolerance=args.tolerance,
+                           settle_timeout=args.move_timeout, cmd_mode=args.mode)
+        limits = {j: MAX_TEACH_REACH for j in range(ARM_JOINTS)}
 
         def move(a, label):
-            cmd = {"mode": 1, **{f"angle{j}": v for j, v in enumerate(a)}, "angle6": gripper}
+            if not args.no_pid:
+                r = smooth_move(arm, a, gripper, cfg, limits=limits, log=print)
+                if not r.reached:
+                    print(f"  [!] {label} not reached (off by {r.final_error:.1f}°, "
+                          f"±{args.tolerance:.0f}° wanted); moving on")
+                return
+            # Use the requested trajectory mode
+            cmd = {"mode": args.mode, **{f"angle{j}": v for j, v in enumerate(a)}, "angle6": gripper}
             arm._send(FUNC_JOINTS, cmd)
             if not wait_reached(arm, a, args.tolerance, args.move_timeout):
-                print(f"  [!] {label} not reached within {args.move_timeout:.0f} s "
-                      f"(±{args.tolerance:.0f}°); holding anyway")
+                print(f"  [!] {label} not reached within {args.move_timeout:.1f}s (±{args.tolerance:.0f}°); moving on")
 
         def go_home():
-            print("[*] home" + (" (recorded)" if home else " (factory zero)"))
+            print("[*] home")
             if home:
                 move(home, "home")
             else:
@@ -157,21 +183,24 @@ def main():
                 time.sleep(T_HOME)
 
         go_home()
+
         for n, (name, a) in enumerate(wps, 1):
             move(a, f"waypoint {n}")
-            print(f"Waypoint {n}{f' ({name})' if name else ''} reached. [Camera should capture photo here]")
+            print(f"Waypoint {n}{f' ({name})' if name else ''} reached. Holding {args.dwell}s...")
             time.sleep(args.dwell)
+
         go_home()
+
         if args.release:
-            print("[*] release (the arm goes limp at home)")
+            print("[*] release")
             arm.release()
             time.sleep(T_RELEASE)
             locked = False
+
     finally:
         if locked:
-            # Normal end, Ctrl+C or an error: hold the current pose.
             arm.enable(ENABLE_FULL)
-            print(f"Arm locked (mode {ENABLE_FULL}).")
+            print(f"Arm locked.")
     return 0
 
 
