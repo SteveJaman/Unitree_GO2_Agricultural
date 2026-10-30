@@ -36,7 +36,7 @@ try:
         D1Arm, ENABLE_FULL, FUNC_JOINTS, preflight,
         T_ENABLE, T_HOME, T_RELEASE, default_arm_iface,
     )
-    from d1_motion import MotionConfig, smooth_move
+    from d1_motion import MotionConfig, hold_jitter, smooth_move, steady_gripper
 except ImportError as e:
     sys.exit(f"cannot import d1_arm_control / d1_motion: {e}")
 
@@ -116,6 +116,14 @@ def main():
     ap.add_argument("--kd", type=float, default=float(env("ARM_KD", "0.02")), help="s, default %(default)s")
     ap.add_argument("--deadband", type=float, default=float(env("ARM_DEADBAND", "0.5")),
                     help="deg: no P/D inside it, so the arm never hunts (default %(default)s)")
+    ap.add_argument("--wrist-kp", type=float, default=float(env("ARM_WRIST_KP", "0")),
+                    help="wrist joints 3-5 (light, little sag): P gain, default %(default)s")
+    ap.add_argument("--wrist-ki", type=float, default=float(env("ARM_WRIST_KI", "0.15")),
+                    help="wrist joints 3-5: I gain per s, default %(default)s")
+    ap.add_argument("--wrist-deadband", type=float, default=float(env("ARM_WRIST_DEADBAND", "1.0")),
+                    help="wrist joints 3-5: deadband in deg, default %(default)s")
+    ap.add_argument("--jitter-warn", type=float, default=float(env("ARM_JITTER_WARN", "0.8")),
+                    help="deg: name the joints wandering more than this while holding a pose")
 
     ap.add_argument("--release", action="store_true")
     ap.add_argument("--factory-home", action="store_true")
@@ -131,7 +139,8 @@ def main():
     print(f"  mode: {args.mode} | dwell: {args.dwell}s | timeout: {args.move_timeout}s")
     print("  motion: " + ("one jump per pose (--no-pid)" if args.no_pid else
           f"smooth + PID ({args.max_vel:g} deg/s, kp {args.kp:g} ki {args.ki:g} kd {args.kd:g}, "
-          f"deadband {args.deadband:g} deg)"))
+          f"deadband {args.deadband:g} deg; wrist kp {args.wrist_kp:g} ki {args.wrist_ki:g}, "
+          f"deadband {args.wrist_deadband:g} deg)"))
     print(f"  home: {' '.join(f'{v:+7.1f}' for v in home) if home else 'factory zero pose'}")
 
     if args.dry_run:
@@ -154,11 +163,14 @@ def main():
         time.sleep(T_ENABLE)
 
         locked = True
-        gripper = (current(arm) or [0.0] * 7)[6]
+        # The claw's angle, steadied over a few readings, held for the whole sweep.
+        gripper = steady_gripper(arm)
 
         cfg = MotionConfig(max_vel=args.max_vel, max_acc=args.max_acc, kp=args.kp, ki=args.ki,
                            kd=args.kd, deadband=args.deadband, tolerance=args.tolerance,
-                           settle_timeout=args.move_timeout, cmd_mode=args.mode)
+                           settle_timeout=args.move_timeout, cmd_mode=args.mode,
+                           wrist_kp=args.wrist_kp, wrist_ki=args.wrist_ki,
+                           wrist_deadband=args.wrist_deadband)
         limits = {j: MAX_TEACH_REACH for j in range(ARM_JOINTS)}
 
         def move(a, label):
@@ -187,7 +199,11 @@ def main():
         for n, (name, a) in enumerate(wps, 1):
             move(a, f"waypoint {n}")
             print(f"Waypoint {n}{f' ({name})' if name else ''} reached. Holding {args.dwell}s...")
-            time.sleep(args.dwell)
+            wander = hold_jitter(arm, args.dwell)   # the dwell, watching which joint shakes
+            if wander:
+                shaky = [f"{'claw' if j == 6 else f'joint {j}'} ±{w / 2:.1f}°"
+                         for j, w in enumerate(wander) if w > args.jitter_warn]
+                print("  holding: " + (f"wandering {', '.join(shaky)}" if shaky else "steady"))
 
         go_home()
 

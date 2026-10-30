@@ -323,16 +323,29 @@ the target make it hunt. So every move ([`d1_motion.py`](../../scripts/nodes/d1_
    target (zero speed and acceleration at both ends), timed so no joint
    exceeds `--max-vel` (30 °/s) or `--max-acc` (60 °/s²); all joints arrive
    together;
-2. is streamed as small setpoints at 20 Hz (`--mode` is still the funcode 2
-   mode, 1 by default);
-3. runs an **outer PID** per joint on (setpoint − measured), which removes
+2. is sent as small setpoints. **With the arm on the Go2, the trajectory runs
+   on the robot** (the bridge's `traj` request, 50 Hz over its wired link):
+   streamed from the laptop, Wi-Fi latency spikes (200 ms measured) bunch the
+   setpoints into bursts and the arm shakes on every transition. Wired, or
+   with an older bridge, the laptop streams them at 20 Hz;
+3. runs an **outer PID** per joint on (target − measured) **once the move is
+   done** (correcting the lag mid-move fights the servos), which removes
    gravity sag on the shoulder and elbow. P and D act only outside a
-   `--deadband` (0.5°), so telemetry noise never makes the arm hunt. The
-   integral only builds near the end of the move and is capped, as is the
-   whole correction (±6°). D uses the filtered measured rate;
+   `--deadband` (0.5°); the light wrist joints (3–5) get no P or D, only a
+   slow integral and a 1° deadband (`--wrist-kp/-ki/-deadband`). The integral
+   and the whole correction (±6°) are capped, and a correction is re-sent
+   only when it changes by more than 0.2°;
 4. **settles**: it holds the target until every joint stays within
    `--tolerance` (2°) for 0.5 s, or `--move-timeout` passes ("not reached …;
    moving on").
+
+While holding each pose it prints `holding: steady` or the joints that wander
+(`--jitter-warn`, 0.8°).
+
+**Restart the arm bridge on the robot once** to get the `traj` feature (the
+bridge is copied when `start_arm.sh` starts it):
+`ssh unitree@ubuntu.local "pkill -TERM -f arm_bridge_[w]ifi"`, then
+`./scripts/runtime/start_arm.sh --check`.
 
 In a simulation of an underdamped, sagging arm (10 Hz telemetry, 0.2° noise),
 a single jump of the base by 87° overshot 42° and rang; the smooth PID move

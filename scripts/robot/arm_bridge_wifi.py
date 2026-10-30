@@ -20,6 +20,13 @@ Monitor port (ARM_BRIDGE_PORT + 1): read-only. Any number of clients get
 every rt/arm_Feedback line and nothing they send is read, so the dashboard's
 arm_state_bridge.py can watch the arm while start_arm.sh drives it.
 
+Trajectories on the robot: {"traj": {"target": [6 deg], "gripper": g,
+"max_vel": deg/s, "max_acc": deg/s^2, "rate": Hz, "mode": 0|1}} from the laptop
+runs a minimum-jerk move here, streaming setpoints to the arm over the wired
+DDS link (d1_motion.py's profile). Streamed over Wi-Fi instead, latency
+spikes (200 ms) bunch the setpoints into bursts and the arm shakes on every
+move. {"traj_stop": 1}, any arm command, or the laptop leaving stops it.
+
 TCP instead of DDS over Wi-Fi: arm traffic is small JSON at 10 Hz, and TCP
 needs no discovery and loses nothing. Safety: when the laptop disconnects or
 is silent for ARM_BRIDGE_TIMEOUT s while the arm is compliant (teach mode:
@@ -35,6 +42,7 @@ Env: ARM_BRIDGE_PORT=18100  ARM_BRIDGE_MONITOR_PORT=18101  ARM_BRIDGE_TIMEOUT=3
 """
 
 import json
+import math
 import os
 import signal
 import socket
@@ -52,6 +60,12 @@ MONITOR_PORT = int(os.environ.get("ARM_BRIDGE_MONITOR_PORT", str(PORT + 1)))
 TIMEOUT = float(os.environ.get("ARM_BRIDGE_TIMEOUT", "3"))
 ALLOW = os.environ.get("GO2_HOST_IP", "")
 LOCK_MODE = 80000
+TRAJ_REACH = 150.0  # deg: no trajectory target beyond this (play_arm.py's taught-pose limit)
+
+
+def min_jerk(tau):
+    tau = min(1.0, max(0.0, tau))
+    return tau ** 3 * (10 - 15 * tau + 6 * tau * tau)
 
 
 class Bridge(Node):
@@ -77,10 +91,22 @@ class Bridge(Node):
         self.mon_lock = threading.Lock()
         self.feedback = 0
         self.mode = None  # last enable-all mode sent (None: unknown, 0: released)
+        self.angles = None  # newest joints 0-6 from telemetry (address 2, funcode 1)
+        self.traj_stop = threading.Event()
+        self.traj_thread = None
         self.seq = int(time.time()) % 1000000 * 1000
 
     def on_feedback(self, msg):
         self.feedback += 1
+        try:
+            fb = json.loads(msg.data)
+            if fb.get("address") == 2 and fb.get("funcode") == 1:
+                d = fb.get("data") or {}
+                vals = [d.get(f"angle{i}") for i in range(7)]
+                if all(v is not None for v in vals[:6]):
+                    self.angles = [float(v) if v is not None else 0.0 for v in vals]
+        except (ValueError, AttributeError, TypeError):
+            pass
         line = (msg.data.strip() + "\n").encode()
         with self.mon_lock:
             for mon in list(self.monitors):
@@ -113,8 +139,62 @@ class Bridge(Node):
         self.mode = LOCK_MODE
         self.get_logger().warn(f"{why}: compliant arm locked (mode {LOCK_MODE})")
 
+    def stop_traj(self):
+        if self.traj_thread and self.traj_thread.is_alive():
+            self.traj_stop.set()
+            self.traj_thread.join(timeout=1.0)
+
+    def start_traj(self, spec):
+        """Run a minimum-jerk move to spec["target"] here, streaming setpoints to the arm."""
+        self.stop_traj()
+        try:
+            target = [float(v) for v in spec["target"]][:6]
+            gripper = float(spec.get("gripper", 0.0))
+            vmax = max(1.0, float(spec.get("max_vel", 30.0)))
+            amax = max(1.0, float(spec.get("max_acc", 60.0)))
+            rate = min(100.0, max(5.0, float(spec.get("rate", 50.0))))
+            mode = int(spec.get("mode", 1))
+            tmin = float(spec.get("min_duration", 0.8))
+        except (KeyError, TypeError, ValueError):
+            self.get_logger().warn(f"bad traj request ignored: {spec!r}"[:120])
+            return
+        if len(target) != 6 or any(abs(v) > TRAJ_REACH for v in target):
+            self.get_logger().warn(f"traj target refused (6 joints within +/-{TRAJ_REACH:.0f}): {target}")
+            return
+        self.traj_stop.clear()
+        self.traj_thread = threading.Thread(
+            target=self._run_traj, args=(target, gripper, vmax, amax, rate, mode, tmin), daemon=True)
+        self.traj_thread.start()
+
+    def _send_joints(self, angles, gripper, mode):
+        self.seq += 1
+        data = {"mode": mode, **{f"angle{j}": round(a, 2) for j, a in enumerate(angles)}, "angle6": gripper}
+        self.command(json.dumps({"seq": self.seq, "address": 1, "funcode": 2, "data": data},
+                                separators=(",", ":")))
+
+    def _run_traj(self, target, gripper, vmax, amax, rate, mode, tmin):
+        start = list(self.angles[:6]) if self.angles else None
+        if start is None:   # no telemetry: one direct command
+            for _ in range(3):
+                self._send_joints(target, gripper, mode)
+                time.sleep(0.1)
+            return
+        d = max(abs(t - s) for s, t in zip(start, target))
+        duration = max(tmin, 1.875 * d / vmax, math.sqrt(5.774 * d / amax)) if d > 1e-6 else tmin
+        t0 = time.monotonic()
+        while not self.traj_stop.is_set():
+            k = min_jerk((time.monotonic() - t0) / duration)
+            self._send_joints([a + (b - a) * k for a, b in zip(start, target)], gripper, mode)
+            if k >= 1.0:
+                break
+            time.sleep(1.0 / rate)
+        if not self.traj_stop.is_set():
+            for _ in range(2):   # the target, reliably
+                time.sleep(0.1)
+                self._send_joints(target, gripper, mode)
+
     def on_line(self, line):
-        """One line from the laptop: a ping, or an arm command to forward."""
+        """One line from the laptop: a ping, a trajectory request, or an arm command to forward."""
         try:
             msg = json.loads(line)
         except ValueError:
@@ -122,9 +202,16 @@ class Bridge(Node):
             return
         if not isinstance(msg, dict) or "ping" in msg:
             return
+        if "traj" in msg:
+            self.start_traj(msg["traj"] if isinstance(msg["traj"], dict) else {})
+            return
+        if "traj_stop" in msg:
+            self.stop_traj()
+            return
         if msg.get("address") != 1 or not isinstance(msg.get("funcode"), int):
             self.get_logger().warn(f"not an arm command, ignored: {line[:80]!r}")
             return
+        self.stop_traj()   # the laptop drives the arm directly again
         if msg["funcode"] == 5:
             self.mode = (msg.get("data") or {}).get("mode", 0)
         self.command(line)
@@ -135,6 +222,7 @@ class Bridge(Node):
             "bridge": "arm_bridge_wifi",
             "port": PORT,
             "feedback_msgs": self.feedback,
+            "features": ["traj"],
         }
         conn.sendall((json.dumps(hello) + "\n").encode())
         with self.conn_lock:
@@ -170,6 +258,7 @@ class Bridge(Node):
             why = "bridge stopping"
             raise
         finally:
+            self.stop_traj()   # no move keeps running for a laptop that is gone
             with self.conn_lock:
                 self.conn = None
             conn.close()

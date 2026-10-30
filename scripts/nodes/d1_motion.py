@@ -15,23 +15,40 @@ So a move here is:
      profile (zero speed and acceleration at both ends), timed so no joint
      exceeds max_vel (deg/s) or max_acc (deg/s^2). Every joint arrives at the
      same time.
-  2. Setpoints streamed at `rate` Hz (one send each, no triple repeat), each
-     a small step the servos follow without overshoot.
-  3. Outer PID per joint on (setpoint - measured): corrects what the servos
-     leave, mainly gravity sag on the shoulder and elbow.
+  2. Setpoints at `rate` Hz, each a small step (<= ~1.5 deg) the servos follow
+     without overshoot (stream_mode, 1: the firmware's own smoothing on top).
+     With the arm plugged into the Go2, the trajectory runs ON THE ROBOT
+     (arm_bridge_wifi.py "traj", 50 Hz over its wired link): Wi-Fi latency
+     spikes (200 ms seen) would bunch setpoints streamed from here into bursts
+     and shake the arm on every move. Wired, or with an older bridge, they
+     are streamed from here (one send each, no triple repeat).
+  3. Outer PID per joint on (target - measured), only once the trajectory is
+     done (while settling): it corrects what the servos leave, mainly gravity
+     sag on the shoulder and elbow. During the move the arm always lags the
+     setpoint a little; correcting that lag fights the servos' own loop and
+     shakes the arm, so the move itself is pure trajectory.
        - P and D only act outside a `deadband` (default 0.5 deg): telemetry
          noise never makes the arm hunt.
-       - I only builds in the last 10 % of the move and while settling (the
-         arm lagging a moving setpoint is not sag; integrating it would
-         overshoot), and is capped (i_limit), as is the whole correction.
+       - I is capped (i_limit), as is the whole correction.
        - D uses the measured rate, low-pass filtered (no derivative kick).
+     The wrist joints (3-5) carry almost no load and barely sag, but their
+     readings are as noisy as the others: on them P and D only amplify noise
+     into a shaking claw. They get their own gentle profile (wrist_kp/ki/kd,
+     wrist_deadband): by default no P or D, a slow integral only.
   4. Settle: hold the target (PID still running) until every joint stays
-     within `tolerance` for `settle_time`, or `settle_timeout` passes. The last
-     command is sent with the usual triple repeat, so it is not lost.
+     within `tolerance` for `settle_time`, or `settle_timeout` passes. Once the
+     trajectory is done, a command is only re-sent when the correction moves
+     by more than resend_deg: re-sending the same target 20 times a second
+     makes the firmware restart its own smoothing each time (a buzz at the
+     claw). The last command goes out with the usual triple repeat.
+
+hold_jitter() watches a held pose and reports how much each joint wanders
+(play_arm.py prints it, to tell which joint shakes).
 
 Telemetry arrives at ~10 Hz; between readings the last one is used.
 """
 
+import json
 import math
 import time
 from dataclasses import dataclass, field
@@ -57,7 +74,17 @@ class MotionConfig:
     tolerance: float = 1.5  # deg, counted as reached
     settle_time: float = 0.5  # s within tolerance to finish
     settle_timeout: float = 4.0  # s after the trajectory
-    cmd_mode: int = 1  # funcode 2 "mode" (1: the arm's own smoothing too)
+    wrist_kp: float = 0.0  # wrist joints 3-5: light, little sag; no P/D by default
+    wrist_ki: float = 0.15  # per s, slow sag correction only
+    wrist_kd: float = 0.0
+    wrist_deadband: float = 1.0  # deg
+    resend_deg: float = (
+        0.2  # after the trajectory: re-send only if the command moves this much
+    )
+    cmd_mode: int = 1  # funcode 2 "mode" of the final / settle commands
+    stream_mode: int = 1  # funcode 2 "mode" of the trajectory setpoints
+    robot_traj: bool = True  # Go2 bridge with "traj": run the trajectory on the robot
+    robot_rate: float = 50.0  # Hz, setpoints on the robot
     pid: bool = True  # False: trajectory only, no outer loop
 
 
@@ -98,8 +125,14 @@ def read_angles(arm, timeout=0.02):
 
 
 class _JointPID:
-    def __init__(self, cfg):
+    def __init__(self, cfg, wrist=False):
         self.cfg = cfg
+        self.kp, self.ki, self.kd = (
+            (cfg.wrist_kp, cfg.wrist_ki, cfg.wrist_kd)
+            if wrist
+            else (cfg.kp, cfg.ki, cfg.kd)
+        )
+        self.deadband = cfg.wrist_deadband if wrist else cfg.deadband
         self.i = 0.0
         self.rate = 0.0
         self.prev = None
@@ -111,10 +144,10 @@ class _JointPID:
             self.rate += c.d_filter * ((measured - self.prev) / dt - self.rate)
         self.prev = measured
         if integrate:
-            self.i = max(-c.i_limit, min(c.i_limit, self.i + c.ki * error * dt))
+            self.i = max(-c.i_limit, min(c.i_limit, self.i + self.ki * error * dt))
         out = self.i
-        if abs(error) > c.deadband:
-            out += c.kp * error - c.kd * self.rate
+        if abs(error) > self.deadband:
+            out += self.kp * error - self.kd * self.rate
         return max(-c.max_correction, min(c.max_correction, out))
 
 
@@ -129,13 +162,13 @@ def smooth_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
     target = [float(v) for v in target[:ARM_JOINTS]]
     now_angles = read_angles(arm, timeout=2.0)
 
-    def send(cmd_angles, repeat=1):
+    def send(cmd_angles, repeat=1, mode=None):
         if limits:
             cmd_angles = [
                 max(-limits[j], min(limits[j], a)) for j, a in enumerate(cmd_angles)
             ]
         data = {
-            "mode": cfg.cmd_mode,
+            "mode": cfg.cmd_mode if mode is None else mode,
             **{f"angle{j}": round(a, 2) for j, a in enumerate(cmd_angles)},
             "angle6": gripper,
         }
@@ -148,8 +181,35 @@ def smooth_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
         return MoveResult(False, 0.0, float("nan"), float("nan"), float("nan"))
 
     start = now_angles[:ARM_JOINTS]
+    if limits:
+        target = [max(-limits[j], min(limits[j], a)) for j, a in enumerate(target)]
     duration = plan_duration(start, target, cfg)
-    pids = [_JointPID(cfg) for _ in range(ARM_JOINTS)]
+    link = getattr(arm, "link", None)
+    on_robot = (
+        cfg.robot_traj
+        and link is not None
+        and '"traj"' in (getattr(link, "hello", None) or "")
+    )
+    if on_robot:
+        # One request over Wi-Fi; the robot streams the setpoints itself.
+        link.write(
+            json.dumps(
+                {
+                    "traj": {
+                        "target": [round(a, 2) for a in target],
+                        "gripper": gripper,
+                        "max_vel": cfg.max_vel,
+                        "max_acc": cfg.max_acc,
+                        "rate": cfg.robot_rate,
+                        "mode": cfg.stream_mode,
+                        "min_duration": cfg.min_duration,
+                    }
+                }
+            )
+        )
+        duration += 0.3  # the robot's own start and final sends
+    pids = [_JointPID(cfg, wrist=j >= 3) for j in range(ARM_JOINTS)]
+    last_cmd = None
     direction = [1.0 if t >= s else -1.0 for s, t in zip(start, target)]
     measured = list(start)
     max_err = overshoot = 0.0
@@ -171,14 +231,24 @@ def smooth_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
         overshoot = max(
             overshoot, max((m - t) * d for m, t, d in zip(measured, target, direction))
         )
-        if cfg.pid:
-            near_end = (now - t0) >= 0.9 * duration
+        moving = now - t0 < duration
+        if cfg.pid and not moving:  # settle phase only: no fighting the servos mid-move
             corrections = [
-                p.update(e, m, dt, near_end) for p, e, m in zip(pids, errors, measured)
+                p.update(e, m, dt) for p, e, m in zip(pids, errors, measured)
             ]
-        send([sp + c for sp, c in zip(setpoint, corrections)])
+        cmd = [sp + c for sp, c in zip(setpoint, corrections)]
+        if moving:
+            if not on_robot:
+                send(cmd, mode=cfg.stream_mode)
+            last_cmd = cmd
+        elif (
+            last_cmd is None
+            or max(abs(a - b) for a, b in zip(cmd, last_cmd)) > cfg.resend_deg
+        ):
+            send(cmd)
+            last_cmd = cmd
 
-        if now - t0 >= duration:
+        if not moving:
             final = max(abs(t - m) for t, m in zip(target, measured))
             if final <= cfg.tolerance:
                 in_tol_since = in_tol_since or now
@@ -201,3 +271,27 @@ def smooth_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
         max(0.0, overshoot),
         corrections,
     )
+
+
+def hold_jitter(arm, seconds, period=0.1):
+    """Watch a held pose for `seconds`: peak-to-peak wander (deg) per joint 0-6, or None."""
+    lo = hi = None
+    t_end = time.monotonic() + seconds
+    while time.monotonic() < t_end:
+        a = read_angles(arm, timeout=period)
+        if a:
+            lo = a if lo is None else [min(x, y) for x, y in zip(lo, a)]
+            hi = a if hi is None else [max(x, y) for x, y in zip(hi, a)]
+        time.sleep(period)
+    return None if lo is None else [h - low for h, low in zip(hi, lo)]
+
+
+def steady_gripper(arm, samples=5):
+    """The claw's angle (joint 6) as the median of a few readings; 0.0 without telemetry."""
+    vals = []
+    for _ in range(samples):
+        a = read_angles(arm, timeout=0.3)
+        if a:
+            vals.append(a[6])
+    vals.sort()
+    return round(vals[len(vals) // 2], 1) if vals else 0.0
