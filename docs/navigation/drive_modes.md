@@ -2,13 +2,14 @@
 
 [← Back to README](../../README.md) · [3D Nav](../ai_and_vision/3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](../troubleshooting.md)
 
-Both launchers take `--drive diff|hybrid|omni`. All three stay supported; pick one per session:
+`wifi_nav.sh` takes `--drive diff|hybrid|omni`; all three stay supported there, one per session.
+**`wifi_3d_nav.sh` always drives `hybrid`** (it ignores `--drive` / `--diff` / `--omni` and says so):
 
 ```bash
 ./scripts/runtime/wifi_nav.sh                            # --drive hybrid (default): faces forward, omni moves only to get unstuck
 ./scripts/runtime/wifi_nav.sh --drive diff               # forward arcs only (the original setup)
 ./scripts/runtime/wifi_nav.sh --drive omni               # MPPI reverse + sidestep while driving; --omni is short for this
-./scripts/runtime/wifi_3d_nav.sh --drive omni --camera-obstacles
+./scripts/runtime/wifi_3d_nav.sh --camera-obstacles         # always hybrid
 GO2_DRIVE=omni ./scripts/runtime/wifi_nav.sh             # same, from the environment
 ```
 
@@ -127,7 +128,7 @@ removes every hook.
 **Not yet tested on the real dog: actual movement.** Try it with the remote
 in hand:
 
-1. `./scripts/runtime/wifi_3d_nav.sh --no-explore --omni`
+1. `./scripts/runtime/wifi_nav.sh --no-explore --omni` (`wifi_3d_nav.sh` is hybrid only)
 2. Set **2D Goal Pose** 1 m behind the dog, facing the same way. It should
    walk backwards, not turn around.
 3. Set one 1 m to its side. It should sidestep.

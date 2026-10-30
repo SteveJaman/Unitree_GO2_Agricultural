@@ -26,6 +26,10 @@
 # autonomous survey with no user input: the dog maps the area, splits it into
 # rooms, names each, writes config/survey_report.json and returns to the dock.
 #
+# Drive mode: always hybrid (forward-facing Nav2; steps back or sideways only
+# to get unstuck). --drive / --diff / --omni are ignored here; wifi_nav.sh
+# keeps all three for locomotion comparisons.
+#
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
 # wifi_nav.sh teardown never kills it before it saves.
@@ -133,6 +137,7 @@ RESUME="false"
 SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
+IGNORED_DRIVE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -166,14 +171,33 @@ while [ $# -gt 0 ]; do
         --view)       ACTION="view" ;;
         --check|--clean|--setup-ssh)
                       ACTION="passthru"; PASSTHRU+=("$1") ;;
-        --host-ip|--robot-ip|--iface|--drive)
+        --host-ip|--robot-ip|--iface)
                       PASSTHRU+=("$1")
                       if [ $# -ge 2 ]; then PASSTHRU+=("$2"); shift; fi ;;
+        # Hybrid only (see DRIVE below): other modes are for wifi_nav.sh comparisons.
+        --drive)      if [ "${2:-}" != hybrid ]; then IGNORED_DRIVE="--drive ${2:-}"; fi
+                      [ $# -ge 2 ] && shift ;;
+        --diff|--omni) IGNORED_DRIVE="$1" ;;
+        --hybrid)     ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)            PASSTHRU+=("$1") ;;
     esac
     shift
 done
+
+# Drive: always hybrid. Nav2 drives forward-facing like a differential robot
+# (the LiDAR looks where the dog walks); stepping back or sideways happens only
+# to get unstuck (go2_stuck_recovery.py, the VLM sidestep) and from the Drive
+# pad. diff / omni stay available in wifi_nav.sh for locomotion comparisons
+# (docs/navigation/locomotion_comparison.md: omni explored worse, hybrid = diff
+# plus an escape when a wall is behind the dog).
+DRIVE="hybrid"
+export GO2_DRIVE="${DRIVE}"
+PASSTHRU+=(--drive "${DRIVE}")
+if [ -n "${IGNORED_DRIVE}" ]; then
+    echo "[3d] ${IGNORED_DRIVE} ignored: wifi_3d_nav.sh always drives hybrid" \
+         "(other modes: ./scripts/runtime/wifi_nav.sh ${IGNORED_DRIVE})" >&2
+fi
 
 # --ai turns the AI nodes on; --no-yolo / --no-vlm / --no-battery / --no-inspect win.
 # inspect: inspection_mission.py (dashboard Inspect: walk to a 3D point, IK-aim the arm at it).
@@ -689,6 +713,7 @@ echo "  Inspect     : $( [ "${TWIN_INSPECT}" = 1 ] && echo "on: dashboard Inspec
 echo "  Periscope   : $( [ "${TWIN_PERISCOPE}" = 1 ] && echo "on: dashboard Periscope Scan -> table edge -> arm periscope pose (table_search.log)" || echo "off (--ai)" ); wrist camera $( [ "${TWIN_WRIST_CAMERA}" = 1 ] && echo "in the costmap" || echo "not in the costmap (--wrist-camera)" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
+echo "  Drive       : hybrid (forward-facing like diff; steps back / sideways only to get unstuck)"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo

@@ -262,6 +262,14 @@ remote_kill_relays() {
     robot_ssh -T -o ConnectTimeout="${1:-5}" "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" bash -s <<'REMOTE_KILL'
 pkill -9 -f 'robot[-_]relay[-_]wifi|robot-motion-wifi|go2_cmd_vel_tcp|robot_sport_bridge|go2_camera_wifi|go2_camera_jpeg_cli' 2>/dev/null || true
 rm -f /tmp/robot-relay.pid /tmp/go2-relay-wifi.sock*
+# A SLAM session left on the Jetson (the laptop lost its SSH link, or another
+# laptop runs one) holds the session lock: a new run cannot start next to it.
+# Stopped like mapping.sh does, so it still saves its map.
+owner=$(pgrep -af 'go2_session[.]py start lidar3d' | grep -o -- '--owner [^ ]*' | head -1)
+if [ -n "$owner" ]; then
+    echo "[clean] robot: SLAM session ${owner#--owner } still running: stopping it (saves its map, up to 60 s)"
+    timeout -k 5 60 docker exec go2-lidar3d-onboard bash /ws/scripts/go2-session.sh stop lidar3d >/dev/null 2>&1 || true
+fi
 REMOTE_KILL
 }
 
@@ -742,6 +750,16 @@ elif robot_ssh -T -o ConnectTimeout=3 \
     else
         echo "[checks] robot clock offset ......................... UNKNOWN (could not read robot clock)"
     fi
+    # The robot's USB Wi-Fi dongle (8821au) ships with maximum power saving:
+    # it delays what is sent to the robot and stalls runs.
+    robot_ps="$(timeout 8 ssh "${GO2_SSH_OPTS[@]}" -T -n -o ConnectTimeout=3 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        'iw dev wlan0 get power_save 2>/dev/null; cat /sys/module/8821au/parameters/rtw_power_mgnt 2>/dev/null' 2>/dev/null || true)"
+    if grep -q "Power save: on" <<< "${robot_ps}" || grep -qx "[12]" <<< "${robot_ps}"; then
+        echo "[checks] robot Wi-Fi power saving ................ ON (stalls the link to the robot)"
+        echo "         Turn it off once: ./scripts/tools/fix_wifi_powersave.sh --robot"
+    elif [ -n "${robot_ps}" ]; then
+        echo "[checks] robot Wi-Fi power saving off ............ OK"
+    fi
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
     echo "         Run:  ./wifi_nav.sh --setup-ssh"
@@ -793,6 +811,19 @@ else
     echo "         Camera frames and LiDAR clouds get dropped. Fix once (then restart the session):"
     echo "           printf 'net.core.rmem_max=16777216\\nnet.core.rmem_default=8388608\\n' | sudo tee /etc/sysctl.d/60-go2-dds.conf"
     echo "           sudo sysctl --system"
+fi
+
+# Wi-Fi power saving: the RTL8822BU dongle's firmware fails to wake from it
+# ("failed to leave lps state"), the link freezes and runs end ~15 s in.
+if [ "${SIM}" != "true" ]; then
+    wifi_ps="$(grep -rhs '^wifi.powersave' /etc/NetworkManager/conf.d/ | tail -1 | tr -dc '0-9')"
+    lps_deep="$(cat /sys/module/rtw88_core/parameters/disable_lps_deep 2>/dev/null || echo -)"
+    if [ "${wifi_ps:-0}" = 3 ] || [ "${lps_deep}" = N ]; then
+        echo "[checks] Wi-Fi power saving ...................... ON (the dongle freezes the link to the robot)"
+        echo "         Turn it off once: ./scripts/tools/fix_wifi_powersave.sh"
+    else
+        echo "[checks] Wi-Fi power saving off .................. OK"
+    fi
 fi
 
 if [ "${CAMERA}" = "true" ]; then

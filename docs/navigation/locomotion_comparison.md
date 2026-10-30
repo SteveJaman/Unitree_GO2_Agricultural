@@ -28,12 +28,15 @@ repeat the test in the sim and on the real dog.
 ./scripts/runtime/wifi_nav.sh --drive hybrid   # default
 ./scripts/runtime/wifi_nav.sh --drive diff     # the original real-dog setup
 ./scripts/runtime/wifi_nav.sh --drive omni     # MPPI omni everywhere
-./scripts/runtime/wifi_3d_nav.sh --drive diff  # same flag on the 3D launcher
 GO2_DRIVE=diff ./scripts/runtime/wifi_nav.sh   # or from the environment
 ```
 
 `--diff`, `--hybrid` and `--omni` are short for these. The start-up banner
 shows the mode (`Drive : hybrid (...)`).
+
+**`wifi_3d_nav.sh` (the 3D twin, dashboard and AI) always drives `hybrid`.**
+It ignores `--drive`, `--diff` and `--omni` and says so at start-up. Use
+`wifi_nav.sh` to run the other modes, for example for the comparisons below.
 
 | | `diff` | `hybrid` (default) | `omni` |
 |---|---|---|---|
@@ -357,7 +360,7 @@ the space behind the dog.
 to change mode.
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --no-explore --no-ai --drive diff     # then hybrid, then omni
+./scripts/runtime/wifi_nav.sh --no-explore --drive diff     # then hybrid, then omni
 ```
 
 1. 2D Goal Pose 1.5 m ahead: all modes walk straight.
@@ -376,9 +379,9 @@ to change mode.
 **Stage 2: exploration**, 3 runs per mode, interleaved, same start pose:
 
 ```bash
-./scripts/runtime/wifi_3d_nav.sh --no-ai --drive hybrid    # explorer waits for Auto Explore
+./scripts/runtime/wifi_nav.sh --drive hybrid    # explorer waits for Auto Explore (RViz panel)
 ./scripts/tools/nav_compare/record.sh start real_hybrid1 --drive hybrid --note "lab, tape mark A"
-# press Auto Explore on the dashboard (or RViz), let it run, stop it or wait for "complete"
+# press Auto Explore: START in RViz, let it run, stop it or wait for "complete"
 ./scripts/tools/nav_compare/record.sh stop real_hybrid1
 # Ctrl+C the session, put the dog back on the mark, next mode
 ```

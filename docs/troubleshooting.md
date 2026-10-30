@@ -792,6 +792,37 @@ then log out and back in.
 
 ## RViz
 
+### RViz closes by itself about 30 s after start
+
+The terminal shows `Stopping the local Nav2/RViz session...` although you
+pressed nothing. In the session's `rviz.log`
+(`~/files/go2-nav2-wifi/ws/log/mapping.*/`) every node logs `user
+interrupted with ctrl-c (SIGINT)` at the same moment, and RViz ends with
+`The futex facility returned an unexpected error code` / `Aborted`.
+
+RViz did not crash: the session was shut down, and the futex abort is
+only how RViz dies while being stopped. `mapping.sh` stops everything when
+**any** of its parts ends: RViz, the SLAM session on the Jetson, or the
+motion bridge. Both robot parts run over one shared SSH link, so losing that
+link ends the run.
+
+- **Wi-Fi stalls.** The shared link gives up after about a minute without
+  an answer (`mapping_stop_timeouts.py`; a 15 s limit ended runs on ordinary
+  stalls, 2026-10-30). Check the robot ping on the debug page
+  (`python3 scripts/tools/debug_dashboard.py`). Lost pings or pings around
+  1 s mean the dongle or the distance.
+- **Another computer on the dog.** On 2026-10-30 a second laptop
+  (192.168.1.6, a different SSH key) logged into the dog while a run was
+  starting. Its pre-flight clean kills the relays and motion bridge of
+  whoever else runs. Only one laptop can drive the dog at a time.
+  `sudo grep -h sshd /var/log/auth.log | tail` on the robot shows who
+  connected.
+- **The SLAM session is left on the Jetson** when the link was lost (the
+  cleanup cannot reach it). The next start's pre-flight clean stops it,
+  printing `[clean] robot: SLAM session mapping.XXXX still running`, and
+  saves its map. `./scripts/runtime/wifi_nav.sh --clean` does the same
+  without starting a session.
+
 ### RViz renders slowly with the point cloud visible
 
 RViz renders inside the container (on the GPU once the NVIDIA driver is

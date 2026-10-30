@@ -251,7 +251,16 @@ iterations, see [Developing the dashboard](#developing-the-dashboard).
 ./scripts/runtime/wifi_3d_nav.sh --sim            # against the Gazebo simulation
 ```
 
-Any `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
+**Drive mode: always `hybrid`.** Nav2 drives the dog facing forward, like
+a differential robot, so the LiDAR on its head looks where it walks. It steps
+back or sideways only to get unstuck (stuck recovery, the VLM sidestep) and
+when you use the Drive pad. `--drive`, `--diff` and `--omni` are ignored here,
+with a message. In the sim, `omni` explored worse and `hybrid` matched `diff`
+plus an escape when a wall is behind the dog
+([locomotion comparison](../navigation/locomotion_comparison.md)). To
+compare modes, use `wifi_nav.sh --drive …`.
+
+Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 `--no-camera`, …). The 3D-specific options are:
 
 | Option | Effect |

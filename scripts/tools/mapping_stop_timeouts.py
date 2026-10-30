@@ -14,8 +14,11 @@ and Ctrl+C does nothing (seen 2026-10-30: cleanup stuck > 4 min, robot fine).
   mapping_stop_timeouts.py --check NAV2_WIFI_DIR
 
 Edits (each tagged with TAG, original kept as mapping.sh.pre-timeouts):
-  * the master: ServerAliveInterval=5, ServerAliveCountMax=3 (a dead link
-    fails in ~15 s, and so does every command through it);
+  * the master: ServerAliveInterval=10, ServerAliveCountMax=6: a link dead
+    for a minute fails, and so does every command through it. Not shorter:
+    the master also carries the SLAM and motion sessions, and losing it ends
+    the run (RViz closes). 5 s x 3 ended runs on ordinary Wi-Fi stalls
+    (2026-10-30 14:47). The cleanup steps have their own time limits.
   * cleanup: a message saying what it waits for, and time limits on the
     local session stop (60 s), the Jetson session stop and map save
     (GO2_STOP_TIMEOUT, 120 s), the result transfer (GO2_FETCH_TIMEOUT,
@@ -35,7 +38,7 @@ EDITS = [
     (
         'ssh -o ConnectTimeout=8 -o ControlMaster=yes -o ControlPersist=60 -S "$ssh_socket" "$target" true',
         'ssh -o ConnectTimeout=8 -o ControlMaster=yes -o ControlPersist=60 '
-        '-o ServerAliveInterval=5 -o ServerAliveCountMax=3 -S "$ssh_socket" "$target" true' + TAG,
+        '-o ServerAliveInterval=10 -o ServerAliveCountMax=6 -S "$ssh_socket" "$target" true' + TAG,
     ),
     (
         '    docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1 || true',
@@ -61,6 +64,13 @@ EDITS = [
 ]
 
 
+# (earlier edit, current edit): files patched by an older version of this script.
+OLD_VERSIONS = [
+    ("-o ServerAliveInterval=5 -o ServerAliveCountMax=3 -S \"$ssh_socket\" \"$target\" true" + TAG,
+     "-o ServerAliveInterval=10 -o ServerAliveCountMax=6 -S \"$ssh_socket\" \"$target\" true" + TAG),
+]
+
+
 def main():
     args = sys.argv[1:]
     check = "--check" in args
@@ -71,8 +81,12 @@ def main():
     if not os.path.isfile(path):
         sys.exit(f"[stop] {path} not found")
     text = open(path).read()
+    # Upgrade an earlier version of these edits in place.
+    upgraded = [old for old, _ in OLD_VERSIONS if old in text]
+    for old, new in OLD_VERSIONS:
+        text = text.replace(old, new)
     todo = [(a, b) for a, b in EDITS if b not in text]
-    if not todo:
+    if not todo and not upgraded:
         print("[stop] mapping.sh stop timeouts ........... OK")
         return 0
     missing = [a for a, _ in todo if text.count(a) != 1]
@@ -82,7 +96,7 @@ def main():
             print("         " + a.strip()[:90])
         return 1
     if check:
-        print(f"[stop] mapping.sh stop timeouts ........... MISSING ({len(todo)} edits)")
+        print(f"[stop] mapping.sh stop timeouts ........... MISSING ({len(todo) + len(upgraded)} edits)")
         return 1
     backup = path + ".pre-timeouts"
     if not os.path.exists(backup):
@@ -96,7 +110,8 @@ def main():
         f.write(text)
     shutil.copymode(path, tmp)
     os.replace(tmp, path)
-    print(f"[stop] mapping.sh: stop timeouts added ({len(todo)} edits; original {os.path.basename(backup)})")
+    print(f"[stop] mapping.sh: stop timeouts added ({len(todo)} edits, {len(upgraded)} upgraded; "
+          f"original {os.path.basename(backup)})")
     return 0
 
 

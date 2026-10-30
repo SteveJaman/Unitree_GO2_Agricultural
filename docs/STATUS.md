@@ -327,7 +327,7 @@ relay is unconfirmed.
 | 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
 | 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
 | 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
-| 50 | Drive `omni` | `wifi_3d_nav.sh --no-explore --drive omni`, remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
+| 50 | Drive `omni` | `wifi_nav.sh --no-explore --drive omni` (`wifi_3d_nav.sh` is hybrid only), remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
 | 51 | Drive `hybrid` recovery | default drive, explorer next to a wall until a leg aborts | `/tmp/stuck_recovery.log`: steps back or aside 0.3 m, goal re-sent |
 | 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the workstation | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
 | 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |
