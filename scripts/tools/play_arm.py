@@ -122,6 +122,9 @@ def main():
                     help="wrist joints 3-5: I gain per s, default %(default)s")
     ap.add_argument("--wrist-deadband", type=float, default=float(env("ARM_WRIST_DEADBAND", "1.0")),
                     help="wrist joints 3-5: deadband in deg, default %(default)s")
+    ap.add_argument("--robot-mode", type=int, default=int(env("ARM_ROBOT_MODE", "0")), choices=[0, 1],
+                    help="funcode 2 mode of the setpoints the Go2 bridge streams (default %(default)s: "
+                         "direct; 1 lags and lurches at the end of a move)")
     ap.add_argument("--jitter-warn", type=float, default=float(env("ARM_JITTER_WARN", "0.8")),
                     help="deg: name the joints wandering more than this while holding a pose")
 
@@ -170,7 +173,7 @@ def main():
                            kd=args.kd, deadband=args.deadband, tolerance=args.tolerance,
                            settle_timeout=args.move_timeout, cmd_mode=args.mode,
                            wrist_kp=args.wrist_kp, wrist_ki=args.wrist_ki,
-                           wrist_deadband=args.wrist_deadband)
+                           wrist_deadband=args.wrist_deadband, robot_mode=args.robot_mode)
         limits = {j: MAX_TEACH_REACH for j in range(ARM_JOINTS)}
 
         def move(a, label):

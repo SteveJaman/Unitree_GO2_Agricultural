@@ -326,8 +326,11 @@ the target make it hunt. So every move ([`d1_motion.py`](../../scripts/nodes/d1_
 2. is sent as small setpoints. **With the arm on the Go2, the trajectory runs
    on the robot** (the bridge's `traj` request, 50 Hz over its wired link):
    streamed from the laptop, Wi-Fi latency spikes (200 ms measured) bunch the
-   setpoints into bursts and the arm shakes on every transition. Wired, or
-   with an older bridge, the laptop streams them at 20 Hz;
+   setpoints into bursts and the arm shakes on every transition. The robot
+   sends them in mode 0 (direct, `--robot-mode`): mode 1 restarts the
+   firmware's ramp at every step, the arm falls behind and lurches at the end
+   (simulated wrist wobble ±20° after arriving; mode 0: none). Wired, or with
+   an older bridge, the laptop streams them at 20 Hz in `--mode` (1);
 3. runs an **outer PID** per joint on (target − measured) **once the move is
    done** (correcting the lag mid-move fights the servos), which removes
    gravity sag on the shoulder and elbow. P and D act only outside a

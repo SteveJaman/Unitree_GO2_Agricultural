@@ -85,6 +85,11 @@ class MotionConfig:
     stream_mode: int = 1  # funcode 2 "mode" of the trajectory setpoints
     robot_traj: bool = True  # Go2 bridge with "traj": run the trajectory on the robot
     robot_rate: float = 50.0  # Hz, setpoints on the robot
+    # funcode 2 "mode" of the robot's setpoints. 0 (direct): at a steady 50 Hz
+    # the steps are tiny. Mode 1 restarts the firmware's 0.3 s ramp at every
+    # step, so the arm falls behind the path and lurches to catch up at the end
+    # (simulated: wrist wobble +/-20 deg after arriving; mode 0: none).
+    robot_mode: int = 0
     pid: bool = True  # False: trajectory only, no outer loop
 
 
@@ -201,7 +206,7 @@ def smooth_move(arm, target, gripper=0.0, cfg=None, limits=None, log=None):
                         "max_vel": cfg.max_vel,
                         "max_acc": cfg.max_acc,
                         "rate": cfg.robot_rate,
-                        "mode": cfg.stream_mode,
+                        "mode": cfg.robot_mode,
                         "min_duration": cfg.min_duration,
                     }
                 }
