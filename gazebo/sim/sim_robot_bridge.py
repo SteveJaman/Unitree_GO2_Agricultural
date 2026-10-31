@@ -13,12 +13,16 @@ This node produces the same from Gazebo (through ros_gz_bridge):
   /sim/odom        <- gz /model/go2/odometry   (base pose)
   /sim/lidar/points<- gz lidar, in the sensor frame
   /sim/cmd_vel     -> gz /model/go2/cmd_vel    (VelocityControl)
+  /sim/camera/image_raw <- gz camera, republished as /camera/image_raw
 
 The laptop's go2_odom_tf turns /lidar3d/odom into base_link using the
 measured sensor_from_base, so this node publishes
   T_map_sensor = T_map_base * inverse(sensor_from_base).
 Every cloud is stamped with an odom stamp that was already published, because
-the self-filter looks up TF at the exact cloud stamp.
+the self-filter looks up TF at the exact cloud stamp. Everything is stamped
+with this node's (wall) clock, like the robot's; ros_gz_bridge stamps camera
+images with Gazebo sim time, so they are restamped too, or anything that pairs
+image and cloud by stamp (pointcloud_to_depthimage, RTAB-Map) never matches.
 
 The maths and the TCP server have no ROS dependency (tested off-robot).
 """
@@ -260,7 +264,7 @@ def run_node(params, args):
     from rclpy.qos import qos_profile_sensor_data
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry, Path
-    from sensor_msgs.msg import JointState, PointCloud2, PointField
+    from sensor_msgs.msg import Image, JointState, PointCloud2, PointField
 
     sensor_from_base = params["sensor_from_base"]
     t_sensor_base = (tuple(sensor_from_base[:3]), tuple(sensor_from_base[3:]))
@@ -277,7 +281,10 @@ def run_node(params, args):
             self.cmd_pub = self.create_publisher(Twist, "/sim/cmd_vel", 10)
             self.create_subscription(Odometry, "/sim/odom", self.on_odom, 50)
             self.create_subscription(PointCloud2, "/sim/lidar/points", self.on_points, qos_profile_sensor_data)
-            self.base = None              # (p, q) of base as reported (drifted if enabled)
+            # Reliable, like ros_gz_bridge published it (RViz and the VLM subscribe reliably).
+            self.image_pub = self.create_publisher(Image, "/camera/image_raw", 5)
+            self.create_subscription(Image, "/sim/camera/image_raw", self.on_image, 5)
+            self.base = None             # (p, q) of base as reported (drifted if enabled)
             self.true_base = None         # (p, q) of base in the sim world (ground truth)
             self.drift = (args.drift_yaw, args.drift_scale)
             if any(self.drift):
@@ -328,6 +335,10 @@ def run_node(params, args):
                 ps.pose = out.pose.pose
                 self.path.poses.append(ps)
                 self.last_path_xy = xy
+
+        def on_image(self, msg):
+            msg.header.stamp = self.get_clock().now().to_msg()
+            self.image_pub.publish(msg)
 
         def on_points(self, msg):
             if self.base is None or self.last_odom_stamp is None:

@@ -309,10 +309,15 @@ def preflight(iface, arm_ip, want_ping=True):
     print(f"    [ok] {iface} = {', '.join(addrs)}")
 
     res = subprocess.run(["ip", "route", "get", arm_ip], capture_output=True, text=True)
-    if iface not in res.stdout:
+    if arm_ip in (a.split("/")[0] for a in addrs):
+        # The Gazebo arm emulator owns the arm address on simarm0 itself, and
+        # the kernel routes an own address through lo, not the interface.
+        print(f"    [ok] {arm_ip} is on {iface} itself (simulated arm)")
+    elif iface not in res.stdout:
         print(f"    [!] route to {arm_ip} does NOT go via {iface}")
         return False
-    print(f"    [ok] route to {arm_ip} via {iface}")
+    else:
+        print(f"    [ok] route to {arm_ip} via {iface}")
 
     if want_ping:
         res = subprocess.run(

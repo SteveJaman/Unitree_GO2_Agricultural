@@ -19,6 +19,7 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | [`start_rtabmap.sh`](../../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
 | [`start_arm.sh`](../../scripts/runtime/start_arm.sh) | D1-T arm entry point: preflight (address + ping), then `fold`, `read`, `--calibrate`, or any `d1_arm_control.py` command chain |
 | [`go2_net.sh`](../../scripts/runtime/go2_net.sh) | Sourced library: host-IP detection, `find_go2_ip()` robot discovery, interface safeguards |
+| [`session_keepalive.sh`](../../scripts/runtime/session_keepalive.sh) | Sourced by go2-nav2-wifi `mapping.sh` (via `wifi_nav.sh`, `GO2_KEEP_SESSION=0` = off): when the SLAM or motion link to the dog ends, halts the robot and prints the cause and the fix instead of closing the whole session |
 
 ## Nodes ([`scripts/nodes/`](../../scripts/nodes/))
 
@@ -71,7 +72,7 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | [`add-yolo-costmap-source.sh`](../../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh` (unless `--no-ai`) (`--undo` restores) |
 | [`relax-costmap.sh`](../../scripts/tools/relax-costmap.sh) | Nav2 costmap in go2-nav2-wifi: clear stray LiDAR marks as far as they are marked, faster inflation decay (obstacle heights unchanged); run by `wifi_3d_nav.sh` at start (`--undo` restores) |
 | [`debug_dashboard.py`](../../scripts/tools/debug_dashboard.py) | Debug page on <http://localhost:3001>: why the dog isn't moving (LiDAR → TF → goal → planner → costmap → controller → smoother → walking), topic health, costmap, ROS errors, all logs. Read-only probe: [`go2_debug_probe.py`](../../scripts/nodes/go2_debug_probe.py) |
-| [`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py) | Run by `wifi_nav.sh`: keep-alives and time limits on go2-nav2-wifi `mapping.sh`'s Ctrl+C cleanup, so a stalled Wi-Fi link cannot hang it |
+| [`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py) | Run by `wifi_nav.sh`: patches go2-nav2-wifi `mapping.sh` (tagged, idempotent): SSH keep-alives; a fast Ctrl+C (the robot halts first, the local, Jetson and 3D-twin map saves run at the same time, time limits on each, a second Ctrl+C skips the map copy from the Jetson); and the `session_keepalive.sh` hook |
 | [`apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](../navigation/LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](../../scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
 | [`teach_arm.py`](../../scripts/tools/teach_arm.py) | D1 arm plant scanning: compliance mode (stiffness 5000), save hand-guided poses to `config/arm_waypoints.json` ([d1arm.md](../hardware/d1arm.md#plant-scanning-teach--playback)) |

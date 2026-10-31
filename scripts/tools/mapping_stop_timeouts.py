@@ -24,6 +24,10 @@ Edits (each tagged with TAG, original kept as mapping.sh.pre-timeouts):
     (GO2_STOP_TIMEOUT, 120 s), the result transfer (GO2_FETCH_TIMEOUT,
     600 s) and closing the master (10 s). A transfer that times out leaves
     the results on the Jetson, as mapping.sh already reports.
+  * keep the session (KEEP_TAG): with GO2_KEEPALIVE set (wifi_nav.sh sets
+    it), the end of the SLAM or motion link no longer ends the whole run:
+    scripts/runtime/session_keepalive.sh halts the robot, prints the cause
+    and the fix, and waits for Ctrl+C. Without it, mapping.sh is unchanged.
 Run by wifi_nav.sh before every session.
 """
 
@@ -32,7 +36,31 @@ import shutil
 import sys
 
 TAG = "  # go2-agri: stop timeouts"
+KEEP_TAG = "  # go2-agri: keep session"
 FILE = "mapping.sh"
+
+LOCAL_STOP = 'docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1'
+FETCH_CMD = 'python3 "$MAPPING_ROOT/ws/scripts/fetch-lidar3d.py" --target "$target" --ssh-socket "$ssh_socket" \\'
+FETCH_ARGS = '        --run "$saved_run" --destination "$MAPPING_ROOT/ws/maps/lidar3d"'
+FETCH_FAIL = '        echo "Transfer incomplete: results remain on Jetson; see $log_dir/slam.log" >&2'
+
+# The fetch step, interruptible: the cleanup ignores Ctrl+C, and `timeout`
+# runs its command in its own process group (no terminal Ctrl+C reaches it),
+# so it runs in the background while this shell's own INT trap can end it.
+FETCH_NEW = (
+    '      echo "Copying the 3D map from the Jetson (up to ${GO2_FETCH_TIMEOUT:-600} s). Ctrl+C skips this: the map stays on the Jetson; fetch it later with:" >&2' + TAG + '\n'
+    '      echo "        python3 $MAPPING_ROOT/ws/scripts/fetch-lidar3d.py --target $target --run $saved_run" >&2' + TAG + '\n'
+    '     ' + TAG + '\n'
+    '      timeout -k 5 "${GO2_FETCH_TIMEOUT:-600}" ' + FETCH_CMD + '\n'
+    + FETCH_ARGS + ' &' + TAG + '\n'
+    '      fetch_pid=$!' + TAG + '\n'
+    '      trap \'kill -TERM "$fetch_pid" 2>/dev/null; echo "Transfer skipped (Ctrl+C): the map stays on the Jetson." >&2\' INT' + TAG + '\n'
+    '      fetch_rc=0; wait "$fetch_pid" || fetch_rc=$?' + TAG + '\n'
+    '      while kill -0 "$fetch_pid" 2>/dev/null; do fetch_rc=0; wait "$fetch_pid" || fetch_rc=$?; done' + TAG + '\n'
+    "      trap '' INT" + TAG + '\n'
+    '      [[ "$fetch_rc" == 0 ]] ||' + TAG + '\n'
+    + FETCH_FAIL
+)
 
 EDITS = [
     (
@@ -40,26 +68,43 @@ EDITS = [
         'ssh -o ConnectTimeout=8 -o ControlMaster=yes -o ControlPersist=60 '
         '-o ServerAliveInterval=10 -o ServerAliveCountMax=6 -S "$ssh_socket" "$target" true' + TAG,
     ),
+    # First thing on Ctrl+C: say what happens, and start the 3D twin's map save
+    # (GO2_STOP_EARLY, set by wifi_3d_nav.sh) alongside everything below.
     (
-        '    docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1 || true',
-        '    echo "Stopping the local Nav2/RViz session (up to 60 s)..." >&2' + TAG + '\n'
-        '    timeout -k 5 60 docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1 || true' + TAG,
+        "  trap '' INT TERM HUP\n",
+        "  trap '' INT TERM HUP\n"
+        '  echo "Stopping safely: the robot first, then the maps are saved (a minute at most). A second Ctrl+C only skips copying the map from the Jetson." >&2' + TAG + '\n'
+        '  [[ -z "${GO2_STOP_EARLY:-}" ]] || { docker stop -t 60 $GO2_STOP_EARLY >/dev/null 2>&1 & }' + TAG + '\n',
+    ),
+    # The local Nav2/RViz stop runs alongside the Jetson stop (independent).
+    (
+        '    ' + LOCAL_STOP + ' || true',
+        '    echo "Stopping the local Nav2/RViz session (up to 60 s, alongside the Jetson)..." >&2' + TAG + '\n'
+        '    { timeout -k 5 60 ' + LOCAL_STOP + ' || true; } &' + TAG + '\n'
+        '    local_stop_pid=$!' + TAG,
     ),
     (
         '    ssh -o BatchMode=yes -S "$ssh_socket" "$target" "docker exec go2-lidar3d-onboard bash /ws/scripts/go2-session.sh stop lidar3d --owner $owner" >/dev/null 2>&1 || true',
-        '    echo "Stopping SLAM on the Jetson and saving its map (up to ${GO2_STOP_TIMEOUT:-120} s; Ctrl+C is ignored until then)..." >&2' + TAG + '\n'
+        '    echo "Stopping SLAM on the Jetson and saving its map (up to ${GO2_STOP_TIMEOUT:-120} s)..." >&2' + TAG + '\n'
         '    timeout -k 5 "${GO2_STOP_TIMEOUT:-120}" ssh -o BatchMode=yes -S "$ssh_socket" "$target" "docker exec go2-lidar3d-onboard bash /ws/scripts/go2-session.sh stop lidar3d --owner $owner" >/dev/null 2>&1 '
         '|| echo "Jetson stop did not finish (link down?): run ./scripts/runtime/wifi_nav.sh --clean before the next session" >&2' + TAG,
     ),
     (
-        '      python3 "$MAPPING_ROOT/ws/scripts/fetch-lidar3d.py" --target "$target" --ssh-socket "$ssh_socket" \\',
-        # A comment after a trailing backslash would end the command: tag the line above.
-        '     ' + TAG + '\n'
-        '      timeout -k 5 "${GO2_FETCH_TIMEOUT:-600}" python3 "$MAPPING_ROOT/ws/scripts/fetch-lidar3d.py" --target "$target" --ssh-socket "$ssh_socket" \\',
+        '      ' + FETCH_CMD + '\n' + FETCH_ARGS + ' || \\\n' + FETCH_FAIL,
+        FETCH_NEW,
     ),
     (
         '  ssh -S "$ssh_socket" -O exit "$target" >/dev/null 2>&1 || true',
+        '  [[ -z "${local_stop_pid:-}" ]] || wait "$local_stop_pid" 2>/dev/null || true' + TAG + '\n'
         '  timeout -k 2 10 ssh -S "$ssh_socket" -O exit "$target" >/dev/null 2>&1 || true' + TAG,
+    ),
+    (
+        '    if [[ -n "$motion_pid" ]]; then\n'
+        '      wait -n "$mapping_pid" "$viz_pid" "$motion_pid"\n',
+        '    if [[ -n "${GO2_KEEPALIVE:-}" && -f "$GO2_KEEPALIVE" ]]; then' + KEEP_TAG + '\n'
+        '      source "$GO2_KEEPALIVE"; go2_keepalive_wait' + KEEP_TAG + '\n'
+        '    elif [[ -n "$motion_pid" ]]; then\n'
+        '      wait -n "$mapping_pid" "$viz_pid" "$motion_pid"\n',
     ),
 ]
 
@@ -68,6 +113,21 @@ EDITS = [
 OLD_VERSIONS = [
     ("-o ServerAliveInterval=5 -o ServerAliveCountMax=3 -S \"$ssh_socket\" \"$target\" true" + TAG,
      "-o ServerAliveInterval=10 -o ServerAliveCountMax=6 -S \"$ssh_socket\" \"$target\" true" + TAG),
+    # 2026-10-30: local stop in the foreground -> alongside the Jetson stop.
+    ('    echo "Stopping the local Nav2/RViz session (up to 60 s)..." >&2' + TAG + '\n'
+     '    timeout -k 5 60 ' + LOCAL_STOP + ' || true' + TAG,
+     '    echo "Stopping the local Nav2/RViz session (up to 60 s, alongside the Jetson)..." >&2' + TAG + '\n'
+     '    { timeout -k 5 60 ' + LOCAL_STOP + ' || true; } &' + TAG + '\n'
+     '    local_stop_pid=$!' + TAG),
+    ('    echo "Stopping SLAM on the Jetson and saving its map (up to ${GO2_STOP_TIMEOUT:-120} s; Ctrl+C is ignored until then)..." >&2' + TAG,
+     '    echo "Stopping SLAM on the Jetson and saving its map (up to ${GO2_STOP_TIMEOUT:-120} s)..." >&2' + TAG),
+    # 2026-10-30: fetch in the foreground (Ctrl+C could not skip it) -> interruptible.
+    ('     ' + TAG + '\n'
+     '      timeout -k 5 "${GO2_FETCH_TIMEOUT:-600}" ' + FETCH_CMD + '\n' + FETCH_ARGS + ' || \\\n' + FETCH_FAIL,
+     FETCH_NEW),
+    ('  timeout -k 2 10 ssh -S "$ssh_socket" -O exit "$target" >/dev/null 2>&1 || true' + TAG,
+     '  [[ -z "${local_stop_pid:-}" ]] || wait "$local_stop_pid" 2>/dev/null || true' + TAG + '\n'
+     '  timeout -k 2 10 ssh -S "$ssh_socket" -O exit "$target" >/dev/null 2>&1 || true' + TAG),
 ]
 
 
@@ -82,9 +142,11 @@ def main():
         sys.exit(f"[stop] {path} not found")
     text = open(path).read()
     # Upgrade an earlier version of these edits in place.
-    upgraded = [old for old, _ in OLD_VERSIONS if old in text]
+    # An upgrade applies once: some new edits contain the old text they replace.
+    upgraded = [old for old, new in OLD_VERSIONS if old in text and new not in text]
     for old, new in OLD_VERSIONS:
-        text = text.replace(old, new)
+        if old in text and new not in text:
+            text = text.replace(old, new)
     todo = [(a, b) for a, b in EDITS if b not in text]
     if not todo and not upgraded:
         print("[stop] mapping.sh stop timeouts ........... OK")

@@ -811,6 +811,21 @@ sudo dpkg --configure -a
 sudo reboot          # then: nvidia-smi
 ```
 
+### `could not bring up go2-lidar3d` after `unknown shorthand flag: 'p' in -p`
+
+The first run builds `go2-humble:local` (a few minutes), then
+`setup-lidar3d.sh` runs `docker compose -p go2-lidar3d … up` and fails:
+Ubuntu's `docker.io` package has no Compose plugin. `wifi_nav.sh` now checks
+for it up front (`[checks] docker compose … MISSING`).
+
+```bash
+sudo apt-get install -y docker-compose-v2
+docker compose version      # should print a version
+```
+
+Then run again; the base image is already built, so it only creates the
+container (about a minute).
+
 ### Docker: `permission denied ... docker.sock`
 
 Your user is not in the `docker` group yet: `sudo usermod -aG docker "$USER"`,
@@ -819,6 +834,18 @@ then log out and back in.
 ---
 
 ## RViz
+
+### Ctrl+C takes long to give the terminal back
+
+Ctrl+C first halts the robot (motion bridge, explorer), then saves the
+maps: the local Nav2 stop, the SLAM map on the Jetson and the 3D twin's
+RTAB-Map database now all save **at the same time** (they used to run one
+after another), usually within a minute. Further Ctrl+C presses are
+ignored while a map is being saved, so nothing is lost. The last step
+copies the Jetson's map to this computer over Wi-Fi: a **second Ctrl+C
+skips that copy**. The map then stays on the Jetson, and the terminal
+prints the command to fetch it later
+(`python3 ~/files/go2-nav2-wifi/ws/scripts/fetch-lidar3d.py --target unitree@<robot> --run run-…`).
 
 ### RViz closes by itself about 30 s after start
 
@@ -829,10 +856,19 @@ interrupted with ctrl-c (SIGINT)` at the same moment, and RViz ends with
 `The futex facility returned an unexpected error code` / `Aborted`.
 
 RViz did not crash: the session was shut down, and the futex abort is
-only how RViz dies while being stopped. `mapping.sh` stops everything when
-**any** of its parts ends: RViz, the SLAM session on the Jetson, or the
-motion bridge. Both robot parts run over one shared SSH link, so losing that
-link ends the run.
+only how RViz dies while being stopped. Upstream `mapping.sh` stops
+everything when **any** of its parts ends: RViz, the SLAM session on the
+Jetson, or the motion bridge. Both robot parts run over one shared SSH link,
+so losing that link ended the run.
+
+**Since 2026-10-30 the session stays open instead** (`session_keepalive.sh`,
+hooked into `mapping.sh` by `mapping_stop_timeouts.py`). When the SLAM or
+motion link ends, the robot is halted (motion bridge stopped, explorer
+paused) and the terminal prints a `PROBLEM` box with the cause and the fix:
+the Jetson's clock jump after boot, port 17999 still taken, another session
+on the Jetson, or a dropped Wi-Fi link. RViz and the dashboard stay open;
+press Ctrl+C when you are ready. Only closing RViz still ends the run at
+once. `GO2_KEEP_SESSION=0` brings back the old behaviour.
 
 - **The dog's data never arrives.** The terminal shows `[link] WARNING: no
   data from the dog after 20 s` (`go2_link_watch.py`, started by

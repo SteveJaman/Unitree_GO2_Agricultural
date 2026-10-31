@@ -167,7 +167,7 @@ while [ $# -gt 0 ]; do
                       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then EXPORT_DB="$2"; shift; fi ;;
         --mesh)       MESH="true" ;;
         --view)       ACTION="view" ;;
-        --check|--clean|--setup-ssh)
+        --check|--clean|--setup-ssh|--sync-clock)
                       ACTION="passthru"; PASSTHRU+=("$1") ;;
         --host-ip|--robot-ip|--iface)
                       PASSTHRU+=("$1")
@@ -762,5 +762,9 @@ start_twin_when_ready &
 WATCH_PID=$!
 
 status=0
+# On Ctrl+C the first cleanup to run (mapping.sh's on the robot, wifi_nav.sh's
+# in the sim) starts go2-3d's map save at once, alongside the rest; this
+# script's cleanup only waits for it (bash runs our own trap last).
+export GO2_STOP_EARLY="${TWIN_CONTAINER}"
 bash "${WIFI_NAV}" "${PASSTHRU[@]}" || status=$?
 exit "${status}"

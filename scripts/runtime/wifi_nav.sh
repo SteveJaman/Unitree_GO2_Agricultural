@@ -285,7 +285,7 @@ start_robot_relay() {
     if ! robot_ssh -T -o ConnectTimeout=5 \
             "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" "true" >/dev/null 2>&1; then
         echo "[relay] ERROR: cannot SSH to robot."
-        echo "         Run:  ./wifi_nav.sh --setup-ssh"
+        echo "         Run:  ./scripts/runtime/wifi_nav.sh --setup-ssh"
         return 1
     fi
 
@@ -550,6 +550,21 @@ numpy_ok() {   # $1 = version; true if < 1.25
         [ "$(printf '%s\n1.25\n' "$1" | sort -V | head -n1)" = "$1" ]
 }
 
+# The go2-lidar3d image has no pip ("No module named pip"); every pip install
+# below then fails at once. Install it from apt (as root) the first time.
+# $1 = log tag. Prints apt's last lines on failure instead of guessing.
+ensure_container_pip() {
+    local out
+    docker exec "${CONTAINER_NAME}" python3 -m pip --version >/dev/null 2>&1 && return 0
+    echo "[$1] pip missing in ${CONTAINER_NAME} — installing python3-pip (apt, once per container)..."
+    if ! out="$(docker exec -u root -e DEBIAN_FRONTEND=noninteractive "${CONTAINER_NAME}" bash -c             'apt-get update -qq && apt-get install -y -qq --no-install-recommends python3-pip' 2>&1)"; then
+        echo "[$1] WARN: installing python3-pip failed:"
+        tail -n 5 <<< "${out}" | sed 's/^/        /'
+        return 1
+    fi
+    docker exec "${CONTAINER_NAME}" python3 -m pip --version >/dev/null 2>&1
+}
+
 pin_container_numpy() {
     local ver
     ver="$(container_numpy_version)"
@@ -558,8 +573,9 @@ pin_container_numpy() {
         return 0
     fi
     echo "[numpy] container numpy ${ver:-missing} — installing '${NUMPY_PIN}'..."
-    if ! docker exec -u root "${CONTAINER_NAME}" python3 -m pip install --no-cache-dir "${NUMPY_PIN}"; then
-        echo "[numpy] WARN: pip install failed inside ${CONTAINER_NAME} (no internet?)."
+    if ! ensure_container_pip numpy ||
+       ! docker exec -u root "${CONTAINER_NAME}" python3 -m pip install --no-cache-dir "${NUMPY_PIN}"; then
+        echo "[numpy] WARN: could not install ${NUMPY_PIN} inside ${CONTAINER_NAME} (see the messages above)."
         return 0
     fi
     if ! docker exec "${CONTAINER_NAME}" python3 -c 'import scipy.spatial' >/dev/null 2>&1; then
@@ -578,10 +594,18 @@ ensure_container_opencv() {
         return 0
     fi
     echo "[camera] OpenCV missing in ${CONTAINER_NAME} — installing '${OPENCV_PIN}'..."
-    if ! docker exec -u root "${CONTAINER_NAME}" python3 -m pip install -q --no-cache-dir --no-deps "${OPENCV_PIN}" ||
-       ! docker exec "${CONTAINER_NAME}" python3 -c 'import cv2' >/dev/null 2>&1; then
-        echo "[camera] WARN: OpenCV install failed (no internet?): no camera relay, YOLO/VLM get no images."
+    local out
+    if ! ensure_container_pip camera; then
+        echo "[camera] WARN: no pip in ${CONTAINER_NAME}, so no OpenCV: no camera relay, YOLO/VLM get no images."
+        return 0
     fi
+    if ! out="$(docker exec -u root "${CONTAINER_NAME}" python3 -m pip install -q --no-cache-dir --no-deps "${OPENCV_PIN}" 2>&1)" ||
+       ! docker exec "${CONTAINER_NAME}" python3 -c 'import cv2' >/dev/null 2>&1; then
+        echo "[camera] WARN: OpenCV install failed: no camera relay, YOLO/VLM get no images. pip said:"
+        tail -n 5 <<< "${out}" | sed 's/^/        /'
+        return 0
+    fi
+    echo "[camera] container OpenCV $(docker exec "${CONTAINER_NAME}" python3 -c 'import cv2; print(cv2.__version__)' 2>/dev/null) ....... installed"
 }
 
 check_dds_bind() {
@@ -719,6 +743,21 @@ fi
 [ -f "${NAV2_WIFI_DIR}/mapping.sh" ] || { echo "ERROR: mapping.sh not found." >&2; exit 1; }
 echo "[checks] docker + repo present .................... OK"
 
+# setup-lidar3d.sh creates the container with `docker compose`. Ubuntu's
+# docker.io has no compose plugin; without it the image builds, then compose
+# fails ("unknown shorthand flag: 'p' in -p") and the run ends with only
+# "could not bring up go2-lidar3d".
+if docker compose version >/dev/null 2>&1; then
+    echo "[checks] docker compose ........................... OK"
+elif container_exists; then
+    echo "[checks] docker compose ........................... MISSING (fine while ${CONTAINER_NAME} exists; needed to recreate it)"
+    echo "         Install: sudo apt-get install -y docker-compose-v2"
+else
+    echo "[checks] docker compose ........................... MISSING (needed to create ${CONTAINER_NAME})"
+    echo "         Install: sudo apt-get install -y docker-compose-v2"
+    [ "${ACTION}" = "check" ] || exit 1
+fi
+
 # docker cp below is best-effort (|| true), so a missing node script would
 # otherwise run a stale /tmp copy in the container. Fail early instead.
 for f in "${EXPLORER_SCRIPT}" "${CAMERA_RELAY_SCRIPT}" "${FLOOR_FILTER_SCRIPT}"; do
@@ -741,7 +780,7 @@ elif robot_ssh -T -o ConnectTimeout=3 \
         if clock_skew_too_large; then
             echo "[checks] robot clock offset ${ROBOT_CLOCK_OFFSET} s ......... TOO LARGE (max ${CLOCK_MAX_SKEW} s)"
             echo "         Skew makes Nav2 act on stale robot poses: over-turning, shudder, wall hits."
-            echo "         Fix:  ./wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
+            echo "         Fix:  ./scripts/runtime/wifi_nav.sh --sync-clock     (override: GO2_ALLOW_CLOCK_SKEW=1)"
             if [ "${ACTION}" = "run" ] && [ "${GO2_ALLOW_CLOCK_SKEW:-0}" != 1 ]; then
                 exit 1
             fi
@@ -763,7 +802,7 @@ elif robot_ssh -T -o ConnectTimeout=3 \
     fi
 else
     echo "[checks] passwordless SSH to robot ............... NOT SET UP"
-    echo "         Run:  ./wifi_nav.sh --setup-ssh"
+    echo "         Run:  ./scripts/runtime/wifi_nav.sh --setup-ssh"
     if [ "${ACTION}" = "run" ]; then
         echo "[checks] ERROR: mapping.sh starts SLAM and motion on the robot over SSH."
         exit 1
@@ -817,7 +856,9 @@ fi
 # Wi-Fi power saving: the RTL8822BU dongle's firmware fails to wake from it
 # ("failed to leave lps state"), the link freezes and runs end ~15 s in.
 if [ "${SIM}" != "true" ]; then
-    wifi_ps="$(grep -rhs '^wifi.powersave' /etc/NetworkManager/conf.d/ | tail -1 | tr -dc '0-9')"
+    # No match is normal (no NetworkManager override): under pipefail grep's
+    # exit 1 would end the whole script here, silently.
+    wifi_ps="$( { grep -rhs '^wifi.powersave' /etc/NetworkManager/conf.d/ || true; } | tail -1 | tr -dc '0-9')"
     lps_deep="$(cat /sys/module/rtw88_core/parameters/disable_lps_deep 2>/dev/null || echo -)"
     if [ "${wifi_ps:-0}" = 3 ] || [ "${lps_deep}" = N ]; then
         echo "[checks] Wi-Fi power saving ...................... ON (the dongle freezes the link to the robot)"
@@ -971,6 +1012,12 @@ cleanup() {
     CLEANED_UP="true"
     echo
     echo "[wifi_nav] Shutting down..."
+    # The 3D twin saves its map meanwhile (wifi_3d_nav.sh sets GO2_STOP_EARLY;
+    # on the robot mapping.sh's cleanup already started this, which is harmless).
+    if [ -n "${GO2_STOP_EARLY:-}" ]; then
+        # shellcheck disable=SC2086  # a list of container names
+        docker stop -t 60 ${GO2_STOP_EARLY} >/dev/null 2>&1 &
+    fi
     if [ -n "${ARM_PID}" ] && kill -0 "${ARM_PID}" 2>/dev/null; then
         echo "[wifi_nav] Waiting up to 20 s for the arm fold to finish..."
         for _ in $(seq 1 20); do
@@ -978,9 +1025,12 @@ cleanup() {
             sleep 1
         done
     fi
+    # Independent steps run side by side (they used to take ~7 s in a row);
+    # the stop to the explorer still goes out first.
+    local bg=()
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         echo "[wifi_nav] SAFETY: publishing stop to /explore/resume"
-        stop_exploration
+        stop_exploration & bg+=($!)
     fi
     if [ -n "${EXPLORE_HOST_PID}" ]; then
         kill "${EXPLORE_HOST_PID}" 2>/dev/null || true
@@ -989,15 +1039,16 @@ cleanup() {
         kill "${LINK_WATCH_PID}" 2>/dev/null || true
     fi
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
-        docker exec -u root "${CONTAINER_NAME}" pkill -f "^python3 /tmp/go2_link_watch.py" 2>/dev/null || true
-        kill_explore_inside_container
-        kill_floor_filter_inside_container
-        kill_camera_relay_inside_container
-        kill_recovery_inside_container
+        # One exec for every helper node (was five, one with a 1 s sleep).
+        docker exec -u root "${CONTAINER_NAME}" pkill -9 -f \
+            "^python3 /tmp/go2_link_watch.py|frontier_explorer|explore_lite|ros2 run explore|go2_floor_filter|go2_camera_relay|^python3 /tmp/go2_stuck_recovery.py" \
+            >/dev/null 2>&1 &
+        bg+=($!)
     fi
-    (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true
-    stop_arm_bridge
-    stop_robot_relay
+    { (cd "${NAV2_WIFI_DIR}/docker" && docker compose down 2>/dev/null) || true; } & bg+=($!)
+    stop_arm_bridge & bg+=($!)
+    stop_robot_relay & bg+=($!)
+    wait "${bg[@]}" 2>/dev/null || true
     if [ "${OMNI}" = "true" ]; then
         python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" --disable "${NAV2_WIFI_DIR}" || true
     fi
@@ -1239,6 +1290,13 @@ else
         LINK_WATCH_PID=$!
     fi
 
+    # A lost SLAM / motion link halts the robot and explains itself instead
+    # of closing everything (session_keepalive.sh; GO2_KEEP_SESSION=0: old way).
+    if [ "${GO2_KEEP_SESSION:-1}" = 1 ]; then
+        export GO2_KEEPALIVE="${SCRIPT_DIR}/session_keepalive.sh"
+    else
+        unset GO2_KEEPALIVE
+    fi
     ./mapping.sh --3d ${MODE} || true
 fi
 

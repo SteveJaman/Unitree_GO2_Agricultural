@@ -38,11 +38,13 @@ discovery finds nothing, plug a cable into the Go2, `ssh unitree@192.168.123.161
 ### Host packages (once)
 
 ```bash
-sudo apt-get install -y docker.io python3-pip x11-xserver-utils nmap curl git
+sudo apt-get install -y docker.io docker-compose-v2 python3-pip x11-xserver-utils nmap curl git
 sudo usermod -aG docker "$USER"          # log out and back in afterwards
 python3 -m pip install --user cyclonedds pre-commit ikpy ruckig   # ikpy: arm IK; ruckig: arm S-curve moves
 ```
 
+`docker-compose-v2` provides `docker compose`, which creates the `go2-lidar3d`
+container on the first run; Ubuntu's `docker.io` does not include it.
 `x11-xserver-utils` provides `xhost`, which lets RViz in the container open on
 the desktop. `nmap` makes robot discovery faster and more reliable.
 
