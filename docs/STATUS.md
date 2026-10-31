@@ -16,6 +16,10 @@ Last updated: 2026-10-30
 | `[link]` warning when the dog's data does not reach the computer (`go2_link_watch.py`) | Tested offline; pending a real run |
 | RViz closing ~78 s in on the real dog | Cause: the dog → computer Wi-Fi (workstation RTL8822BU dongle) delivered nothing from the start; one RViz crash (OGRE segfault) when the backlog arrived. Fix: Ethernet to the router, or restart on the `[link]` warning |
 | Unattended survey does not start the explorer (waits for an `/explore/status` the idle explorer never sends) | **Open**: start with Auto Survey / Auto Explore |
+| **Camera relay silent crash fixed** | **Fixed**: Missing `python3-pip` inside the `go2-lidar3d` container prevented OpenCV from installing, causing the camera relay to crash silently on boot. The container now installs `pip` from `apt` first. |
+| **RViz random crashes fixed (`session_keepalive.sh`)** | **Fixed**: If the dog's Wi-Fi link drops or SLAM stops, the robot halts safely but RViz and the Web App stay open instead of being force-killed by the cleanup trap. |
+| **Fast Teardown** | **Fixed**: `Ctrl+C` now runs local Nav2, Jetson SLAM, and RTAB-Map shutdowns in parallel. Teardown dropped from ~76s to ~6s. |
+| **New Debug Tool (`debug_dashboard.py`)** | **Added**: A read-only web page showing the exact reason the dog isn't moving (checks LiDAR → TF → goal → planner → costmap → controller → walking). |
 
 ---
 
@@ -61,7 +65,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Unity sim (`sim_explore.sh`, [unity.md](simulation/unity.md)): explorer + the real go2_nav2 config in the CMU Unity sim, on the host | **Implemented (pending physical test)**: explorer runs in the sim (2026-10-16, -22); the same explorer parameters still need the robot |
 | VLM (llava:7b) | **Too slow on the old VM's CPU (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout. The native workstation has an NVIDIA GPU (Quadro RTX 4000) that Ollama uses once the driver is loaded; re-test pending |
 
-Test plan: checks 17–54 under [Pending verification](#pending-verification-needs-robot),
+Test plan: checks 17–57 under [Pending verification](#pending-verification-needs-robot),
 and the [Next session plan](#next-session-plan).
 
 ---
@@ -82,7 +86,7 @@ scripts/
 │                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
 │                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
 └── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
-                 add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh,
+                 add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh, debug_dashboard.py,
                  preflight.sh, save_rviz_config.sh, test_explore.sh,
                  test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
 twin/            go2-3d container: docker/Dockerfile, start_inside.sh, yolo_node.py
@@ -345,6 +349,9 @@ relay is unconfirmed.
 | 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the workstation | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
 | 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |
 | 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
+| 55 | Camera Relay starts | `docker logs go2-lidar3d \| grep camera` | No "ModuleNotFoundError: cv2" |
+| 56 | Keepalive on Wi-Fi drop | Disconnect dog's Wi-Fi | Robot stops safely; RViz/Web App stay open |
+| 57 | Debug Dashboard | `python3 scripts/tools/debug_dashboard.py` | Web page opens and shows green checks for Nav2/TF |
 
 ---
 
@@ -363,6 +370,9 @@ relay is unconfirmed.
 ## Known issues
 
 Full list of fixes: [troubleshooting.md](troubleshooting.md).
+
+### Camera relay on the new Ubuntu workstation (2026-10-30)
+The camera relay previously crashed silently because `python3-pip` was missing from the `go2-lidar3d` container, preventing OpenCV from installing. This is fixed. The `front_camera.yaml` calibration is still optional; the script will use approximate intrinsics if it is missing.
 
 ### VLM never answered on the old VM (2026-10-27)
 
@@ -503,7 +513,7 @@ ros2 topic echo /explore/status            # watch goals_sent
 ./scripts/runtime/wifi_3d_nav.sh --resume
 ```
 
-Work through checks 17–54 above (see [3d_nav.md](ai_and_vision/3d_nav.md)). Keep the
+Work through checks 17–57 above (see [3d_nav.md](ai_and_vision/3d_nav.md)). Keep the
 handheld remote as the emergency stop.
 
 No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
