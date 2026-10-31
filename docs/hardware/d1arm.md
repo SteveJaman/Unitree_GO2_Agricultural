@@ -39,6 +39,7 @@ anything?". Connecting it to the real arm is the open step (see
 | `scripts/tools/play_arm.py` | Plant scanning: replay the saved poses (home → each pose, hold for the camera → home), smooth + PID (`start_arm.sh play`) |
 | `scripts/nodes/d1_motion.py` | Shake-free moves: minimum-jerk trajectory streamed as setpoints + outer PID on the measured angles |
 | `scripts/nodes/orbit_scan.py` | Orbit scan: scan pose, base sweep −90° → +90° with the wrist counter-rotating to keep the camera on a table-top object |
+| `scripts/tools/test_arm_tracker_pure.py` | **Visual Servoing Test:** Standalone script using YOLO and RealSense to dynamically track a person. |
 | `scripts/tools/release_arm.py` | Release the holding tension: ramps the stiffness down to 0 so the arm sinks slowly, `--now` at once, `--power-off` |
 | `scripts/tools/diag_arm.sh` | Network + DDS diagnostic |
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
@@ -269,8 +270,7 @@ Kinesthetic teaching for plant data collection: guide the arm by hand until
 the end camera frames a plant, save the pose, and let the arm replay the
 whole sweep later. By default the arm is **fully free** while teaching
 (`funcode 5`, `{"mode": 0}`): no resistance at all, so it is easy to place, but
-nothing holds it up either: **keep a hand on it**. `--stiffness 5000` uses
-compliance mode instead: the motors hold the arm (and camera) up but yield to
+nothing holds it up either: **keep a hand on it**. `--stiffness 5000` uses compliance mode instead: the motors hold the arm (and camera) up but yield to
 a push.
 
 **1. Teach** (one hand on the arm, the other on the keyboard):
@@ -483,6 +483,31 @@ python3 scripts/nodes/arm_ik_scanner.py --target 0.55 0 0 --dry-run   # solve, p
 = URDF `Joint(i+1)` in radians, same zero) comes from the Gazebo emulator and has
 not been confirmed on the hardware. Run `--dry-run`, then a first run with the
 space clear, and check the 3D arm in the dashboard matches the real one.
+
+## Visual Servoing Tracker (`test_arm_tracker_pure.py`)
+
+A standalone test script that proves the camera can actuate the arm in real-time without ROS 2, MoveIt, or Nav2. It relies on **visual servoing**: if a person moves to the left of the camera's view, the arm rotates left to keep them centered.
+
+**Requirements:**
+*   The RealSense D435i must be plugged directly into the workstation (via USB).
+*   Python packages: `pip install pyrealsense2 ultralytics opencv-python`
+*   The arm must be reachable (wired DDS or via the Go2 Wi-Fi bridge).
+
+**How to run:**
+```bash
+python3 scripts/tools/test_arm_tracker_pure.py
+```
+
+**How it works:**
+1.  **Boot:** The script connects to the arm and moves it to a "READY" pose (J1: -40°, J2: 60°).
+2.  **Track:** It grabs frames from the RealSense, runs YOLO11s to find a `person`, and calculates the `(X, Y)` pixel offset of the person from the center of the image.
+3.  **Actuate:** 
+    *   **Joint 0 (Base):** Sweeps left/right to center the person horizontally.
+    *   **Joint 1 (Shoulder):** Tilts up/down to center the person vertically.
+    *   It uses a `deadzone` of 30 pixels and a `step_size` of 1.5° to prevent jerky movements.
+4.  **Exit:** Pressing `q` or `Ctrl+C` stops the loop and safely releases the arm motors.
+
+**Note:** This is a raw logic test. It does not use inverse kinematics to calculate exact 3D coordinates; it just adjusts joint angles until the YOLO bounding box is centered in the frame.
 
 ## The arm in the web dashboard
 
