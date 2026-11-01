@@ -3,7 +3,11 @@
 [← Back to README](../../README.md) · [Architecture](../architecture.md) · [3D twin](../ai_and_vision/3d_nav.md) · [D1 arm](../hardware/d1arm.md) · [Troubleshooting](../troubleshooting.md)
 
 Everything needed on a new workstation, then the everyday commands for
-navigation and the arm. The 3D digital twin has its own one-time steps
+navigation and the arm. **Shortcut:** `./scripts/setup.sh` does the host
+packages' Docker part, the upstream clone, the lab fixes, the Python packages,
+Ollama and the image builds below, and checks them on later runs
+([scripts.md → Setup](scripts.md#setup-scriptssetupsh)). SSH to the robot, the
+arm calibration and the UDP buffers stay manual. The 3D digital twin has its own one-time steps
 (image build, Ollama): [3d_nav.md → One-time setup](../ai_and_vision/3d_nav.md#one-time-setup).
 
 ---

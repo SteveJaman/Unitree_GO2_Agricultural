@@ -24,13 +24,24 @@ SLAM on the Jetson, Nav2 on an Ubuntu 22.04 workstation, bridged over Wi-Fi. It 
 ## Quick Start
 
 ```bash
+# 1. Get this repo
 git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree_GO2_Agricultural
 cd ~/files/Unitree_GO2_Agricultural
-./scripts/runtime/wifi_3d_nav.sh            # dog powered on, standing at the dock
+
+# 2. Install or check everything it needs (safe to rerun any time)
+./scripts/setup.sh
+
+# 3. Run: dog powered on, standing at the dock
+./scripts/runtime/wifi_3d_nav.sh
 ```
 
-That one command does everything. The first run builds the 3D / AI image and
-pulls the VLM model (needs internet). Then the dog maps the area on its own,
+`setup.sh` checks Docker, the upstream stack (`~/files/go2-nav2-wifi`) and its
+lab patches, the host Python packages, Ollama with `llava:7b`, and the Docker
+images, and installs whatever is missing (`[✓]` = already there). After a fresh
+Docker install, log out and back in, then run it again.
+
+`wifi_3d_nav.sh` does everything else (it would also build the 3D / AI image and
+pull the VLM model itself if `setup.sh` had not). The dog maps the area on its own,
 splits it into rooms, names each, saves a report and returns to the dock.
 `--manual` keeps the AI but leaves starting and steering to you.
 
@@ -39,15 +50,15 @@ from another device. The terminal prints the address.
 
 > **Troubleshooting the first run:** If `./scripts/runtime/wifi_3d_nav.sh` fails immediately, ensure Docker is installed (`docker ps`) and that you have cloned the upstream stack into `~/files/go2-nav2-wifi` (see [docs/setup/setup.md](docs/setup/setup.md)).
 
-**First time on a workstation?** Before this you need:
+**First time on a workstation?** `setup.sh` covers Docker, the upstream stack
+and its lab fixes, the Python packages, Ollama and the images. Still by hand,
+once:
 
-- Docker and the host packages (and the NVIDIA driver, optional);
-- the upstream stack and its lab fixes;
 - passwordless SSH to the robot;
 - the arm calibration;
-- Ollama for the VLM;
 - bigger UDP receive buffers on the host (one `sysctl` file), or camera
-  frames and LiDAR clouds get dropped.
+  frames and LiDAR clouds get dropped;
+- the NVIDIA driver (optional).
 
 All of it is in **[docs/setup/setup.md](docs/setup/setup.md)**.
 

@@ -8,6 +8,17 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 
 ---
 
+## Setup ([`scripts/setup.sh`](../../scripts/setup.sh))
+
+Installs or checks, safe to rerun: Docker (+ compose plugin, docker group),
+the upstream clone in `~/files/go2-nav2-wifi`, its lab patches
+([`apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh)), the host
+Python packages (cyclonedds, ruckig, ikpy; `--with-extras` adds ultralytics and
+pyrealsense2), Ollama with `llava:7b`, and the images `go2-lidar3d:local` (build
+only: `wifi_nav.sh` creates the container for the current IPs) and `go2-3d:local`.
+Prints `[✓]` for what is there, `[...] Installing` for what it adds, and a list
+of anything left to fix (exit 1).
+
 ## Runtime ([`scripts/runtime/`](../../scripts/runtime/))
 
 | Script | Purpose |
