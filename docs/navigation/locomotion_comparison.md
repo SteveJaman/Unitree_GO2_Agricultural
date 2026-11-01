@@ -147,7 +147,7 @@ Parameters: [explorer.md](explorer.md#parameters).
 
 - **One DDS setup for every helper** (explorer, floor filter, recovery, stop).
   Before, START in RViz did nothing.
-- **Debug page** (`python3 scripts/tools/debug_dashboard.py`, <http://localhost:3001>): checks the chain from the LiDAR to the legs and shows why the dog is not moving ([troubleshooting](../troubleshooting.md#debug-page-why-isnt-it-moving)).
+- **Debug page** (`python3 scripts/debug/debug_dashboard.py`, <http://localhost:3001>): checks the chain from the LiDAR to the legs and shows why the dog is not moving ([troubleshooting](../troubleshooting.md#debug-page-why-isnt-it-moving)).
 - **Clock-skew check** between the robot and the laptop at start-up. Skew
   causes drift and shudder ([drift-and-shudder.md](drift-and-shudder.md)).
 - **Sim fixes:**

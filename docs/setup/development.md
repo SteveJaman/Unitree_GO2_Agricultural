@@ -80,10 +80,12 @@ Unitree_GO2_Agricultural/
 │   │   ├── go2_camera_wifi.{sh,py}   # front camera JPEG -> Wi-Fi DDS
 │   │   ├── arm_bridge_wifi.{sh,py}   # D1 arm on the Go2 <-> laptop over TCP
 │   │   └── unitree_arm/              # ArmString msg package the bridge is built with
-│   └── tools/                        # diagnostics and tests
+│   ├── debug/                        # debugging aids
+│   │   ├── debug_dashboard.py        # debug page on :3001 (why the dog isn't moving)
+│   │   ├── go2_debug_probe.py        # its probe inside go2-lidar3d
+│   │   └── go2_link_watch.py         # [link] warnings when the dog's data stops (every session)
+│   └── tools/                        # diagnostics and setup helpers
 │       ├── auto_walk.sh
-│       ├── test_goal_cli.sh
-│       ├── test_explore.sh
 │       ├── preflight.sh
 │       ├── campus_session.sh
 │       ├── tune_costmap.sh
@@ -117,10 +119,14 @@ Unitree_GO2_Agricultural/
 │   ├── d1_moveit_config/             # MoveIt 2 for the D1 on the Go2 (arm_moveit.sh), inspect_plant.py
 │   ├── go2_sim_bridge/               # CMU Unity sim adapter + launch (sim_explore.sh)
 │   └── go2_vlm/                      # VLM answers -> Nav2 keepout mask + speed limit
-└── cmu-legacy/                       # archived CMU-stack code, not used
+└── tests/                            # manual tests and mocks
+    ├── test_explore.sh / test_goal_cli.sh  # explorer and Nav2 goal checks
+    ├── rgbd_test.py                  # RealSense depth + colour check
+    ├── test_arm_tracker_pure.py      # RealSense -> YOLO -> D1 arm tracking experiment
+    └── mock_sim.py                   # fake robot + D1 arm for the dashboard (mock_arm_twin.sh)
 ```
 
-Folders: [`config/`](../../config/) · [`docs/`](../) · [`scripts/`](../../scripts/) · [`twin/`](../../twin/) · [`src/go2_explore_panel/`](../../src/go2_explore_panel/) · [`cmu-legacy/`](../../cmu-legacy/)
+Folders: [`config/`](../../config/) · [`docs/`](../) · [`scripts/`](../../scripts/) · [`twin/`](../../twin/) · [`src/go2_explore_panel/`](../../src/go2_explore_panel/) · [`scripts/debug/`](../../scripts/debug/) · [`tests/`](../../tests/)
 
 ---
 
@@ -152,9 +158,12 @@ npx markdownlint-cli2 README.md "docs/*.md"
 
 ## Legacy
 
-Earlier work based on the CMU `autonomy_stack_go2` running over Ethernet or
-the Unity simulation is archived under [`cmu-legacy/`](../../cmu-legacy/) for reference. It is not
-part of the active pipeline. See [`cmu-legacy/README.md`](../../cmu-legacy/README.md).
+Earlier work based on the CMU `autonomy_stack_go2` running over Ethernet was
+kept in `cmu-legacy/` until 2026-11-01, then removed: it was not part of the
+active pipeline. It stays in the git history (`git log -- cmu-legacy`;
+`git show <commit>:cmu-legacy/README.md`). Its one live piece, the dashboard
+mock `mock_sim.py`, is now [`tests/mock_sim.py`](../../tests/mock_sim.py). The
+Unity simulation lives on in [`src/go2_sim_bridge`](../../src/go2_sim_bridge/).
 
 ---
 

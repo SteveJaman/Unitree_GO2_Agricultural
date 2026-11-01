@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 go2_debug_probe.py: read-only health probe for the debug page
-(scripts/tools/debug_dashboard.py, http://localhost:3001).
+(scripts/debug/debug_dashboard.py, http://localhost:3001).
 
 Runs inside go2-lidar3d next to Nav2, on the session's DDS setup. It only
 subscribes (never publishes, never moves anything) and prints one JSON line

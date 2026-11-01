@@ -67,7 +67,7 @@ export default function ControlPanel({
 
 /**
  * D1 arm orbit scan (/d1_arm/command -> arm_state_bridge.py runs
- * start_arm.sh orbit; mock_sim.py --arm fakes it). State from /d1_arm/status.
+ * start_arm.sh orbit; tests/mock_sim.py --arm fakes it). State from /d1_arm/status.
  */
 function OrbitButton({ connected }) {
   const [status] = useLatest('/d1_arm/status', 'std_msgs/msg/String', { throttle: 500 });

@@ -15,14 +15,14 @@ a wifi_nav.sh / wifi_3d_nav.sh session (and tells you when there is none).
   * Logs: every session log (host, go2-lidar3d, the robot) in one viewer.
   * System: containers, robot ping, Wi-Fi signal, UDP buffers, Ollama.
 
-Live data come from scripts/nodes/go2_debug_probe.py, started here inside
+Live data come from scripts/debug/go2_debug_probe.py, started here inside
 go2-lidar3d with the session's DDS settings (read from a running Nav2
 process). The probe only subscribes: this page cannot move the dog.
 
 Usage:
-    python3 scripts/tools/debug_dashboard.py              # http://localhost:3001
-    python3 scripts/tools/debug_dashboard.py --port 3002
-    python3 scripts/tools/debug_dashboard.py --host 0.0.0.0   # reachable from the LAN
+    python3 scripts/debug/debug_dashboard.py              # http://localhost:3001
+    python3 scripts/debug/debug_dashboard.py --port 3002
+    python3 scripts/debug/debug_dashboard.py --host 0.0.0.0   # reachable from the LAN
 Env: NAV2_WIFI_DIR (~/files/go2-nav2-wifi), GO2_CONTAINER (go2-lidar3d).
 """
 
@@ -42,7 +42,7 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 PAGE = os.path.join(REPO, "twin", "debug", "index.html")
-PROBE_SRC = os.path.join(REPO, "scripts", "nodes", "go2_debug_probe.py")
+PROBE_SRC = os.path.join(REPO, "scripts", "debug", "go2_debug_probe.py")
 NAV2 = os.path.expanduser(os.environ.get("NAV2_WIFI_DIR", "~/files/go2-nav2-wifi"))
 CONTAINER = os.environ.get("GO2_CONTAINER", "go2-lidar3d")
 IP_CACHE = os.path.expanduser(

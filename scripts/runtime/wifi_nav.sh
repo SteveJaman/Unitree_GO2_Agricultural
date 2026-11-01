@@ -43,7 +43,7 @@ ROBOT_MAPS_DIR="${ROBOT_MAPS_DIR:-go2-nav2-lidar3d-onboard/ws/maps/lidar3d}"
 CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
-LINK_WATCH_SCRIPT="${NODES_DIR}/go2_link_watch.py"
+LINK_WATCH_SCRIPT="${SCRIPT_DIR}/../debug/go2_link_watch.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # scripts/robot: go2_camera_wifi.*, arm_bridge_wifi.* (run on the robot)
@@ -760,7 +760,7 @@ fi
 
 # docker cp below is best-effort (|| true), so a missing node script would
 # otherwise run a stale /tmp copy in the container. Fail early instead.
-for f in "${EXPLORER_SCRIPT}" "${CAMERA_RELAY_SCRIPT}" "${FLOOR_FILTER_SCRIPT}"; do
+for f in "${EXPLORER_SCRIPT}" "${CAMERA_RELAY_SCRIPT}" "${FLOOR_FILTER_SCRIPT}" "${LINK_WATCH_SCRIPT}"; do
     [ -f "$f" ] || { echo "ERROR: $f not found (set NODES_DIR)." >&2; exit 1; }
 done
 echo "[checks] node scripts present ($(basename "${NODES_DIR}")/) ........ OK"

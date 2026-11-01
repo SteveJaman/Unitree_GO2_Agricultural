@@ -23,7 +23,7 @@ the dashboard (port 3000). Start it in another terminal while a
 `wifi_nav.sh` / `wifi_3d_nav.sh` session runs (or before; it waits for one):
 
 ```bash
-python3 scripts/tools/debug_dashboard.py      # then open http://localhost:3001
+python3 scripts/debug/debug_dashboard.py      # then open http://localhost:3001
 ```
 
 - **Why isn't it moving?** The chain from the LiDAR to the legs, checked in
@@ -52,7 +52,7 @@ python3 scripts/tools/debug_dashboard.py      # then open http://localhost:3001
 - **System:** containers, robot ping, Wi-Fi signal, UDP buffers, Ollama.
 
 The data come from a read-only probe
-([`go2_debug_probe.py`](../scripts/nodes/go2_debug_probe.py)), started inside
+([`go2_debug_probe.py`](../scripts/debug/go2_debug_probe.py)), started inside
 `go2-lidar3d` with the session's DDS settings. It only subscribes, so the page
 cannot move the dog. It measures only topics made on this computer, so it adds
 no Wi-Fi traffic. By default it is reachable only from this computer; add
@@ -67,7 +67,7 @@ no Wi-Fi traffic. By default it is reachable only from this computer; add
 | `Invalid frame ID "lidar3d_map"` | Session not up, or Point-LIO not forwarding | Check `mapping.sh --3d --nav` log; check Jetson relay |
 | `/cmd_vel` has 20 Hz but dog doesn't move | Jetson port 17999 conflict | `wifi_nav.sh` handles it; if `motion.log` says "Address already in use", try `--no-relay` |
 | Simulator won't start or RViz is empty in `--sim` | Image, rendering, or `simarm0` | [docs/simulation/gazebo.md](simulation/gazebo.md#troubleshooting), `./gazebo/test_sim.sh` |
-| Explorer stays `IDLE` | Button not wired, or costmap silent | [`./scripts/tools/test_explore.sh`](../scripts/tools/test_explore.sh) |
+| Explorer stays `IDLE` | Button not wired, or costmap silent | [`./tests/test_explore.sh`](../tests/test_explore.sh) |
 | Camera at ~0.2 fps, dashboard "Camera unavailable", empty 3D map | Host UDP receive buffers too small (Ubuntu default) | Raise `net.core.rmem_max` / `rmem_default`, see [Camera at ~0.2 fps](#camera-at-02-fps-camera-unavailable-in-the-dashboard-empty-3d-map) |
 | Camera shows "No Image" in RViz | Robot publisher not running, or display set to Best Effort | `ssh unitree@<robot> tail /tmp/go2_camera_wifi.log`; display **Reliability** `Reliable`. See [Camera](#camera) |
 | Arm does not respond to commands | Wrong `--iface`, or motors not enabled | See [Arm does not respond](#arm-does-not-respond) above |
@@ -437,7 +437,7 @@ Same as the first entry — the container doesn't exist. Create it with
 ## Explorer
 
 Explorer code: [`frontier_explorer.py`](../scripts/nodes/frontier_explorer.py).
-Diagnose without the RViz button: [`test_explore.sh`](../scripts/tools/test_explore.sh).
+Diagnose without the RViz button: [`test_explore.sh`](../tests/test_explore.sh).
 
 ### Explorer stays `IDLE` after clicking START
 
@@ -889,7 +889,7 @@ once. `GO2_KEEP_SESSION=0` brings back the old behaviour.
 - **Wi-Fi stalls.** The shared link gives up after about a minute without
   an answer (`mapping_stop_timeouts.py`; a 15 s limit ended runs on ordinary
   stalls, 2026-10-30). Check the robot ping on the debug page
-  (`python3 scripts/tools/debug_dashboard.py`). Lost pings or pings around
+  (`python3 scripts/debug/debug_dashboard.py`). Lost pings or pings around
   1 s mean the dongle or the distance.
 - **Another computer on the dog.** On 2026-10-30 a second laptop
   (192.168.1.6, a different SSH key) logged into the dog while a run was

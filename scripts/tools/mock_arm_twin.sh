@@ -2,7 +2,7 @@
 # mock_arm_twin.sh: the web dashboard with a fake D1 arm, no robot needed.
 #
 # Runs the go2-3d image with rosbridge (:9090), the dashboard (:3000) and
-# cmu-legacy/mock_sim.py --arm --tf: the Go2 stands at the map origin, the
+# tests/mock_sim.py --arm --tf: the Go2 stands at the map origin, the
 # arm sits on its back, and the dashboard's Orbit Scan button plays the same
 # sweep as scripts/nodes/orbit_scan.py. scripts/nodes/inspection_mission.py
 # runs too: Inspect + a click walks the fake dog there and plays a fake arm
@@ -40,7 +40,7 @@ echo "[mock] Dashboard with a fake D1 arm: http://localhost:${WEB_PORT}  (Orbit 
 trap 'docker stop go2-3d-mock-arm >/dev/null 2>&1 || true' EXIT HUP INT TERM
 docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id -g)" \
     -e HOME=/tmp -e ROS_DOMAIN_ID="${DOMAIN}" -e ROS_LOCALHOST_ONLY=1 \
-    -v "${REPO_DIR}/twin:/twin:ro" -v "${REPO_DIR}/cmu-legacy:/cmu-legacy:ro" -v "${REPO_DIR}/scripts/nodes:/nodes:ro" \
+    -v "${REPO_DIR}/twin:/twin:ro" -v "${REPO_DIR}/tests:/tests:ro" -v "${REPO_DIR}/scripts/nodes:/nodes:ro" \
     "${IMAGE}" bash -c '
         source /opt/ros/humble/setup.bash
         root=/opt/webapp
@@ -55,4 +55,4 @@ docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id 
             -p robot_description:="$(cat /tmp/d1_tf.urdf)" -r robot_description:=/d1_arm/robot_description \
             -r joint_states:=/d1_arm/joint_states >/tmp/d1_tf.log 2>&1 &
         trap "kill 0" EXIT
-        exec python3 -u /cmu-legacy/mock_sim.py --arm --tf'
+        exec python3 -u /tests/mock_sim.py --arm --tf'

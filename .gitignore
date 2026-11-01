@@ -37,3 +37,10 @@ config/arm_waypoints.json
 config/home_map.json
 config/semantic_rooms.json
 config/survey_report.json
+
+# Web app dependencies and build (the go2-3d image builds the dashboard itself)
+twin/webapp/node_modules/
+twin/webapp/dist/
+
+# Arm offset calibration output (scripts/tools/calibrate_arm.py --output cal.json)
+cal.json

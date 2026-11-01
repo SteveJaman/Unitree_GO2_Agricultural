@@ -17,35 +17,29 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: '^cmu-legacy/'
       - id: end-of-file-fixer
-        exclude: '^cmu-legacy/'
       - id: check-yaml
-        exclude: '^cmu-legacy/'
       - id: check-json
-        exclude: '^cmu-legacy/'
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=500']
-        exclude: '^cmu-legacy/'
       - id: mixed-line-ending
         args: ['--fix=lf']
-        exclude: '^cmu-legacy/'
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-        files: '^scripts/nodes/.*\.py$'
+        files: '^scripts/(nodes/.*|debug/go2_(link_watch|debug_probe))\.py$'
       - id: ruff-format
-        files: '^scripts/nodes/.*\.py$'
+        files: '^scripts/(nodes/.*|debug/go2_(link_watch|debug_probe))\.py$'
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
-        files: '^scripts/(runtime|tools)/.*\.sh$'
+        files: '^(scripts/(runtime|tools)|tests)/.*\.sh$'
         args: [--severity=warning, "--exclude=SC1091,SC1090"]
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2

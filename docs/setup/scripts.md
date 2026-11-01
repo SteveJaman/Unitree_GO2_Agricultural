@@ -31,7 +31,7 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | [`scripts/robot/go2_camera_wifi.sh`](../../scripts/robot/go2_camera_wifi.sh) | **Runs on the robot** (copied and started by `wifi_nav.sh`): front camera JPEG → Wi-Fi DDS |
 | [`go2_floor_filter.py`](../../scripts/nodes/go2_floor_filter.py) | Floor-plane filter, prevents floor being treated as an obstacle |
 | [`go2_stuck_recovery.py`](../../scripts/nodes/go2_stuck_recovery.py) | Every session: on an aborted leg (e.g. facing a wall), step back (or aside, with `--drive hybrid` or `omni`) into free space and retry the goal. Also when the planner refuses goals because the dog stands in an obstacle (pressed to a wall; at most 3 times a minute) |
-| [`go2_link_watch.py`](../../scripts/nodes/go2_link_watch.py) | Every real-robot session (`GO2_LINK_WATCH=0` = off): says in the terminal when the dog's position is not reaching this computer (none within 20 s, or a stall of 5 s and more) and when it comes back. Listens to the local `/tf` only, so it adds no Wi-Fi traffic |
+| [`go2_link_watch.py`](../../scripts/debug/go2_link_watch.py) | Every real-robot session (`GO2_LINK_WATCH=0` = off): says in the terminal when the dog's position is not reaching this computer (none within 20 s, or a stall of 5 s and more) and when it comes back. Listens to the local `/tf` only, so it adds no Wi-Fi traffic |
 | [`go2_teleop.py`](../../scripts/nodes/go2_teleop.py) | Dashboard Drive pad → `/cmd_vel` at Nav2's limits, with ramps and a deadman; pauses the explorer and cancels Nav2 goals while driving by hand |
 | [`go2_camera_obstacles.py`](../../scripts/nodes/go2_camera_obstacles.py) | `--camera-obstacles`: Depth Anything V2-Small depth, scaled by the LiDAR → `/camera/obstacle_points` for the Nav2 costmap |
 | [`go2_fusion_camera.py`](../../scripts/nodes/go2_fusion_camera.py) | `--fusion`: undistorted camera + LiDAR depth image + camera_info with one stamp, for RTAB-Map RGB-D |
@@ -51,8 +51,8 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | Script | Purpose |
 |---|---|
 | [`auto_walk.sh`](../../scripts/tools/auto_walk.sh) | Scripted 1 m square patrol via `/goal_pose` — proof the motion path works |
-| [`test_goal_cli.sh`](../../scripts/tools/test_goal_cli.sh) | Publish a single `PoseStamped` goal from the CLI |
-| [`test_explore.sh`](../../scripts/tools/test_explore.sh) | Diagnose the explorer without the RViz button |
+| [`test_goal_cli.sh`](../../tests/test_goal_cli.sh) | Publish a single `PoseStamped` goal from the CLI |
+| [`test_explore.sh`](../../tests/test_explore.sh) | Diagnose the explorer without the RViz button |
 | [`ros_shell.sh`](../../scripts/tools/ros_shell.sh) | ROS 2 shell in `go2-lidar3d` (or `go2-sim`) on the stack's DDS settings, so `ros2 topic list` sees its topics; also runs one command |
 | [`preflight.sh`](../../scripts/tools/preflight.sh) | Layered verification: container, DDS, packages, nodes, topics, TF |
 | [`campus_session.sh`](../../scripts/tools/campus_session.sh) | All-in-one verify → tune → patch → launch → monitor |
@@ -71,7 +71,7 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | [`export_tour.py`](../../scripts/tools/export_tour.py) | Open3D Poisson mesh from an RTAB-Map PLY (normals, distance trim, decimation); run by `wifi_3d_nav.sh --export --mesh` |
 | [`add-yolo-costmap-source.sh`](../../scripts/tools/add-yolo-costmap-source.sh) | Add `/yolo/obstacles` to the Nav2 costmap config in go2-nav2-wifi; run automatically by `wifi_3d_nav.sh` (unless `--no-ai`) (`--undo` restores) |
 | [`relax-costmap.sh`](../../scripts/tools/relax-costmap.sh) | Nav2 costmap in go2-nav2-wifi: clear stray LiDAR marks as far as they are marked, faster inflation decay (obstacle heights unchanged); run by `wifi_3d_nav.sh` at start (`--undo` restores) |
-| [`debug_dashboard.py`](../../scripts/tools/debug_dashboard.py) | Debug page on <http://localhost:3001>: why the dog isn't moving (LiDAR → TF → goal → planner → costmap → controller → smoother → walking), topic health, costmap, ROS errors, all logs. Read-only probe: [`go2_debug_probe.py`](../../scripts/nodes/go2_debug_probe.py) |
+| [`debug_dashboard.py`](../../scripts/debug/debug_dashboard.py) | Debug page on <http://localhost:3001>: why the dog isn't moving (LiDAR → TF → goal → planner → costmap → controller → smoother → walking), topic health, costmap, ROS errors, all logs. Read-only probe: [`go2_debug_probe.py`](../../scripts/debug/go2_debug_probe.py) |
 | [`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py) | Run by `wifi_nav.sh`: patches go2-nav2-wifi `mapping.sh` (tagged, idempotent): SSH keep-alives; a fast Ctrl+C (the robot halts first, the local, Jetson and 3D-twin map saves run at the same time, time limits on each, a second Ctrl+C skips the map copy from the Jetson); and the `session_keepalive.sh` hook |
 | [`apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](../navigation/LAB-NAV-FIXES.md)) |
 | [`diag_arm.sh`](../../scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
@@ -80,5 +80,5 @@ are in [`twin/`](../../twin/), described in [3d_nav.md](../ai_and_vision/3d_nav.
 | [`calibrate_arm.py`](../../scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
 | [`fix_wifi_powersave.sh`](../../scripts/tools/fix_wifi_powersave.sh) | Turns Wi-Fi power saving off for good on this computer (NetworkManager + Realtek driver) or, with `--robot`, on the Go2 (you type its sudo password; reboot the dog once). `--check` reports only, `--undo` removes it. Power saving stalls the link to the dog |
 | [`check_map_tilt.sh`](../../scripts/tools/check_map_tilt.sh) | Did Point-LIO keep the floor level? Fetches a run's map and trajectory (latest on the robot, a named run, or a local copy), fits the floor per tenth of the run and reports the tilt against the start plus the fastest turn. PASS within `TILT_MAX_DEG` (3°) |
-| [`rgbd_test.py`](../../scripts/tools/rgbd_test.py) | RealSense check on the machine it is plugged into: depth + colour side by side (needs `pyrealsense2`, USB 3), `q` quits |
-| [`test_arm_tracker_pure.py`](../../scripts/tools/test_arm_tracker_pure.py) | Experiment without ROS: RealSense frame → YOLO → D1 arm joint commands through `d1_arm_control.py`. Moves the arm: keep a hand near the remote |
+| [`rgbd_test.py`](../../tests/rgbd_test.py) | RealSense check on the machine it is plugged into: depth + colour side by side (needs `pyrealsense2`, USB 3), `q` quits |
+| [`test_arm_tracker_pure.py`](../../tests/test_arm_tracker_pure.py) | Experiment without ROS: RealSense frame → YOLO → D1 arm joint commands through `d1_arm_control.py`. Moves the arm: keep a hand near the remote |

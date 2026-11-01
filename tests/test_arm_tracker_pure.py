@@ -18,7 +18,7 @@ from ultralytics import YOLO
 
 # Import your existing D1Arm class
 _here = os.path.dirname(os.path.abspath(__file__))
-_repo = os.path.dirname(os.path.dirname(_here))
+_repo = os.path.dirname(_here)          # tests/ -> repo root
 sys.path.insert(0, os.path.join(_repo, "scripts", "nodes"))
 try:
     from d1_arm_control import D1Arm, ENABLE_FULL, FUNC_JOINTS, FUNC_JOINT, default_arm_iface

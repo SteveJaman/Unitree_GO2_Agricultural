@@ -85,16 +85,18 @@ scripts/
 ├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
 │                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
 │                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
-└── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
-                 add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh, debug_dashboard.py,
-                 preflight.sh, save_rviz_config.sh, test_explore.sh,
-                 test_goal_cli.sh, tune_costmap.sh, verify_costmap.sh
+├── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
+│                add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh, mock_arm_twin.sh,
+│                preflight.sh, save_rviz_config.sh, tune_costmap.sh, verify_costmap.sh
+└── debug/       debug_dashboard.py (debug page :3001), go2_debug_probe.py, go2_link_watch.py
+tests/           test_explore.sh, test_goal_cli.sh, rgbd_test.py, test_arm_tracker_pure.py,
+                 mock_sim.py (fake robot + arm for the dashboard)
 twin/            go2-3d container: docker/Dockerfile, start_inside.sh, yolo_node.py
 ```
 
-Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/) · [`twin/`](../twin/)
+Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/) · [`scripts/debug/`](../scripts/debug/) · [`tests/`](../tests/) · [`twin/`](../twin/)
 
-- CMU-era code archived under [`cmu-legacy/`](../cmu-legacy/)
+- CMU-era code (`cmu-legacy/`) removed on 2026-11-01; it is in the git history (`git log -- cmu-legacy`). Its `mock_sim.py` moved to [`tests/`](../tests/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
 - Docs, by folder: [`setup/`](setup/) (setup, scripts, development), [`navigation/`](navigation/) (explorer, drive modes, locomotion comparison, tour, lab nav fixes), [`ai_and_vision/`](ai_and_vision/) (3D twin, camera, fusion), [`hardware/`](hardware/) (D1 arm, MoveIt), [`simulation/`](simulation/) (Gazebo, Unity); [`architecture.md`](architecture.md), [`troubleshooting.md`](troubleshooting.md), [`roadmap.md`](roadmap.md) at the top. Reorganised into folders on 2026-10-28
 - README cut to a short landing page (2026-10-23); details moved into the docs above
@@ -351,7 +353,7 @@ relay is unconfirmed.
 | 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
 | 55 | Camera Relay starts | `docker logs go2-lidar3d \| grep camera` | No "ModuleNotFoundError: cv2" |
 | 56 | Keepalive on Wi-Fi drop | Disconnect dog's Wi-Fi | Robot stops safely; RViz/Web App stay open |
-| 57 | Debug Dashboard | `python3 scripts/tools/debug_dashboard.py` | Web page opens and shows green checks for Nav2/TF |
+| 57 | Debug Dashboard | `python3 scripts/debug/debug_dashboard.py` | Web page opens and shows green checks for Nav2/TF |
 
 ---
 
@@ -372,6 +374,7 @@ relay is unconfirmed.
 Full list of fixes: [troubleshooting.md](troubleshooting.md).
 
 ### Camera relay on the new Ubuntu workstation (2026-10-30)
+
 The camera relay previously crashed silently because `python3-pip` was missing from the `go2-lidar3d` container, preventing OpenCV from installing. This is fixed. The `front_camera.yaml` calibration is still optional; the script will use approximate intrinsics if it is missing.
 
 ### VLM never answered on the old VM (2026-10-27)
