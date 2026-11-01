@@ -65,11 +65,21 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --view          # dashboard + saved meshes only, no robot (presentations)
 #   ./scripts/runtime/wifi_3d_nav.sh --stop          # stop go2-3d, save DB
 #   ./scripts/runtime/wifi_3d_nav.sh --build         # rebuild the image now
+#   ./scripts/runtime/wifi_3d_nav.sh --verbose       # print everything (default: only progress,
+#                                                    #   warnings, fixes and problems; all of it
+#                                                    #   is in ws/log/3d/boot.log either way)
+#   ./scripts/runtime/wifi_3d_nav.sh --no-hub        # no go2_hub.py: go2-3d serves the dashboard
+#                                                    #   itself, without System / Settings
+#
+# The dashboard (go2_hub.py, port 3000) starts first, before the image check
+# and the session: Map, System (health, "why isn't it moving?", every log,
+# debug report) and Settings (collision threshold, speed: live; changes need
+# the session code printed at start, #code= in the dashboard address).
 #   (--ai and --survey are the defaults now; still accepted.)
 #
 # Environment:
 #   TWIN_WEB_PORT=3000  TWIN_ROSBRIDGE_PORT=9090  TWIN_FOXGLOVE_PORT=8765
-#   TWIN_ARM=1          D1 arm in the dashboard + its Orbit Scan button
+#   TWIN_ARM=1          D1 arm in the dashboard + /d1_arm/command (orbit, scan, periscope)
 #                       (arm_state_bridge.py; 0 = off)
 #   TWIN_CLOUD_TOPIC=/lidar3d/registered
 #   TWIN_RGB_TOPIC=/camera/image_raw   TWIN_CAMERA_WAIT=180 (s, camera auto-detect)
@@ -148,6 +158,8 @@ while [ $# -gt 0 ]; do
         --no-ai)      AI="false" ;;
         --manual)     SURVEY_AUTO="0" ;;
         --no-build)   TWIN_AUTO_BUILD="0" ;;
+        --verbose)    VERBOSE=1 ;;
+        --no-hub)     TWIN_HUB=0 ;;
         --no-explore|--plan|--nav)
                       SURVEY_AUTO="0"; PASSTHRU+=("$1") ;;   # no explorer: nothing for the survey to drive
         --wrist-camera) TWIN_WRIST_CAMERA=1 ;;
@@ -214,6 +226,10 @@ fi
 TWIN_AUTOLOCALIZE="${TWIN_AUTOLOCALIZE:-0}"
 TWIN_SURVEY_AUTO="${TWIN_SURVEY_AUTO:-${SURVEY_AUTO}}"
 TWIN_AUTO_BUILD="${TWIN_AUTO_BUILD:-1}"
+TWIN_HUB="${TWIN_HUB:-1}"
+VERBOSE="${VERBOSE:-0}"
+BOOT_LOG="${TWIN_LOG_DIR}/boot.log"
+BOOT_STATUS="${TWIN_LOG_DIR}/boot_status.jsonl"
 
 # No camera relay: nothing to wait for in auto mode.
 [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] && [ "${TWIN_MODE}" = auto ] && TWIN_MODE="lidar"
@@ -235,7 +251,16 @@ TWIN_FOXGLOVE_PORT="${TWIN_FOXGLOVE_PORT:-8765}"
 # ===========================================================================
 # Helpers
 # ===========================================================================
-die() { echo "ERROR: $*" >&2; exit 1; }
+CUR_STAGE=""
+die() {
+    echo "ERROR: $*" >&2
+    if [ -n "${CUR_STAGE}" ]; then
+        boot_stage "${CUR_STAGE}" fail "$*"
+        sleep 3   # the dashboard shows the failure before the hub stops
+    fi
+    stop_hub; end_quiet_terminal
+    exit 1
+}
 
 twin_running()  { docker ps    --format '{{.Names}}' 2>/dev/null | grep -x "${TWIN_CONTAINER}" >/dev/null; }
 twin_exists()   { docker ps -a --format '{{.Names}}' 2>/dev/null | grep -x "${TWIN_CONTAINER}" >/dev/null; }
@@ -244,6 +269,78 @@ image_present() { docker image inspect "${TWIN_IMAGE}" >/dev/null 2>&1; }
 check_docker() {
     command -v docker >/dev/null 2>&1 || die "docker not found."
     docker ps >/dev/null 2>&1 || die "cannot talk to Docker daemon. Try: newgrp docker"
+}
+
+# --- Start-up progress for the dashboard and the terminal -------------------
+# boot_stage <checks|image|session|twin> <run|ok|warn|fail> <detail>: one JSON
+# line per change in BOOT_STATUS; go2_hub.py shows them (plus the live session).
+boot_stage() {
+    local d="${3//\\/\\\\}"; d="${d//\"/\\\"}"
+    printf '{"t": %s, "stage": "%s", "state": "%s", "detail": "%s"}\n' "$(date +%s)" "$1" "$2" "$d" >> "${BOOT_STATUS}"
+}
+boot_say() { echo "[BOOT] $*"; }   # always reaches the terminal (boot_filter.awk)
+
+# Quiet terminal: everything goes to BOOT_LOG, the terminal shows progress,
+# warnings with their fixes and PROBLEM boxes (scripts/runtime/boot_filter.awk).
+# The filter ignores Ctrl+C, so shutdown messages still get through. Prompts
+# (SSH / sudo passwords) talk to the terminal directly and are not affected.
+FILTER_PID=""
+quiet_terminal() {
+    exec 3>&1
+    : > "${BOOT_LOG}"
+    if [ "${VERBOSE}" = 1 ]; then
+        exec > >(trap '' INT TERM; exec tee -a "${BOOT_LOG}") 2>&1
+    else
+        exec > >(trap '' INT TERM; exec awk -v LOGFILE="${BOOT_LOG}" -f "${SCRIPT_DIR}/boot_filter.awk") 2>&1
+    fi
+    FILTER_PID=$!
+}
+end_quiet_terminal() {
+    [ -n "${FILTER_PID}" ] || return 0
+    exec 1>&3 2>&3
+    for _ in $(seq 1 20); do kill -0 "${FILTER_PID}" 2>/dev/null || break; sleep 0.1; done
+}
+
+# go2_hub.py: the dashboard and its System / Settings tabs, on port 3000 from
+# the start (before the image check), so the page shows the start-up itself.
+HUB_PID=""
+HUB_CODE=""
+start_hub() {
+    [ "${TWIN_HUB}" = 1 ] && [ "${TWIN_WEB}" = 1 ] || return 0
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "[hub] WARN: python3 not found: no dashboard hub (go2-3d serves the dashboard later)"
+        return 0
+    fi
+    if (exec 9<>"/dev/tcp/127.0.0.1/${TWIN_WEB_PORT}") 2>/dev/null; then
+        echo "[hub] WARN: port ${TWIN_WEB_PORT} is already in use: no dashboard hub (another session or --view running?)"
+        return 0
+    fi
+    HUB_CODE="$(printf '%04d' $(( RANDOM % 10000 )))"
+    NAV2_WIFI_DIR="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" GO2_DRIVE="${DRIVE}" \
+        python3 -u "${SCRIPT_DIR}/go2_hub.py" --port "${TWIN_WEB_PORT}" --code "${HUB_CODE}" \
+            --image "${TWIN_IMAGE}" --db-dir "${TWIN_DB_DIR}" --config-dir "${REPO_DIR}/config" \
+            --boot-log "${BOOT_LOG}" --status-file "${BOOT_STATUS}" > "${TWIN_LOG_DIR}/hub.log" 2>&1 &
+    HUB_PID=$!
+    for _ in $(seq 1 30); do
+        (exec 9<>"/dev/tcp/127.0.0.1/${TWIN_WEB_PORT}") 2>/dev/null && break
+        kill -0 "${HUB_PID}" 2>/dev/null || break
+        sleep 0.2
+    done
+    if ! kill -0 "${HUB_PID}" 2>/dev/null; then
+        echo "[hub] WARN: go2_hub.py did not start (see ${TWIN_LOG_DIR}/hub.log); go2-3d serves the dashboard later"
+        HUB_PID=""; HUB_CODE=""
+        return 0
+    fi
+    TWIN_WEB=0   # go2-3d's own web server stays off: the hub serves the app
+    local ip
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    boot_say "Dashboard: http://${ip:-localhost}:${TWIN_WEB_PORT}/#code=${HUB_CODE}   (this computer: http://localhost:${TWIN_WEB_PORT})"
+    boot_say "Session code for Settings: ${HUB_CODE}"
+}
+stop_hub() {
+    [ -n "${HUB_PID}" ] || return 0
+    kill "${HUB_PID}" 2>/dev/null || true
+    wait "${HUB_PID}" 2>/dev/null || true
 }
 
 # Graceful stop: SIGTERM, RTAB-Map writes its database, then the container ends.
@@ -435,6 +532,7 @@ start_twin_when_ready() {
     local env_args=() mounts=() net=()
 
     deadline=$(( $(date +%s) + TWIN_START_TIMEOUT ))
+    boot_stage twin run "waiting for the navigation session"
     echo "[3d] Waiting for the wifi_nav.sh session's go2_odom_tf node (up to ${TWIN_START_TIMEOUT} s)..."
     env_lines=""
     while [ "$(date +%s)" -lt "${deadline}" ]; do
@@ -450,8 +548,10 @@ start_twin_when_ready() {
     # bridge would list only go2-3d's own topics and never receive data.
     if ! grep -q '^ROS_DOMAIN_ID=' <<< "${env_lines}"; then
         echo "[3d] ERROR: could not read the session's DDS settings after ${TWIN_START_TIMEOUT} s — 3D stack NOT started."
+        boot_stage twin fail "the session never came up (no DDS settings after ${TWIN_START_TIMEOUT} s)"
         return 1
     fi
+    boot_stage twin run "starting go2-3d (RTAB-Map, rosbridge, AI nodes)"
 
     while IFS= read -r line; do
         [ -n "${line}" ] || continue
@@ -526,6 +626,7 @@ start_twin_when_ready() {
             "${mounts[@]}" \
             "${TWIN_IMAGE}" bash /twin/start_inside.sh >/dev/null; then
         echo "[3d] ERROR: docker run failed — 3D stack NOT started."
+        boot_stage twin fail "docker run go2-3d failed"
         return 1
     fi
 
@@ -554,8 +655,8 @@ start_twin_when_ready() {
             else
                 echo "   Survey      : on demand - dashboard 'Auto Survey'"
             fi
-            if [ "${TWIN_WEB}" = 1 ]; then
-                echo "   Dashboard   : http://${host_ip}:${TWIN_WEB_PORT}   (on this computer: http://localhost:${TWIN_WEB_PORT})"
+            if [ "${TWIN_WEB}" = 1 ] || [ -n "${HUB_PID}" ]; then
+                echo "   Dashboard   : http://${host_ip}:${TWIN_WEB_PORT}$( [ -n "${HUB_CODE}" ] && echo "/#code=${HUB_CODE}" )   (on this computer: http://localhost:${TWIN_WEB_PORT})"
                 echo "   Click-to-go : dashboard toolbar 'Click-to-go', then click the floor"
             fi
             [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "   rosbridge   : ws://${host_ip}:${TWIN_ROSBRIDGE_PORT}"
@@ -570,11 +671,14 @@ start_twin_when_ready() {
             fi
             echo "   Logs        : ${TWIN_LOG_DIR}/"
             echo "================================================================"
+            boot_stage twin ok "RTAB-Map ${mode:-?}, YOLO ${yolo%% *}, VLM ${vlm%% *}"
+            boot_say "3D twin READY (map: ${mode:-?}; YOLO ${yolo%% *}; VLM ${vlm%% *})$( [ -n "${HUB_PID}" ] && echo " · System and Settings tabs: http://localhost:${TWIN_WEB_PORT}" )"
             return 0
         fi
         twin_running || break
         sleep 1
     done
+    boot_stage twin fail "${TWIN_CONTAINER} did not come up (see go2-3d's log in System > Logs)"
     echo "[3d] ERROR: ${TWIN_CONTAINER} did not come up. Last log lines:"
     docker logs --tail 20 "${TWIN_CONTAINER}" 2>&1 | sed 's/^/    /'
     return 1
@@ -611,7 +715,19 @@ case "${ACTION}" in
 esac
 
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
+: > "${BOOT_STATUS}"
+quiet_terminal
+boot_say "Starting. Full log: tail -f ${BOOT_LOG}$( [ "${VERBOSE}" = 1 ] || echo "   (everything on screen: --verbose)" )"
+start_hub
+# Until the session's own cleanup takes over: a failed check or build must not
+# leave the hub running or the terminal filter open.
+# shellcheck disable=SC2154  # rc is assigned inside the trap
+trap 'rc=$?; [ "${rc}" = 0 ] || [ -z "${CUR_STAGE}" ] || boot_stage "${CUR_STAGE}" fail "stopped (exit ${rc}); see boot.log"; stop_hub; end_quiet_terminal' EXIT
+CUR_STAGE=checks; boot_stage checks run "Docker, files, Ollama"
+CUR_STAGE=image;  boot_stage image run "${TWIN_IMAGE}"
 ensure_image
+boot_stage image ok "${TWIN_IMAGE} ready"
+CUR_STAGE=checks
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
          "${TWIN_DIR}/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
@@ -635,6 +751,9 @@ if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
         [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
     done
 fi
+
+boot_stage checks ok "Docker, files$( [ "${TWIN_VLM}" = 1 ] && echo ", Ollama checked" )"
+CUR_STAGE=""
 
 # A go2-3d left over from an interrupted run still holds that run's map.
 stop_twin
@@ -702,7 +821,7 @@ echo "  Localize    : $( [ "${TWIN_AUTOLOCALIZE}" = 1 ] && echo "auto: /initialp
 echo "  Survey      : $( [ "${TWIN_SURVEY_AUTO:-0}" = 1 ] && echo "AUTO: explore, rooms, categorize each, report, dock (no user input)" || echo "on demand (dashboard Auto Survey)" )"
 echo "  Battery     : $( [ "${TWIN_BATTERY}" = 1 ] && echo "dock below ${TWIN_BATTERY_LOW} % (to ${TWIN_DOCK}), explorer blocked until ${TWIN_BATTERY_RESUME} %" || echo "monitor only" )"
 echo "  Inspect     : $( [ "${TWIN_INSPECT}" = 1 ] && echo "on: dashboard Inspect -> walk to the point -> IK arm scan (inspection.log)" || echo "off (--ai)" )"
-echo "  Periscope   : $( [ "${TWIN_PERISCOPE}" = 1 ] && echo "on: dashboard Periscope Scan -> table edge -> arm periscope pose (table_search.log)" || echo "off (--ai)" ); wrist camera $( [ "${TWIN_WRIST_CAMERA}" = 1 ] && echo "in the costmap" || echo "not in the costmap (--wrist-camera)" )"
+echo "  Periscope   : $( [ "${TWIN_PERISCOPE}" = 1 ] && echo "on: a /periscope_point (no dashboard button) -> table edge -> arm periscope pose (table_search.log)" || echo "off (--ai)" ); wrist camera $( [ "${TWIN_WRIST_CAMERA}" = 1 ] && echo "in the costmap" || echo "not in the costmap (--wrist-camera)" )"
 echo "  Database    : ${TWIN_DB_DIR}/${DB_NAME}  [${DB_NOTE}]"
 echo "  Dashboard   : $( [ "${TWIN_WEB}" = 1 ] && echo "port ${TWIN_WEB_PORT}" || echo off ), rosbridge $( [ "${TWIN_ROSBRIDGE}" = 1 ] && echo "port ${TWIN_ROSBRIDGE_PORT}" || echo off )$( [ "${TWIN_FOXGLOVE}" = 1 ] && echo ", foxglove_bridge port ${TWIN_FOXGLOVE_PORT}" )"
 case "${DRIVE}" in
@@ -714,7 +833,7 @@ echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo
 
-# D1 arm -> /d1_arm/joint_states and the dashboard's Orbit Scan button, on the
+# D1 arm -> /d1_arm/joint_states and /d1_arm/command (orbit, scan, periscope), on the
 # host (arm_state_bridge.py; it waits for rosbridge and the arm by itself).
 # Wired DDS when the arm port has a cable link, else through the Go2's bridge.
 ARM_STATE_PID=""
@@ -747,9 +866,11 @@ cleanup() {
     fi
     stop_twin
     if [ -f "${TWIN_DB_DIR}/${DB_NAME}" ]; then
-        echo "[3d] Map saved: ${TWIN_DB_DIR}/${DB_NAME} ($(du -h "${TWIN_DB_DIR}/${DB_NAME}" | cut -f1))"
+        boot_say "Map saved: ${TWIN_DB_DIR}/${DB_NAME} ($(du -h "${TWIN_DB_DIR}/${DB_NAME}" | cut -f1)). Done."
         echo "[3d] Export to PLY:  $0 --export"
     fi
+    stop_hub
+    end_quiet_terminal
 }
 trap cleanup EXIT
 # Runs after wifi_nav.sh (which gets the same Ctrl+C) has finished its own teardown.
@@ -766,5 +887,7 @@ status=0
 # in the sim) starts go2-3d's map save at once, alongside the rest; this
 # script's cleanup only waits for it (bash runs our own trap last).
 export GO2_STOP_EARLY="${TWIN_CONTAINER}"
+boot_stage session run "wifi_nav.sh: relay, Point-LIO, Nav2, RViz"
+boot_say "Checks OK · image OK · starting the session (RViz opens)…"
 bash "${WIFI_NAV}" "${PASSTHRU[@]}" || status=$?
 exit "${status}"

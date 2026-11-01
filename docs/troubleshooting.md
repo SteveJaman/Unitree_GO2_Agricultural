@@ -18,9 +18,12 @@ Sections are self-contained. Search for the error message you see.
 
 ## Debug page: why isn't it moving?
 
-A second local web page shows what the navigation stack is doing, next to
-the dashboard (port 3000). Start it in another terminal while a
-`wifi_nav.sh` / `wifi_3d_nav.sh` session runs (or before; it waits for one):
+**Built into the dashboard:** with `wifi_3d_nav.sh`, open the **System** tab
+(top right of `http://localhost:3000`), with **Copy debug report** for a
+Markdown summary. Nothing to start by hand.
+
+Without `wifi_3d_nav.sh` (a plain `wifi_nav.sh` session), the same page runs on
+its own in another terminal (or before a session; it waits for one):
 
 ```bash
 python3 scripts/debug/debug_dashboard.py      # then open http://localhost:3001
@@ -1064,14 +1067,17 @@ If `/cmd_vel` publishes at 20 Hz with real values but the dog stands still:
 ## Collision threshold tuning
 
 Nav2's collision avoidance is controlled by two dynamic parameters on the
-costmaps: `inflation_radius` and `footprint_padding`. Recommended values:
+costmaps: `inflation_layer.inflation_radius` and `footprint_padding`. A session
+starts with go2-nav2-wifi's values (0.55 m and 0.03 m, read in the sim on
+2026-11-01). Presets:
 
 | Parameter | Safe | Wide | Tight | Notes |
 |---|---|---|---|---|
-| `inflation_radius` | `0.70` | `0.85` | `0.45` | Must be ≥ the Go2's inscribed radius (~0.20 m) |
+| `inflation_layer.inflation_radius` | `0.70` | `0.85` | `0.45` | Must be ≥ the Go2's inscribed radius (~0.20 m) |
 | `footprint_padding` | `0.05` | `0.05` | `0.02` | Extra buffer around the robot outline |
 
-Change at runtime without restarting:
+Change at runtime without restarting: the dashboard's **Settings** tab
+(sliders, these presets, Reset, save as defaults), or:
 
 ```bash
 ./scripts/tools/tune_costmap.sh --safe              # restore 0.70 / 0.05
@@ -1081,8 +1087,11 @@ Change at runtime without restarting:
 ./scripts/tools/tune_costmap.sh --show              # current values
 ```
 
-Every change also sets `cost_scaling_factor=3.0` for a smoother cost gradient.
-`wifi_nav.sh` starts with `SAFETY_INFLATION_RADIUS=0.70`.
+Until 2026-11-01 `tune_costmap.sh` set `inflation_radius` and
+`cost_scaling_factor` at the top of the costmap nodes, names Nav2 does not
+declare: both were refused, and only the padding ever changed. It now sets
+`inflation_layer.inflation_radius` and leaves the cost scaling as
+`relax-costmap.sh` sets it.
 
 Or use `rqt_reconfigure` for sliders:
 

@@ -2,7 +2,7 @@
 """
 arm_state_bridge.py
 
-The D1 arm's live joint angles for the web dashboard, and its Orbit Scan button.
+The D1 arm's live joint angles for the web dashboard, and the arm jobs it asks for on /d1_arm/command.
 
 The arm speaks JSON on raw DDS (rt/arm_Feedback), not ROS JointState. This
 runs on the host and turns its telemetry (angle0..angle6, degrees) into
@@ -17,7 +17,7 @@ Arm source, like start_arm.sh:
             start_arm.sh's own connection
 
 It also runs one arm job at a time from /d1_arm/command (std_msgs/String, JSON):
-    {"op": "orbit"}   ./scripts/runtime/start_arm.sh orbit --yes (Orbit Scan button)
+    {"op": "orbit"}   ./scripts/runtime/start_arm.sh orbit --yes (any ROS client)
     {"op": "scan_target", "target": [dx, dy, dz]}
                       start_arm.sh scan --target dx dy dz --yes: IK aim at a point
                       in the Go2's base_link (inspection_mission.py)
@@ -393,7 +393,7 @@ def main():
     ap.add_argument(
         "--no-commands",
         action="store_true",
-        help="ignore the dashboard's Orbit Scan button",
+        help="ignore /d1_arm/command (status only)",
     )
     ap.add_argument("--orbit-log", default="/tmp/arm_orbit.log")
     args = ap.parse_args()

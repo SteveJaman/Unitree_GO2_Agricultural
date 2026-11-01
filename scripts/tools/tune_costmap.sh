@@ -2,7 +2,7 @@
 # tune_costmap.sh — change inflation and padding at runtime, no restart.
 #
 # Usage:
-#   ./tune_costmap.sh 0.65           # set inflation radius to 0.65 (recommended)
+#   ./tune_costmap.sh 0.65           # set inflation radius to 0.65 (the dashboard's Settings tab does the same)
 #   ./tune_costmap.sh 0.65 0.05      # inflation + footprint padding
 #   ./tune_costmap.sh --show         # print current values
 #   ./tune_costmap.sh --safe         # restore the safe defaults (0.70)
@@ -49,7 +49,7 @@ show_params() {
     echo "=== Current costmap parameters ==="
     if ! check_node "$GLOBAL_NS"; then return; fi
     for node in "$GLOBAL_NS" "$LOCAL_NS"; do
-        for param in inflation_radius cost_scaling_factor footprint_padding; do
+        for param in inflation_layer.inflation_radius inflation_layer.cost_scaling_factor footprint_padding; do
             val=$(run_ros2 "ros2 param get $node $param 2>/dev/null" | grep -oP 'value is.*' | head -1 || true)
             if [ -z "$val" ]; then
                 printf "  %-35s %-20s %s\n" "$node" "$param" "NOT FOUND"
@@ -92,10 +92,12 @@ case "${1:-}" in
         ;;
 esac
 
-echo "[tune] Setting inflation_radius=$INFLATION"
+# The radius belongs to the inflation layer: a plain "inflation_radius" is not
+# declared on the costmap nodes, so it was refused (seen in the sim, 2026-11-01).
+echo "[tune] Setting inflation_layer.inflation_radius=$INFLATION"
 
-set_param "$GLOBAL_NS" inflation_radius "$INFLATION"
-set_param "$LOCAL_NS"  inflation_radius "$INFLATION"
+set_param "$GLOBAL_NS" inflation_layer.inflation_radius "$INFLATION"
+set_param "$LOCAL_NS"  inflation_layer.inflation_radius "$INFLATION"
 
 if [ -n "$PADDING" ]; then
     echo "[tune] Setting footprint_padding=$PADDING"
@@ -103,10 +105,8 @@ if [ -n "$PADDING" ]; then
     set_param "$LOCAL_NS"  footprint_padding "$PADDING"
 fi
 
-# Optional: also increase the cost scaling factor so the gradient is smoother
-echo "[tune] Setting cost_scaling_factor=3.0"
-set_param "$GLOBAL_NS" cost_scaling_factor 3.0
-set_param "$LOCAL_NS"  cost_scaling_factor 3.0
+# cost_scaling_factor is left alone: relax-costmap.sh sets it (5.0) on purpose.
+# (This script used to set a top-level cost_scaling_factor, which was refused.)
 
 echo
 echo "[tune] Done. Changes take effect immediately on the next costmap update."

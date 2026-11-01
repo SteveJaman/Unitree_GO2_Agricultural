@@ -3,12 +3,13 @@
 #
 # Runs the go2-3d image with rosbridge (:9090), the dashboard (:3000) and
 # tests/mock_sim.py --arm --tf: the Go2 stands at the map origin, the
-# arm sits on its back, and the dashboard's Orbit Scan button plays the same
-# sweep as scripts/nodes/orbit_scan.py. scripts/nodes/inspection_mission.py
-# runs too: Inspect + a click walks the fake dog there and plays a fake arm
-# scan (no costmap here, so goals are not snapped); scripts/nodes/table_search.py
-# and the arm's TF too, so Periscope Scan + a click walks there and raises the
-# arm into the periscope pose. ROS stays on its own
+# arm sits on its back, and {"op":"orbit"} on /d1_arm/command plays the same
+# sweep as scripts/nodes/orbit_scan.py (docs/hardware/d1arm.md has the command).
+# scripts/nodes/inspection_mission.py runs too: Inspect + a click walks the
+# fake dog there and plays a fake arm scan (no costmap here, so goals are not
+# snapped); scripts/nodes/table_search.py and the arm's TF too (a
+# /periscope_point walks there and raises the arm into the periscope pose).
+# ROS stays on its own
 # domain, localhost only, so it never meets a real session.
 #
 # Usage:
@@ -35,7 +36,7 @@ for p in "${WEB_PORT}" "${WS_PORT}"; do
     fi
 done
 
-echo "[mock] Dashboard with a fake D1 arm: http://localhost:${WEB_PORT}  (Orbit Scan button). Ctrl+C to stop."
+echo "[mock] Dashboard with a fake D1 arm: http://localhost:${WEB_PORT}  (orbit: see docs/hardware/d1arm.md). Ctrl+C to stop."
 # Closing the terminal (SIGHUP) does not stop an attached container: stop it here.
 trap 'docker stop go2-3d-mock-arm >/dev/null 2>&1 || true' EXIT HUP INT TERM
 docker run --rm -it --name go2-3d-mock-arm --network host --user "$(id -u):$(id -g)" \

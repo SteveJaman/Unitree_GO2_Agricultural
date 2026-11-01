@@ -29,7 +29,7 @@ function BatteryIcon({ pct, charging }) {
  * Top-right status: link to the robot, speed, battery (from /battery_state;
  * red below 15 %, with the docking state when the battery manager acts).
  */
-export default function StatusBar() {
+export default function StatusBar({ nav = null }) {
   const { status } = useRos();
   const [battery, batteryTime] = useLatest('/battery_state', 'sensor_msgs/msg/BatteryState');
   const [dock] = useLatest('/battery_manager/status', 'std_msgs/msg/String');
@@ -45,6 +45,8 @@ export default function StatusBar() {
 
   return (
     <div className="status glass">
+      {nav}
+      {nav && <div className="status-sep" />}
       <div className="status-item" title={`Robot link: ${link}`}>
         <span className={`dot ${status}`} />
         <span className="status-text">{link}</span>

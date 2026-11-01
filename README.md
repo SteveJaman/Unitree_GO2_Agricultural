@@ -67,7 +67,9 @@ Other entry points:
   shadowed, camera-coloured), Unitree's Go2 model with live leg joints, the
   route and camera. Tap the floor to go there. A performance mode keeps it
   usable on a machine without 3D acceleration. After a run, export a solid
-  presentation mesh.
+  presentation mesh. **System** tab: why the dog isn't moving, every log, a
+  copyable debug report. **Settings** tab: collision threshold and speed,
+  changed live.
 - **Camera obstacles:** `--camera-obstacles` turns monocular depth, scaled by
   the LiDAR, into Nav2 obstacles (glass, table legs). `--fusion` colours the
   map from the calibrated camera.

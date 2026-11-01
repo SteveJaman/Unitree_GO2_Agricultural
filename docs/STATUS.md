@@ -63,6 +63,7 @@ Foxglove is the optional alternative (`--foxglove`).
 | Drive modes `--drive hybrid` (default) / `diff` / `omni` ([drive modes](navigation/drive_modes.md)): MPPI reverse + sidestep, stuck recovery in every session | **Implemented (pending physical test)**: sim comparison of all three, 9 trials (2026-10-28, [results](navigation/locomotion_comparison.md)); on the real dog MPPI loads and recovery is ready, but no movement test yet |
 | MoveIt 2 for the D1 arm (`arm_moveit.sh`, [d1arm.md](hardware/d1arm.md#moveit-2-cartesian-planning-arm_moveitsh)): Cartesian goals, collision-free plans around the Go2, plant-inspection demo | **Implemented (pending physical test)**: runs on ros2_control mock hardware only; driving the real arm needs a trajectory bridge (not written) |
 | Unity sim (`sim_explore.sh`, [unity.md](simulation/unity.md)): explorer + the real go2_nav2 config in the CMU Unity sim, on the host | **Implemented (pending physical test)**: explorer runs in the sim (2026-10-16, -22); the same explorer parameters still need the robot |
+| Dashboard hub: one app from `wifi_3d_nav.sh` (`go2_hub.py`): page at once with start-up progress, System tab (health, logs, debug report), Settings tab (collision threshold, speed, live; session code), quiet terminal | **Implemented (pending physical test)**: tested in the WSL sim (2026-11-01): 26 API checks (each setting verified with `ros2 param get`, wrong or missing code refused, reset, saved defaults applied by a new hub), headless-browser walk-through of every tab with no errors, Ctrl+C 4.8 s with nothing left running |
 | VLM (llava:7b) | **Too slow on the old VM's CPU (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout. The native workstation has an NVIDIA GPU (Quadro RTX 4000) that Ollama uses once the driver is loaded; re-test pending |
 
 Test plan: checks 17–57 under [Pending verification](#pending-verification-needs-robot),
@@ -353,7 +354,10 @@ relay is unconfirmed.
 | 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
 | 55 | Camera Relay starts | `docker logs go2-lidar3d \| grep camera` | No "ModuleNotFoundError: cv2" |
 | 56 | Keepalive on Wi-Fi drop | Disconnect dog's Wi-Fi | Robot stops safely; RViz/Web App stay open |
-| 57 | Debug Dashboard | `python3 scripts/debug/debug_dashboard.py` | Web page opens and shows green checks for Nav2/TF |
+| 57 | Debug Dashboard | dashboard **System** tab (or `python3 scripts/debug/debug_dashboard.py` with plain `wifi_nav.sh`) | green checks for Nav2/TF; Copy debug report works |
+| 58 | Dashboard first | `./scripts/runtime/wifi_3d_nav.sh`, open the printed link at once | page opens before the robot is up; start-up overlay ticks through to 3D twin |
+| 59 | Settings on the dog | Settings: Wide preset, Apply; then Reset | dog keeps visibly more clearance; Reset restores; values match `tune_costmap.sh --show` |
+| 60 | Quiet terminal | normal start with Ollama off | short terminal with the Ollama warning and its fix; everything in `ws/log/3d/boot.log` |
 
 ---
 

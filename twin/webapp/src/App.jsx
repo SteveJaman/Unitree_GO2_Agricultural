@@ -12,6 +12,30 @@ import ControlPanel from './ControlPanel.jsx';
 import DrivePad from './DrivePad.jsx';
 import MapMenu from './MapMenu.jsx';
 import VlmBadge from './VlmBadge.jsx';
+import HubNav from './HubNav.jsx';
+import BootOverlay from './BootOverlay.jsx';
+import SystemView from './SystemView.jsx';
+import SettingsView from './SettingsView.jsx';
+import { parseHash, setCode } from './hub.js';
+
+/** #/system, #/system/logs, #/settings; #code=1234 is kept for Settings, then dropped from the address. */
+function useRoute() {
+  const read = () => {
+    const { route, code } = parseHash();
+    if (code) {
+      setCode(code);
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${route === 'map' ? '' : `#/${route}`}`);
+    }
+    return route;
+  };
+  const [route, setRoute] = useState(read);
+  useEffect(() => {
+    const on = () => setRoute(read());
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  return route;
+}
 
 // Nav2 plans in lidar3d_map (Point-LIO); RTAB-Map's rtabmap_map is its parent.
 const params = new URLSearchParams(window.location.search);
@@ -74,6 +98,7 @@ function useStable(fn) {
 
 function Dashboard() {
   const { status } = useRos();
+  const route = useRoute();
   const connected = status === 'connected';
   const appRef = useRef(null);
   useControlsHeight(appRef);
@@ -93,16 +118,12 @@ function Dashboard() {
   // Inspect mode: clicks pick a 3D target for inspection_mission.py instead of a goal.
   const [inspectMode, setInspectModeState] = useState(false);
   const [inspectTarget, setInspectTarget] = useState(null);
-  // Periscope mode: the next click is a table edge for table_search.py.
-  const [periscopeMode, setPeriscopeModeState] = useState(false);
   const setClickMode = (mode) => {
     setClickToGoState(mode === 'go');
     setInspectModeState(mode === 'inspect');
-    setPeriscopeModeState(mode === 'periscope');
   };
   const setClickToGo = (on) => (on ? setClickMode('go') : setClickToGoState(false));
   const setInspectMode = (on) => (on ? setClickMode('inspect') : setInspectModeState(false));
-  const setPeriscopeMode = (on) => (on ? setClickMode('periscope') : setPeriscopeModeState(false));
   const [follow, setFollow] = useState(false);
   const [stats, setStats] = useState({});
   const [toast, setToast] = useState(null);
@@ -112,19 +133,6 @@ function Dashboard() {
   const sendClick = usePublisher('/clicked_point', 'geometry_msgs/msg/PointStamped');
   const sendInspect = usePublisher('/inspect_point', 'geometry_msgs/msg/PointStamped');
   const sendInspectCmd = usePublisher('/inspection/command', 'std_msgs/msg/String');
-  const sendPeriscope = usePublisher('/periscope_point', 'geometry_msgs/msg/PointStamped');
-  const sendTableCmd = usePublisher('/table_search/command', 'std_msgs/msg/String');
-  // Table mapped (table_search.py): say so and let the user pick the object (Inspect).
-  const tableState = useRef('idle');
-  useTopic('/table_search/status', 'std_msgs/msg/String', (m) => {
-    let st;
-    try { st = JSON.parse(m.data); } catch { return; }
-    if (st.state !== tableState.current) {
-      if (st.state === 'mapped') { say(st.message); setClickMode('inspect'); }
-      else if (st.state === 'failed') say(st.message, 'warn');
-      tableState.current = st.state;
-    }
-  }, { throttle: 300 });
   const sendGoal = usePublisher('/goal_pose', 'geometry_msgs/msg/PoseStamped');
   const sendResume = usePublisher('/explore/resume', 'std_msgs/msg/Bool');
   const sendRoomCmd = usePublisher('/semantic_rooms/command', 'std_msgs/msg/String');
@@ -168,7 +176,7 @@ function Dashboard() {
   }, []);
   // Editing rooms takes over clicks from tap-to-go.
   useEffect(() => {
-    if (editing) { setClickToGoState(false); setInspectModeState(false); setPeriscopeModeState(false); }
+    if (editing) { setClickToGoState(false); setInspectModeState(false); }
   }, [editing]);
 
   const askRoom = (id) => {
@@ -248,14 +256,6 @@ function Dashboard() {
   // snaps it to safe floor and sends the Nav2 goal; the pin glides to it.
   const onPick = useStable(({ x, y, z = 0, surface }) => {
     if (inspectMode) { onInspect({ x, y, z, surface }); return; }
-    if (periscopeMode) {
-      if (!sendPeriscope({ header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } }, point: { x, y, z } })) {
-        say('Not connected to the robot', 'warn'); return;
-      }
-      setPeriscopeModeState(false);
-      say('Periscope search: walking to the table edge');
-      return;
-    }
     const ok = sendClick({
       header: { frame_id: FIXED_FRAME, stamp: { sec: 0, nanosec: 0 } },
       point: { x, y, z },
@@ -296,23 +296,21 @@ function Dashboard() {
       {/* keyed: antialiasing is fixed when the WebGL context is created */}
       <Scene key={quality} quality={quality} fixedFrame={FIXED_FRAME} baseFrame={BASE_FRAME} layers={layers} view={view}
              meshUrl={meshUrl} textured={textured} shadows={shadows} voxelSize={voxelSize}
-             assets={ASSETS} clickToGo={(clickToGo || inspectMode || periscopeMode) && connected} follow={follow}
+             assets={ASSETS} clickToGo={(clickToGo || inspectMode) && connected} follow={follow}
              inspectTarget={inspectTarget}
              waypoint={waypoint} onPick={onPick} onGoal={onGoal} onStats={onStats}
-             rooms={rooms} roomsInteractive={connected && (editing || merging || (!clickToGo && !inspectMode && !periscopeMode))}
+             rooms={rooms} roomsInteractive={connected && (editing || merging || (!clickToGo && !inspectMode))}
              selectedRooms={selected} onRoomClick={onRoomClick} />
 
       <MapMenu view={view} setView={setView} meshes={meshes} meshFile={meshFile} setMeshFile={setMeshFile}
                voxelSize={voxelSize} setVoxelSize={setVoxelSize} textured={textured} setTextured={setTextured}
                shadows={shadows} setShadows={setShadows} layers={layers} setLayers={setLayers} stats={stats}
                quality={quality} setQuality={setQuality} />
-      <StatusBar />
+      <StatusBar nav={<HubNav route={route} />} />
       <VlmBadge />
       <ControlPanel connected={connected} onExplore={setExplore} onDock={returnToDock}
                     clickToGo={clickToGo} setClickToGo={setClickToGo} follow={follow} setFollow={setFollow}
                     inspectMode={inspectMode} setInspectMode={setInspectMode} onCancelInspect={cancelInspect}
-                    periscopeMode={periscopeMode} setPeriscopeMode={setPeriscopeMode}
-                    onTableCmd={(op) => sendTableCmd({ data: JSON.stringify({ op }) })}
                     hasWaypoint={!!waypoint} onClearWaypoint={() => setWaypoint(null)}
                     rooms={rooms.rooms} onGoRoom={goToRoom} />
       <CameraFeed />
@@ -332,11 +330,14 @@ function Dashboard() {
         <div className="glass hint">No saved 3D scan yet. It is created after a mapping run.</div>
       )}
       {toast && <div key={toast.id} className={`glass toast ${toast.tone}`}>{toast.text}</div>}
-      {!connected && view !== 'mesh' && (
+      {!connected && view !== 'mesh' && route === 'map' && (
         <div className="connecting glass">
           <span className="spinner" /> Connecting to the robot…
         </div>
       )}
+      {route === 'map' && <BootOverlay />}
+      {route.startsWith('system') && <SystemView sub={route === 'system/logs' ? 'logs' : ''} />}
+      {route === 'settings' && <SettingsView />}
     </div>
   );
 }

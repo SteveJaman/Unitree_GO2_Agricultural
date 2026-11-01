@@ -3,7 +3,7 @@
 
 --arm: a fake D1 arm for the web dashboard instead (scripts/tools/mock_arm_twin.sh
 runs it): /d1_arm/joint_states at home, and on {"op": "orbit"} from
-/d1_arm/command (the dashboard's Orbit Scan button) the same sweep as
+/d1_arm/command (any ROS client) the same sweep as
 scripts/nodes/orbit_scan.py: scan pose, base -90 -> +90 deg in 30 steps with
 the wrist counter-rotating, then home. /d1_arm/status reports it like
 scripts/nodes/arm_state_bridge.py. --tf also places the robot (lidar3d_map ->

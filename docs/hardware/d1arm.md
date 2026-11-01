@@ -516,7 +516,10 @@ python3 tests/test_arm_tracker_pure.py
 
 The 3D dashboard ([3d_nav.md](../ai_and_vision/3d_nav.md#web-dashboard)) draws the D1 on
 the Go2's back with live joint angles and a translucent blue cone for the
-wrist camera's view, and has an **Orbit Scan** button.
+wrist camera's view. It has no arm buttons: run the orbit scan and the
+periscope pose with `start_arm.sh orbit` / `periscope` (the Orbit Scan and
+Periscope Scan buttons and the camera's Wrist view were removed on 2026-11-01;
+the wrist camera is not mounted).
 
 The arm has no ROS `JointState` of its own (it speaks JSON on raw DDS), so
 [`scripts/nodes/arm_state_bridge.py`](../../scripts/nodes/arm_state_bridge.py), on the host:
@@ -527,10 +530,10 @@ The arm has no ROS `JointState` of its own (it speaks JSON on raw DDS), so
 - publishes `/d1_arm/joint_states` (`sensor_msgs/JointState`, `Joint1`..`Joint6`
   in radians, fingers `Joint7_1`/`Joint7_2`) and `/d1_arm/status` through rosbridge;
 - runs `start_arm.sh orbit --yes` on `{"op":"orbit"}` from `/d1_arm/command`
-  (the button, after a confirmation), `start_arm.sh scan --target dx dy dz --yes`
+  (any ROS client; the dashboard no longer has a button), `start_arm.sh scan --target dx dy dz --yes`
   on `{"op":"scan_target","target":[dx,dy,dz]}` (inspection_mission.py), and
   Ctrl+C's either on `{"op":"stop"}`.
-  `--no-commands` turns the button off.
+  `--no-commands` ignores all commands (status only).
 
 `wifi_3d_nav.sh` starts it with every session (`TWIN_ARM=0` turns it off;
 log `ws/log/3d/arm_state.log`, scan log `arm_orbit.log`). The arm bridge on the
@@ -539,8 +542,12 @@ robot gets the monitor port the next time `start_arm.sh` or `wifi_nav.sh
 
 **No robot:** `./scripts/tools/mock_arm_twin.sh` serves the dashboard with a
 fake arm (`tests/mock_sim.py --arm --tf`) on an isolated ROS domain.
-Open `http://localhost:3000` and press Orbit Scan to see the same sweep as
-`orbit_scan.py`.
+Open `http://localhost:3000`, then, in another terminal, play the same sweep as
+`orbit_scan.py`:
+
+```bash
+docker exec go2-3d-mock-arm bash -c "source /opt/ros/humble/setup.bash; ros2 topic pub --once /d1_arm/command std_msgs/msg/String '{data: \"{\\\"op\\\": \\\"orbit\\\"}\"}'"
+```
 
 The model is Unitree's `d1_description` (BSD), decimated from 133k to 9k
 triangles by [`scripts/tools/build_d1_model.py`](../../scripts/tools/build_d1_model.py)

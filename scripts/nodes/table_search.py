@@ -2,8 +2,8 @@
 """Periscope search: look over a table edge with the D1 arm's wrist camera.
 
 A table taller than the Go2 hides its top from the base LiDAR and the front
-camera. The dashboard's Periscope Scan sends a click on the table edge to
-/periscope_point; this node then:
+camera. Publish a point on the table edge to /periscope_point (e.g. with
+ros2 topic pub); this node then:
 
   1. Finds the edge: the nearest costmap obstacle within EDGE_RADIUS of the
      click (a click that is not near an obstacle is refused).

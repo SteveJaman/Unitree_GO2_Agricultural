@@ -8,7 +8,6 @@ import SurveyCard from './SurveyCard.jsx';
 export default function ControlPanel({
   connected, onExplore, onDock, clickToGo, setClickToGo, follow, setFollow, hasWaypoint, onClearWaypoint,
   rooms = [], onGoRoom, inspectMode, setInspectMode, onCancelInspect,
-  periscopeMode, setPeriscopeMode, onTableCmd,
 }) {
   const [status] = useLatest('/explore/status', 'std_msgs/msg/String', { throttle: 500 });
   const exploring = /enabled=True/.test(status?.data || '');
@@ -31,8 +30,6 @@ export default function ControlPanel({
       <button className="action" disabled={!connected} onClick={onDock}>
         <span className="action-icon">⌂</span> Return to Dock
       </button>
-      <OrbitButton connected={connected} />
-      <PeriscopeButton connected={connected} armed={periscopeMode} setArmed={setPeriscopeMode} onTableCmd={onTableCmd} />
       <InspectStatus onCancel={onCancelInspect} />
       {rooms.length > 0 && (
         <label className="room-go">
@@ -65,42 +62,6 @@ export default function ControlPanel({
   );
 }
 
-/**
- * D1 arm orbit scan (/d1_arm/command -> arm_state_bridge.py runs
- * start_arm.sh orbit; tests/mock_sim.py --arm fakes it). State from /d1_arm/status.
- */
-function OrbitButton({ connected }) {
-  const [status] = useLatest('/d1_arm/status', 'std_msgs/msg/String', { throttle: 500 });
-  const send = usePublisher('/d1_arm/command', 'std_msgs/msg/String');
-  let st = null;
-  try { st = status ? JSON.parse(status.data) : null; } catch { st = null; }
-  const running = st?.orbit === 'running';
-  const scanning = running && st?.job === 'scan';   // inspection_mission's IK scan, not ours
-  const ready = connected && st?.arm && st?.commands !== false;
-  const note = !connected ? 'Robot offline'
-    : !st ? 'Arm bridge not running'
-      : !st.arm ? 'Arm offline'
-        : st.commands === false ? 'Commands off' : scanning ? 'Inspection scan' : running ? 'Sweeping ±90°'
-          : st.orbit === 'done' ? 'Last scan complete' : st.orbit === 'failed' ? 'Last scan failed'
-            : st.mock ? 'Simulated arm' : 'Sweep around the object';
-  const onClick = () => {
-    if (scanning) return;   // cancel it from the inspection status instead
-    if (running) { send({ data: JSON.stringify({ op: 'stop' }) }); return; }
-    if (!st?.mock && !window.confirm('The D1 arm will sweep its base ±90° around the object. Is the space around the arm clear?')) return;
-    send({ data: JSON.stringify({ op: 'orbit' }) });
-  };
-  return (
-    <button className={`action orbit ${running ? 'on' : ''}`} disabled={(!ready && !running) || scanning} onClick={onClick}
-            title={note}>
-      <span className="action-icon">{running ? '■' : '◠'}</span>
-      <span className="orbit-text">
-        <span>{scanning ? 'Arm busy' : running ? 'Stop Orbit Scan' : 'Orbit Scan'}</span>
-        <span className="orbit-sub">{note}</span>
-      </span>
-    </button>
-  );
-}
-
 const INSPECT_TEXT = {
   navigating: 'Walking to the target', scanning: 'Arm scanning the target', done: 'Inspection complete',
   failed: 'Inspection failed', unreachable: 'Target unreachable', timeout: 'Inspection timed out',
@@ -123,44 +84,6 @@ function InspectStatus({ onCancel }) {
         </span>
       </span>
       {active && <button className="chip small" onClick={onCancel}>Cancel</button>}
-    </div>
-  );
-}
-
-const TABLE_TEXT = {
-  navigating: 'Walking to the table', raising: 'Raising the arm', mapping: 'Mapping the table top',
-  mapped: 'Table mapped', failed: 'Periscope search failed', cancelled: 'Periscope search cancelled',
-};
-
-/**
- * Periscope Scan (table_search.py): arm a click on a table edge, or scan from
- * here; progress from /table_search/status, Cancel while it runs.
- */
-function PeriscopeButton({ connected, armed, setArmed, onTableCmd }) {
-  const [status] = useLatest('/table_search/status', 'std_msgs/msg/String', { throttle: 500 });
-  let st = null;
-  try { st = status ? JSON.parse(status.data) : null; } catch { st = null; }
-  const busy = ['navigating', 'raising', 'mapping'].includes(st?.state);
-  const ready = connected && !!st;
-  const sub = !connected ? 'Robot offline' : !st ? 'Table search not running (--ai)'
-    : armed ? 'Click the edge of the table' : busy ? st.message
-      : TABLE_TEXT[st.state] && st.state !== 'idle' ? st.message : 'See over a table with the arm camera';
-  return (
-    <div className="periscope">
-      <button className={`action orbit ${armed || busy ? 'on' : ''}`} disabled={!ready && !busy}
-              onClick={() => (busy ? onTableCmd('cancel') : setArmed(!armed))} title={sub}>
-        <span className="action-icon">{busy ? '■' : '⌒'}</span>
-        <span className="orbit-text">
-          <span>{busy ? 'Cancel periscope' : armed ? 'Periscope: pick an edge' : 'Periscope Scan'}</span>
-          <span className="orbit-sub">{sub}</span>
-        </span>
-      </button>
-      {armed && (
-        <button className="chip small" onClick={() => { setArmed(false); onTableCmd('here'); }}
-                title="Raise the arm here, without walking">
-          From here
-        </button>
-      )}
     </div>
   );
 }

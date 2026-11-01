@@ -5,7 +5,7 @@ arm_periscope.py
 "Periscope" pose for the D1 arm: lift the wrist camera high and look 45 deg
 down and forward, over the edge of a table the Go2's own LiDAR and front
 camera cannot see onto, and hold it there while the wrist camera maps the
-table top (table_search.py / the dashboard's Periscope Scan).
+table top (table_search.py, from /periscope_point).
 
     1. Power on, enable (mode 80000), home.
     2. Move to PERISCOPE_POSE and hold it (the arm stays enabled and stiff).

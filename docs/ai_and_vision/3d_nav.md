@@ -268,6 +268,8 @@ Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--manual` | Everything above, but the survey waits for **Auto Survey** in the dashboard |
 | `--no-ai` | No YOLO, VLM or battery docking (the battery is still monitored); no auto-localization |
 | `--no-build` | Never build the image by itself (offline; a missing image is an error) |
+| `--verbose` | Print everything in the terminal (default: progress, warnings with their fixes, problems; all of it is in `ws/log/3d/boot.log`) |
+| `--no-hub` | No dashboard hub: `go2-3d` serves the dashboard itself, without the System and Settings tabs |
 | `--ai` / `--survey` | Old flags, now the default; still accepted |
 | `--no-yolo` / `--no-vlm` / `--no-battery` | Leave that one AI node out |
 | `--resume` | Continue the newest database instead of starting a new one. See [Resuming a map](#resuming-a-map---resume) |
@@ -598,17 +600,66 @@ locations depend on it.
 ## Web dashboard
 
 Open your browser and navigate to **`http://localhost:3000`** on the host, or
-**`http://<host IP>:3000`** from another device on the network. The READY
-block prints the exact address. The host IP is DHCP, so it can change. The
-page exists only while `wifi_3d_nav.sh` runs.
+**`http://<host IP>:3000`** from another device on the network. The terminal
+prints the exact address at the very start, with the session code
+(`…:3000/#code=4821`). The host IP is DHCP, so it can change. The page exists
+only while `wifi_3d_nav.sh` runs.
+
+### One app: Map, System, Settings
+
+`wifi_3d_nav.sh` starts the dashboard's backend,
+[`go2_hub.py`](../../scripts/runtime/go2_hub.py), **first**, before the image
+check and the robot session, so the page opens at once. The status bar (top
+right) switches between three tabs:
+
+- **Map**: the 3D view below. While the stack starts, an overlay shows each
+  step (checks, 3D image, navigation session, the dog's position, 3D twin) and
+  every warning with its fix, then goes away by itself.
+- **System**: what used to need a second terminal and
+  `debug_dashboard.py`. **Health** is the "why isn't it moving?" chain (LiDAR
+  to legs, each step OK / Check / Blocked with what to do), topic rates and
+  ages, robot ping, Wi-Fi signal, containers, Ollama and UDP buffers.
+  **Logs** shows every log in one place: this computer (including the full
+  start-up log, `ws/log/3d/boot.log`), `go2-lidar3d`, Nav2 and the robot.
+  **Copy debug report** gives a Markdown summary of all of it to paste into a
+  chat or an issue (or **Download .md** where the browser blocks copying,
+  e.g. from another laptop over plain `http`).
+- **Settings**: Nav2 values changed **live**, no restart. Read-only until the
+  session code from the terminal is entered (the dashboard link carries it).
+  Each value shows what Nav2 reports after the change:
+
+| Control | Nav2 parameter | Range |
+|---|---|---|
+| Inflation radius (presets Safe 0.70 · Wide 0.85 · Tight 0.45, with padding) | `inflation_layer.inflation_radius`, both costmaps | 0.30–1.00 m |
+| Footprint padding | `footprint_padding`, both costmaps | 0.00–0.10 m |
+| Driving speed | `FollowPath.desired_linear_vel`; the smoother's forward limit follows | 0.10–0.40 m/s |
+| Turn speed | `FollowPath.rotate_to_heading_angular_vel`; the smoother's turn limit is raised if needed | 0.30–1.00 rad/s |
+| Stop-for-obstacle look-ahead | `FollowPath.max_allowed_time_to_collision_up_to_carrot` | 0.5–3.0 s |
+
+**Reset to session defaults** restores the values the session started with
+(smoother limits included). **Also save as my defaults** writes
+`config/dashboard_settings.json`; the next session applies it once Nav2 is up.
+With `--drive omni` the controller is MPPI and the `FollowPath.*` speed values
+do not exist: Settings says "not available".
+
+**The terminal stays short.** Everything goes to `ws/log/3d/boot.log`
+(System > Logs > Start-up); the terminal shows the dashboard address, progress
+(`[BOOT]` lines), every warning and error with its `Fix:` line, `[link]`
+messages, `PROBLEM` boxes and the Ctrl+C steps
+([`boot_filter.awk`](../../scripts/runtime/boot_filter.awk)). `--verbose`
+prints everything, as before. `--no-hub` leaves the hub out: `go2-3d` serves
+the dashboard itself, without System and Settings.
 
 The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
 `lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.
 
 **D1 arm.** The arm is drawn on the Go2's back with live joint angles and its
-wrist camera's view cone; **Orbit Scan** in the controls sweeps it around an
-object (layer toggle: ⚙ → *D1 arm + camera*). Details and the no-robot mock:
+wrist camera's view cone (layer toggle: ⚙ → *D1 arm + camera*). The orbit scan
+and the periscope pose run from the terminal (`./scripts/runtime/start_arm.sh
+orbit` / `periscope`); the dashboard has no buttons for them, and the camera
+picture has two views, **Live** and **AI** (the wrist camera is not mounted).
+Details and the no-robot mock:
 [d1arm.md → The arm in the web dashboard](../hardware/d1arm.md#the-arm-in-the-web-dashboard).
 
 **Inspect (autonomous inspection).** Turn on the **◉ Inspect** chip and click an
