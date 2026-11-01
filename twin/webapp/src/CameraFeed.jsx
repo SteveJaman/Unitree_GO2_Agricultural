@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTopic } from './RosProvider.jsx';
 
-// JPEG copies made in go2-3d by twin/image_compressor.py: the raw
+// JPEG copies made in go2-3d by twin/nodes/image_compressor.py: the raw
 // /camera/image_raw (~2.7 MB per 720p frame) is too heavy for rosbridge.
 const SOURCES = {
   camera: { label: 'Live', topic: '/twin/camera/compressed' },

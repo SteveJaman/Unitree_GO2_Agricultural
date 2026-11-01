@@ -253,7 +253,7 @@ The other two features:
   `:9090`.
 - **What it shows:** status bar (battery from the new `/battery_state`, speed,
   VLM, explorer START/STOP), 3D map, robot, plan, goal and YOLO boxes,
-  click-to-go, and the camera (JPEG via `twin/image_compressor.py`).
+  click-to-go, and the camera (JPEG via `twin/nodes/image_compressor.py`).
 - **Battery:** `battery_manager.py` now always runs as a monitor; it docks
   only with `--ai`.
 - **Verified off-robot:**

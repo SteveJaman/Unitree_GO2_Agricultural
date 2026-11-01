@@ -140,7 +140,7 @@ The pipeline that produces the dense 3D tour.
 | 4.20 | Dashboard: costmap layer, waypoint queue | ⏳ (named locations ✅) |
 | 4.22 | Solid map in the dashboard (voxel filter, lighting, shadows) + exported Poisson mesh (`--export --mesh`, `--view`) | ✅ written, mesh tested on a synthetic room, ⏳ real scan |
 | 4.23 | Dashboard UI for demos: full-screen glass UI, waypoint pin + neon route, smoothed robot, dock button, VLM toasts, camera PiP | ✅ written, ⏳ verify on robot |
-| 4.24 | Semantic rooms: segmentation (erosion + geodesic growth), naming with VLM suggestion, merge, navigate to room | ✅ [`twin/room_segmentation_node.py`](../twin/room_segmentation_node.py) written, ⏳ verify on robot |
+| 4.24 | Semantic rooms: segmentation (erosion + geodesic growth), naming with VLM suggestion, merge, navigate to room | ✅ [`twin/nodes/room_segmentation_node.py`](../twin/nodes/room_segmentation_node.py) written, ⏳ verify on robot |
 | 4.25 | Room-aware behaviour (explore one room, VLM checks per room) | ⏳ |
 | 4.26 | Autonomous survey: explore → segment → visit + categorise each room (YOLO evidence, VLM fallback) → report → dock, no user input (`--survey`) | ✅ [`twin/survey_manager.py`](../twin/survey_manager.py) written, simulated, ⏳ verify on robot |
 | 4.27 | Home map in RTAB-Map localization mode; room divide; cleaning-style room sequence | ⏳ |

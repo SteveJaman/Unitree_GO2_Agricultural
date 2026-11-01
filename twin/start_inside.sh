@@ -11,7 +11,7 @@
 #   * go2_teleop         (TWIN_TELEOP=1) dashboard Drive pad -> /cmd_vel, gentle,
 #                         Nav2 and the explorer paused while driving by hand
 #   * camera support      (if the camera publishes) base_link -> camera TF,
-#                         go2_camera_info.py (intrinsics), image_compressor.py
+#                         go2_camera_info.py (intrinsics), nodes/image_compressor.py
 #                         (JPEG copies for the dashboard)
 #   * RTAB-Map            dense 3D map -> /rtabmap/cloud_map, database TWIN_DB
 #   * yolo_node.py        (TWIN_YOLO=1 and camera) /yolo/detections, /yolo/obstacles
@@ -202,7 +202,7 @@ start click_to_goal python3 -u /nodes/go2_click_to_goal.py --ros-args \
 # Rooms: costmap -> room polygons (/semantic_rooms), names/merges from the
 # dashboard, saved to config/semantic_rooms.json.
 if [ "$TWIN_ROOMS" = 1 ]; then
-    start rooms python3 -u /twin/room_segmentation_node.py --ros-args \
+    start rooms python3 -u /twin/nodes/room_segmentation_node.py --ros-args \
         -p door_width:="$(float "$TWIN_ROOM_DOOR_WIDTH")" -p min_room_area:="$(float "$TWIN_ROOM_MIN_AREA")"
 fi
 
@@ -230,7 +230,7 @@ else
 fi
 # Wrist camera (once mounted): JPEG copy for the dashboard's Wrist view.
 if [ "$TWIN_ROSBRIDGE" = 1 ]; then
-    start wrist_compressor python3 -u /twin/image_compressor.py --ros-args -r __node:=wrist_compressor \
+    start wrist_compressor python3 -u /twin/nodes/image_compressor.py --ros-args -r __node:=wrist_compressor \
         -p "pairs:=[\"/wrist_camera/image_raw:/twin/wrist_camera/compressed\"]"
 fi
 
@@ -306,7 +306,7 @@ if [ "$TWIN_MODE" = camera ]; then
             -p hfov_deg:="$(float "$TWIN_CAMERA_HFOV_DEG")"
     fi
     if [ "$TWIN_ROSBRIDGE" = 1 ]; then
-        start image_compressor python3 -u /twin/image_compressor.py --ros-args \
+        start image_compressor python3 -u /twin/nodes/image_compressor.py --ros-args \
             -p "pairs:=[\"${TWIN_RGB_TOPIC}:/twin/camera/compressed\", \"/yolo/image:/twin/yolo/compressed\"]"
     fi
     start lidar_depth "$(exe rtabmap_util pointcloud_to_depthimage)" --ros-args \
@@ -332,7 +332,7 @@ if [ "$TWIN_MODE" = fusion ]; then
         -p image_topic:="$TWIN_RGB_TOPIC" -p camera_info_file:="$TWIN_CAMERA_INFO" \
         -p cloud_topic:="$TWIN_CLOUD_TOPIC"
     if [ "$TWIN_ROSBRIDGE" = 1 ]; then
-        start image_compressor python3 -u /twin/image_compressor.py --ros-args \
+        start image_compressor python3 -u /twin/nodes/image_compressor.py --ros-args \
             -p "pairs:=[\"${TWIN_RGB_TOPIC}:/twin/camera/compressed\", \"/yolo/image:/twin/yolo/compressed\"]"
     fi
 fi

@@ -728,8 +728,8 @@ CUR_STAGE=image;  boot_stage image run "${TWIN_IMAGE}"
 ensure_image
 boot_stage image ok "${TWIN_IMAGE} ready"
 CUR_STAGE=checks
-for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/image_compressor.py" \
-         "${TWIN_DIR}/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
+for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/nodes/image_compressor.py" \
+         "${TWIN_DIR}/nodes/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
          "${NODES_DIR}/go2_click_to_goal.py" "${NODES_DIR}/go2_camera_info.py" \
          "${NODES_DIR}/battery_manager.py" "${NODES_DIR}/vlm_reasoning_node.py" \
          "${NODES_DIR}/save_location.py" "${NODES_DIR}/auto_localize.py"; do

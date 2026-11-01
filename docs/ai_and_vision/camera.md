@@ -99,7 +99,7 @@ To use the camera together with the LiDAR, calibrate it once
   sends frames to Ollama.
 - **`--camera-obstacles`:** monocular depth, scaled by the LiDAR, as a Nav2
   obstacle source (glass, table legs).
-- **Web dashboard:** [`image_compressor.py`](../../twin/image_compressor.py)
+- **Web dashboard:** [`image_compressor.py`](../../twin/nodes/image_compressor.py)
   makes 640 px JPEG copies (`/twin/camera/compressed`,
   `/twin/yolo/compressed`) at 5 Hz, only while a browser watches.
 

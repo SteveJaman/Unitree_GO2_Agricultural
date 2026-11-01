@@ -68,7 +68,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   - **Point clouds** are requested in CBOR (binary) and throttled (map every
     2 s).
   - **Camera images** are sent as 640 px JPEGs at 5 Hz, made by
-    [`image_compressor.py`](../../twin/image_compressor.py) only while a browser
+    [`image_compressor.py`](../../twin/nodes/image_compressor.py) only while a browser
     watches. A raw 720p frame through rosbridge would be ~2.7 MB.
   - **Foxglove** stays available as an alternative (`--foxglove`).
 - **The camera is optional, detected at start.** In the default `auto` mode,
@@ -440,7 +440,7 @@ Like a robot vacuum, the twin splits the mapped floor into rooms, which you
 can name, merge and drive to. It runs in every session (`TWIN_ROOMS=1`).
 
 **Segmentation**
-([`twin/room_segmentation_node.py`](../../twin/room_segmentation_node.py),
+([`twin/nodes/room_segmentation_node.py`](../../twin/nodes/room_segmentation_node.py),
 every 10 s when `/global_costmap/costmap` changed):
 
 1. Free space is every known cell with cost < 50.

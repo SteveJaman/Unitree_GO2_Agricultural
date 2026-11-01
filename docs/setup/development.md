@@ -106,8 +106,9 @@ Unitree_GO2_Agricultural/
 │   ├── docker/Dockerfile             # go2-3d:local (Humble + RTAB-Map + rosbridge + CPU PyTorch + YOLO11s + dashboard build)
 │   ├── start_inside.sh               # starts rosbridge, dashboard server, click-to-goal, rooms, survey, camera TF/info, RTAB-Map, YOLO, VLM; saves DB on stop
 │   ├── yolo_node.py                  # YOLO11s detections -> /yolo/* and 3D obstacles
-│   ├── image_compressor.py           # JPEG camera copies for the dashboard
-│   ├── room_segmentation_node.py     # costmap -> rooms, names/merges -> config/semantic_rooms.json
+│   ├── nodes/
+│   │   ├── image_compressor.py       # JPEG camera copies for the dashboard
+│   │   └── room_segmentation_node.py # costmap -> rooms, names/merges -> config/semantic_rooms.json
 │   ├── survey_manager.py             # autonomous survey: explore, rooms, visit + name each, report, dock
 │   └── webapp/                       # web dashboard: React + three.js (Vite), full-screen map + glass UI, :3000
 │       ├── src/Go2Model.jsx          # Unitree Go2 model, leg joints from /joint_states

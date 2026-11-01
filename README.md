@@ -37,6 +37,8 @@ splits it into rooms, names each, saves a report and returns to the dock.
 Then open **<http://localhost:3000>** on the workstation, or `http://<host IP>:3000`
 from another device. The terminal prints the address.
 
+> **Troubleshooting the first run:** If `./scripts/runtime/wifi_3d_nav.sh` fails immediately, ensure Docker is installed (`docker ps`) and that you have cloned the upstream stack into `~/files/go2-nav2-wifi` (see [docs/setup/setup.md](docs/setup/setup.md)).
+
 **First time on a workstation?** Before this you need:
 
 - Docker and the host packages (and the NVIDIA driver, optional);
