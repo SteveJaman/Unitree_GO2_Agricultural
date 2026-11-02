@@ -440,7 +440,7 @@ def main():
                     help="directory containing go2_description/ and d1_description/ as seen by Gazebo "
                          "(default: the parent of --go2)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--mount", default=os.environ.get("SIM_D1_MOUNT", "0.0 0 0.057 0 0 0"),
+    ap.add_argument("--mount", default=os.environ.get("SIM_D1_MOUNT", "0.0 0 0.057 0 0 3.14159"),
                     help="D1 base pose on the Go2 trunk: 'x y z roll pitch yaw' (m, rad). "
                          "Default: centre of the trunk top")
     ap.add_argument("--lidar-hz", type=float, default=float(os.environ.get("SIM_LIDAR_HZ", "5") or 5),
