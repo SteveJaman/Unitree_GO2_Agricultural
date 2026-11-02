@@ -1,0 +1,31 @@
+# go2-sim-moveit:local: go2-sim:local + MoveIt 2 + ros2_control, and
+# gz_ros2_control built for Gazebo Harmonic, so MoveIt can drive the D1 arm in
+# the simulation (SIM_MOVEIT=1, docs/simulation/hydroponic_trial.md).
+# Built by ./gazebo/setup_gazebo.sh --moveit. The apt package
+# ros-humble-gz-ros2-control is built for Gazebo Fortress (libignition-gazebo6),
+# not Harmonic, hence the source build of its humble branch with GZ_VERSION=harmonic.
+ARG BASE=go2-sim:local
+FROM ${BASE}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-moveit \
+        ros-humble-ros2-control ros-humble-ros2-controllers \
+        ros-humble-xacro ros-humble-robot-state-publisher \
+        ros-humble-moveit-configs-utils \
+        libgz-sim8-dev libgz-plugin2-dev \
+        python3-colcon-common-extensions python3-matplotlib git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# gz_ros2_control 0.7.x (humble branch), pinned, against Gazebo Harmonic
+ARG GZ_ROS2_CONTROL_REF=0.7.21
+RUN mkdir -p /opt/gz_ros2_control_ws/src && cd /opt/gz_ros2_control_ws/src \
+    && git clone --depth 1 --branch "${GZ_ROS2_CONTROL_REF}" https://github.com/ros-controls/gz_ros2_control.git \
+    && cd /opt/gz_ros2_control_ws && source /opt/ros/humble/setup.bash \
+    && GZ_VERSION=harmonic colcon build --merge-install --install-base /opt/gz_ros2_control \
+        --packages-select gz_ros2_control --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    && rm -rf /opt/gz_ros2_control_ws
+
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/gz_ros2_control/lib

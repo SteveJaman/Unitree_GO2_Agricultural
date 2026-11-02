@@ -1,0 +1,24 @@
+{
+ "B": {
+  "score": 99.6,
+  "collisions": 0,
+  "collision_pts": 40.0,
+  "completion_pct": 99.1,
+  "completion_pts": 39.6,
+  "worst_dev_pct": 0.02,
+  "accuracy_pts": 20.0,
+  "phases_ok": 5,
+  "events": []
+ },
+ "A": {
+  "score": 61.7,
+  "collisions": 0,
+  "collision_pts": 40.0,
+  "completion_pct": 54.3,
+  "completion_pts": 21.7,
+  "worst_dev_pct": null,
+  "accuracy_pts": 0.0,
+  "phases_ok": 3,
+  "events": []
+ }
+}

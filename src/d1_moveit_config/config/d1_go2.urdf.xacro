@@ -5,9 +5,25 @@
   two collision boxes (trunk, and the space its legs sweep), so planning keeps
   the arm off the dog. Mount and standing height match gazebo/sim/build_model.py:
   trunk origin 0.29 m up, D1 base 0.057 m above the trunk origin.
+
+  Arguments:
+    hardware      mock (default): ros2_control mock hardware, no simulator.
+                  gazebo: gz_ros2_control/GazeboSimSystem in Gazebo Harmonic
+                  (the go2-sim-moveit image; SIM_MOVEIT=1 merges this arm into
+                  the simulated Go2, see docs/simulation/hydroponic_trial.md).
+    end_effector  gripper (default): the D1's two-finger gripper, tool frame
+                  tool0 between the fingertips.
+                  camera: no gripper; a mock depth camera (RealSense D405 size)
+                  on tool0 at the wrist flange, frames camera_link (x out of the
+                  lens) and camera_optical_frame (z out of the lens).
+    use_mock_hardware   kept for old command lines; false = hardware gazebo.
 -->
 <robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="use_mock_hardware" default="true"/>
+  <xacro:arg name="hardware" default="mock"/>
+  <xacro:arg name="end_effector" default="gripper"/>
+  <xacro:property name="hardware" value="$(arg hardware)"/>
+  <xacro:property name="end_effector" value="$(arg end_effector)"/>
 
   <link name="world"/>
 
@@ -33,20 +49,65 @@
     <origin xyz="0 0 -0.165" rpy="0 0 0"/>
   </joint>
 
-  <!-- The arm itself, unchanged from the D1-550 description -->
-  <xacro:include filename="$(find d1_550_description)/urdf/d1_550_description.urdf"/>
+  <!-- The arm: the D1-550 description, gripper or not (config/d1_550_arm.xacro) -->
+  <xacro:include filename="$(find d1_moveit_config)/config/d1_550_arm.xacro"/>
+  <xacro:d1_550_arm end_effector="${end_effector}"/>
   <joint name="go2_to_d1" type="fixed">
     <parent link="go2_trunk"/><child link="base_link"/>
     <origin xyz="0 0 0.057" rpy="0 0 0"/>
   </joint>
 
-  <!-- Tool / camera frame between the fingertips, x pointing out of the gripper -->
-  <link name="tool0"/>
-  <joint name="link6_to_tool0" type="fixed">
-    <parent link="Empty_Link6"/><child link="tool0"/>
-    <origin xyz="0.10 -0.0004 0.0031" rpy="0 0 0"/>
-  </joint>
+  <xacro:if value="${end_effector == 'gripper'}">
+    <!-- Tool / camera frame between the fingertips, x pointing out of the gripper -->
+    <link name="tool0"/>
+    <joint name="link6_to_tool0" type="fixed">
+      <parent link="Empty_Link6"/><child link="tool0"/>
+      <origin xyz="0.10 -0.0004 0.0031" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+  <xacro:if value="${end_effector == 'camera'}">
+    <!-- tool0 = the wrist flange, where the gripper body was mounted -->
+    <link name="tool0"/>
+    <joint name="link6_to_tool0" type="fixed">
+      <parent link="Empty_Link6"/><child link="tool0"/>
+      <origin xyz="0.035 -0.0004 0.0031" rpy="0 0 0"/>
+    </joint>
+    <!-- Mock depth camera, RealSense D405 size (42 x 42 x 23 mm), lens 25 mm past the flange -->
+    <link name="camera_link">
+      <inertial><mass value="0.06"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/></inertial>
+      <visual><origin xyz="-0.0115 0 0"/><geometry><box size="0.023 0.042 0.042"/></geometry>
+        <material name="camera_black"><color rgba="0.08 0.08 0.09 1"/></material></visual>
+      <visual><origin xyz="0.0005 0 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.008" length="0.002"/></geometry>
+        <material name="lens_blue"><color rgba="0.15 0.3 0.6 1"/></material></visual>
+      <collision><origin xyz="-0.0115 0 0"/><geometry><box size="0.023 0.042 0.042"/></geometry></collision>
+    </link>
+    <joint name="tool0_to_camera" type="fixed">
+      <parent link="tool0"/><child link="camera_link"/>
+      <origin xyz="0.025 0 0" rpy="0 0 0"/>
+    </joint>
+    <link name="camera_optical_frame"/>
+    <joint name="camera_to_optical" type="fixed">
+      <parent link="camera_link"/><child link="camera_optical_frame"/>
+      <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+    </joint>
+    <xacro:if value="${hardware == 'gazebo'}">
+      <gazebo reference="camera_link">
+        <sensor name="wrist_depth" type="rgbd_camera">
+          <update_rate>5</update_rate>
+          <always_on>true</always_on>
+          <topic>wrist_camera</topic>
+          <camera>
+            <horizontal_fov>1.52</horizontal_fov>
+            <image><width>424</width><height>240</height></image>
+            <clip><near>0.07</near><far>3.0</far></clip>
+          </camera>
+        </sensor>
+      </gazebo>
+    </xacro:if>
+  </xacro:if>
 
   <xacro:include filename="$(find d1_moveit_config)/config/d1_go2.ros2_control.xacro"/>
-  <xacro:d1_ros2_control use_mock_hardware="$(arg use_mock_hardware)"/>
+  <xacro:d1_ros2_control hardware="${'gazebo' if hardware == 'gazebo' or '$(arg use_mock_hardware)' == 'false' else 'mock'}"
+                         end_effector="${end_effector}"/>
 </robot>

@@ -31,6 +31,10 @@
 #   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
 #   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
 #   SIM_CONTACTS=1        contact sensors on every robot link (tests/sim_benchmark.py)
+#   SIM_MOVEIT=1          MoveIt 2 drives the arm (gz_ros2_control, image go2-sim-moveit:local from
+#                         setup_gazebo.sh --moveit), D1-550 with a camera instead of the gripper; needs
+#                         SIM_ARM=0 and D1_ARM_DIR (~/files/unitree-D1-550-Robot-ARM). Arm stack on
+#                         ROS domain SIM_ARM_DOMAIN (66). docs/simulation/hydroponic_trial.md
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match
@@ -40,7 +44,9 @@ set -eo pipefail
 GZ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${GZ_DIR}/.." && pwd)"
 NAME="${SIM_CONTAINER:-go2-sim}"
-IMAGE="${SIM_IMAGE:-go2-sim:local}"
+SIM_MOVEIT="${SIM_MOVEIT:-0}"
+D1_ARM_DIR="${D1_ARM_DIR:-$HOME/files/unitree-D1-550-Robot-ARM}"
+if [ "$SIM_MOVEIT" = 1 ]; then IMAGE="${SIM_IMAGE:-go2-sim-moveit:local}"; else IMAGE="${SIM_IMAGE:-go2-sim:local}"; fi
 SIM_GUI="${SIM_GUI:-0}"
 SIM_ARM="${SIM_ARM:-1}"
 SIM_ARM_IFACE="${SIM_ARM_IFACE:-simarm0}"
@@ -182,6 +188,13 @@ cmd_up() {
     else
         echo "[sim] WARN: ${SIM_SENSOR_YAML} not found; sim uses the Go2 URDF lidar mount"
     fi
+    local moveit_args=()
+    if [ "$SIM_MOVEIT" = 1 ]; then
+        [ "$SIM_ARM" = 1 ] && die "SIM_MOVEIT=1 needs SIM_ARM=0: ros2_control drives the arm, not the D1 emulator"
+        [ -d "$D1_ARM_DIR/d1_550_description" ] || die "SIM_MOVEIT=1: no ${D1_ARM_DIR}/d1_550_description (docs/hardware/d1arm.md: git clone ... unitree-D1-550-Robot-ARM)"
+        moveit_args=(-v "$REPO_DIR/src:/moveit_src:ro" -v "$D1_ARM_DIR:/moveit_d1:ro"
+                     -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}")
+    fi
 
     echo "[sim] starting ${NAME} (GUI=${gui}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
     docker run -d --name "$NAME" --network host --ipc host \
@@ -195,7 +208,7 @@ cmd_up() {
         -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" -e SIM_CONTACTS="${SIM_CONTACTS:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-        -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" \
+        -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" "${moveit_args[@]}" \
         "$IMAGE" >/dev/null
 
     echo "[sim] waiting for the first lidar frame (up to ${SIM_TIMEOUT} s; software rendering is slow)..."

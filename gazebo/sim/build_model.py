@@ -25,6 +25,10 @@ What the builder changes:
     sensor: software rendering of it costs sim speed).
   * Gazebo plugins: VelocityControl, OdometryPublisher, JointStatePublisher
     and one JointPositionController per D1 joint.
+  * --arm-urdf (SIM_MOVEIT=1): the arm is instead the D1-550 of the MoveIt
+    description (src/d1_moveit_config, expanded with hardware:=gazebo), with
+    its own names, its camera and the gz_ros2_control plugin; no position
+    controllers (ros2_control drives the joints).
 
 Uses only the Python standard library, so it can be run and checked anywhere.
 """
@@ -250,6 +254,50 @@ def import_d1(robot, d1_root, mesh_root, parent, mount):
     return limits
 
 
+def import_arm_urdf(robot, arm_urdf, package, mesh_root, parent, mount):
+    """Merge the arm of a MoveIt robot description (d1_go2.urdf.xacro, expanded)
+    under `parent`: base_link and everything below it, unprefixed, so MoveIt,
+    ros2_control and Gazebo use the same joint names, plus the <gazebo>
+    elements (gz_ros2_control plugin, camera sensors). Returns joint limits."""
+    arm = ET.parse(arm_urdf).getroot()
+    # keep its <gazebo> blocks (written for Harmonic), unlike the ROS 1 Unitree files
+    for el in list(arm.findall("transmission")):
+        arm.remove(el)
+    rewrite_meshes(arm, package, mesh_root)
+    joints = arm.findall("joint")
+    children = {}
+    for j in joints:
+        children.setdefault(j.find("parent").get("link"), []).append(j)
+    keep_links, keep_joints, todo = {"base_link"}, [], ["base_link"]
+    while todo:
+        for j in children.get(todo.pop(), []):
+            keep_joints.append(j)
+            child = j.find("child").get("link")
+            keep_links.add(child)
+            todo.append(child)
+    taken = {e.get("name") for e in robot if e.tag in ("link", "joint")}
+    clash = sorted(taken & (keep_links | {j.get("name") for j in keep_joints}))
+    if clash:
+        raise SystemExit(f"arm names clash with the Go2 model: {clash}")
+    for el in arm:
+        if el.tag == "link" and el.get("name") in keep_links:
+            robot.append(el)
+        elif el.tag == "joint" and el in keep_joints:
+            lim = el.find("limit")
+            if lim is not None and float(lim.get("effort", "0") or 0) <= 0:
+                lim.set("effort", "30")
+            if lim is not None and float(lim.get("velocity", "0") or 0) <= 0:
+                lim.set("velocity", "3.14")
+            if el.get("type") in ("revolute", "prismatic") and el.find("dynamics") is None:
+                ET.SubElement(el, "dynamics", damping="0.5", friction="0.0")
+            robot.append(el)
+        elif el.tag == "gazebo" and (el.get("reference") is None or el.get("reference") in keep_links):
+            robot.append(el)
+    add_fixed(robot, "d1_mount_joint", parent, "base_link", mount[:3], mount[3:])
+    return {j.get("name"): [float(j.find("limit").get("lower")), float(j.find("limit").get("upper"))]
+            for j in keep_joints if j.find("limit") is not None}
+
+
 def gz(robot, xml_text):
     robot.append(ET.fromstring(xml_text))
 
@@ -269,7 +317,7 @@ def load_sensor_from_base(path):
 
 
 def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE,
-          camera=True, lidar_hz=5.0):
+          camera=True, lidar_hz=5.0, arm_urdf=None, arm_package="d1_550_description", arm_mesh_root=None):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
     robot = ET.parse(go2_urdf).getroot()
     robot.set("name", MODEL_NAME)
@@ -304,8 +352,13 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
     add_link(robot, "sim_camera")
     add_fixed(robot, "sim_camera_joint", "base", "sim_camera", cam_xyz)
 
-    d1_limits = import_d1(robot, d1_root, mesh_root, "base", mount)
-    d1_joints = ["d1_" + n for n in D1_REVOLUTE + D1_FINGERS]
+    if arm_urdf:
+        # MoveIt mode: the arm comes from the MoveIt description and ros2_control drives it
+        d1_limits = import_arm_urdf(robot, arm_urdf, arm_package, arm_mesh_root, "base", mount)
+        d1_joints = list(D1_REVOLUTE)
+    else:
+        d1_limits = import_d1(robot, d1_root, mesh_root, "base", mount)
+        d1_joints = ["d1_" + n for n in D1_REVOLUTE + D1_FINGERS]
     missing = [n for n in d1_joints if n not in {j.get("name") for j in robot.findall("joint")}]
     if missing:
         raise SystemExit(f"D1 joints missing: {missing}")
@@ -336,7 +389,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
         """<plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
   <topic>/sim/d1/joint_state</topic>""" + "".join(f"<joint_name>{n}</joint_name>" for n in d1_joints) + "</plugin>",
     ]
-    for n in d1_joints:
+    for n in ([] if arm_urdf else d1_joints):      # with --arm-urdf, ros2_control drives them
         prismatic = n.startswith("d1_Joint7")
         plugins.append(f"""<plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
   <joint_name>{n}</joint_name><topic>/sim/d1/{n}/cmd_pos</topic>
@@ -403,6 +456,12 @@ def main():
                         "~/files/go2-nav2-wifi/go2_nav2/config/lidar3d_robot_viz.yaml")),
                     help="go2_odom_tf params file to take sensor_from_base from, so the sim's lidar "
                          "mount matches the laptop stack (default: the go2-nav2-wifi checkout)")
+    ap.add_argument("--arm-urdf", default=None,
+                    help="MoveIt mode (SIM_MOVEIT=1): take the arm from this expanded d1_go2.urdf.xacro "
+                         "(hardware:=gazebo) instead of models/d1_description; names unprefixed, "
+                         "gz_ros2_control drives the joints")
+    ap.add_argument("--arm-mesh-root", default=None,
+                    help="directory containing d1_550_description/ (its package:// meshes)")
     a = ap.parse_args()
     mount = floats(a.mount, 6)
     mesh_root = a.mesh_root or os.path.dirname(os.path.abspath(a.go2))
@@ -418,7 +477,8 @@ def main():
     if math.sqrt(sum(v * v for v in sensor_from_base[3:])) < 0.5:
         sys.exit(f"sensor_from_base: quaternion is not unit length: {sensor_from_base[3:]}")
     urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base,
-                         camera=a.camera == "1", lidar_hz=a.lidar_hz)
+                         camera=a.camera == "1", lidar_hz=a.lidar_hz, arm_urdf=a.arm_urdf,
+                         arm_mesh_root=a.arm_mesh_root)
     print(f"wrote {urdf}")
     print(f"sensor_from_base from {source}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "

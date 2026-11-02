@@ -17,6 +17,7 @@
 #   ./gazebo/setup_gazebo.sh --models     # downloads only
 #   ./gazebo/setup_gazebo.sh --image      # image build + validation only
 #   ./gazebo/setup_gazebo.sh --furniture  # the lab_office furniture only
+#   ./gazebo/setup_gazebo.sh --moveit     # go2-sim-moveit:local (MoveIt 2 + gz_ros2_control; needs go2-sim:local)
 #   ./gazebo/setup_gazebo.sh --force      # re-download models
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -32,11 +33,12 @@ D1_SHA256="76cbe7725b1640cf214a6aa97e27d995c33ad5e4a4e7f29d57ec7ff7346a7164"
 FURNITURE_URL="https://github.com/leonhartyao/gazebo_models_worlds_collection.git"
 FURNITURE_COMMIT="cce115b82691b7c529a02f47e5efa391145a4ca1"   # 2020-09-03
 
-DO_MODELS=1; DO_IMAGE=1; DO_FURNITURE=1; FORCE=0
+DO_MODELS=1; DO_IMAGE=1; DO_FURNITURE=1; DO_MOVEIT=0; FORCE=0
 for a in "$@"; do
     case "$a" in
         --models) DO_IMAGE=0 ;;
         --furniture) DO_MODELS=0; DO_IMAGE=0 ;;
+        --moveit) DO_MODELS=0; DO_IMAGE=0; DO_FURNITURE=0; DO_MOVEIT=1 ;;
         --image)  DO_MODELS=0 ;;
         --force)  FORCE=1 ;;
         -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
@@ -147,6 +149,14 @@ if [ "$DO_IMAGE" = 1 ]; then
         fi
         python3 -c "import gz.transport13, gz.msgs10, cyclonedds; print(\"python bindings: OK\")"
     '
+fi
+
+echo
+if [ "$DO_MOVEIT" = 1 ]; then
+    docker image inspect go2-sim:local >/dev/null 2>&1 || die "go2-sim:local missing: run ./gazebo/setup_gazebo.sh first"
+    step "Building go2-sim-moveit:local (MoveIt 2 + ros2_control + gz_ros2_control for Harmonic)"
+    docker build -t go2-sim-moveit:local -f "$GZ_DIR/docker/Dockerfile.moveit" "$GZ_DIR/docker"
+    echo "Then: SIM_MOVEIT=1 SIM_ARM=0 ... (docs/simulation/hydroponic_trial.md), or python3 tests/hydroponic_trial.py"
 fi
 
 echo

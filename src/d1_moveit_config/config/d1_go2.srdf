@@ -1,12 +1,42 @@
 <?xml version="1.0"?>
-<robot name="d1_go2">
-  <group name="arm">
-    <chain base_link="base_link" tip_link="tool0"/>
-  </group>
-  <group name="gripper">
-    <joint name="Joint_L"/>
-    <joint name="Joint_R"/>
-  </group>
+<!--
+  Planning groups for d1_go2.urdf.xacro. Processed by xacro (demo.launch.py
+  passes end_effector): "gripper" (default) plans to tool0 between the
+  fingertips; "camera" plans to camera_link, the mock depth camera's lens.
+-->
+<robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="end_effector" default="gripper"/>
+  <xacro:property name="end_effector" value="$(arg end_effector)"/>
+
+  <xacro:if value="${end_effector == 'gripper'}">
+    <group name="arm">
+      <chain base_link="base_link" tip_link="tool0"/>
+    </group>
+    <group name="gripper">
+      <joint name="Joint_L"/>
+      <joint name="Joint_R"/>
+    </group>
+    <group_state name="open" group="gripper">
+      <joint name="Joint_L" value="0.033"/><joint name="Joint_R" value="0.033"/>
+    </group_state>
+    <group_state name="closed" group="gripper">
+      <joint name="Joint_L" value="0"/><joint name="Joint_R" value="0"/>
+    </group_state>
+    <end_effector name="gripper" parent_link="Empty_Link6" group="gripper" parent_group="arm"/>
+  </xacro:if>
+
+  <xacro:if value="${end_effector == 'camera'}">
+    <group name="arm">
+      <chain base_link="base_link" tip_link="camera_link"/>
+    </group>
+    <group name="camera">
+      <link name="camera_link"/>
+      <link name="camera_optical_frame"/>
+    </group>
+    <end_effector name="camera" parent_link="tool0" group="camera" parent_group="arm"/>
+    <disable_collisions link1="Empty_Link6" link2="camera_link" reason="Adjacent"/>
+    <disable_collisions link1="Empty_Link5" link2="camera_link" reason="Never"/>
+  </xacro:if>
 
   <!-- Upper arm vertical, forearm forward (all joints at zero). -->
   <group_state name="home" group="arm">
@@ -14,14 +44,14 @@
     <joint name="Joint3" value="0"/><joint name="Joint4" value="0"/>
     <joint name="Joint5" value="0"/><joint name="Joint6" value="0"/>
   </group_state>
-  <group_state name="open" group="gripper">
-    <joint name="Joint_L" value="0.033"/><joint name="Joint_R" value="0.033"/>
+  <!-- Folded back over the dog for walking: nothing ahead of the trunk, top at
+       0.68 m, wrist clear of the base (home holds the forearm level at 0.79 m,
+       0.36 m ahead of the dog). full_mission_test.py starts and ends here. -->
+  <group_state name="stow" group="arm">
+    <joint name="Joint1" value="0"/><joint name="Joint2" value="-1.396"/>
+    <joint name="Joint3" value="0.785"/><joint name="Joint4" value="0"/>
+    <joint name="Joint5" value="1.396"/><joint name="Joint6" value="0"/>
   </group_state>
-  <group_state name="closed" group="gripper">
-    <joint name="Joint_L" value="0"/><joint name="Joint_R" value="0"/>
-  </group_state>
-
-  <end_effector name="gripper" parent_link="Empty_Link6" group="gripper" parent_group="arm"/>
 
   <!-- Pairs that never need collision checking. Adjacent links, plus pairs
        found never/always in contact by sampling (see docs/hardware/d1arm.md). -->
@@ -34,7 +64,9 @@
   <disable_collisions link1="Empty_Link3" link2="Empty_Link4" reason="Adjacent"/>
   <disable_collisions link1="Empty_Link4" link2="Empty_Link5" reason="Adjacent"/>
   <disable_collisions link1="Empty_Link5" link2="Empty_Link6" reason="Adjacent"/>
-  <disable_collisions link1="Empty_Link6" link2="Empty_Link_L" reason="Adjacent"/>
-  <disable_collisions link1="Empty_Link6" link2="Empty_Link_R" reason="Adjacent"/>
-  <disable_collisions link1="Empty_Link_L" link2="Empty_Link_R" reason="Never"/>
+  <xacro:if value="${end_effector == 'gripper'}">
+    <disable_collisions link1="Empty_Link6" link2="Empty_Link_L" reason="Adjacent"/>
+    <disable_collisions link1="Empty_Link6" link2="Empty_Link_R" reason="Adjacent"/>
+    <disable_collisions link1="Empty_Link_L" link2="Empty_Link_R" reason="Never"/>
+  </xacro:if>
 </robot>

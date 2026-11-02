@@ -5,6 +5,7 @@
 #
 #   ./gazebo/worlds/render_world.sh [WORLD] [OUT_DIR]
 #   ./gazebo/worlds/render_world.sh lab_office docs/images/lab_office
+#   CAM_OVERVIEW="x y z r p y" CAM_INSIDE=... FOV_OVERVIEW=1.0 FOV_INSIDE=1.5 ./gazebo/worlds/render_world.sh WORLD DIR
 #
 # Two views, each from its own copy of the world with one camera that saves
 # frames to disk:
@@ -38,13 +39,16 @@ import re, sys
 src, cut, pose, fov, cut_h = sys.argv[1:]
 s = open(src).read().replace("@RENDER_ENGINE@", "ogre2")
 if cut == "1":
+    # the ceiling is a model (lab_office) or a link (hydroponic_station)
     s = re.sub(r'\s*<model name="ceiling">.*?</model>', '', s, flags=re.S)
+    s = re.sub(r'\s*<link name="ceiling">.*?</link>', '', s, flags=re.S)
+    def cut_walls(w):
+        w = re.sub(r'(<size>[\d.]+ [\d.]+ )([\d.]+)(</size>)', lambda m: m.group(1) + cut_h + m.group(3), w)
+        return re.sub(r'(<pose>[-\d.]+ [-\d.]+ )([\d.]+)( )', lambda m: m.group(1) + str(float(cut_h) / 2) + m.group(3), w)
     walls = re.search(r'<model name="walls">.*?\n    </model>', s, flags=re.S)
     if walls:
-        w = walls.group(0)
-        w = re.sub(r'(<size>[\d.]+ [\d.]+ )([\d.]+)(</size>)', lambda m: m.group(1) + cut_h + m.group(3), w)
-        w = re.sub(r'(<pose>[-\d.]+ [-\d.]+ )([\d.]+)( )', lambda m: m.group(1) + str(float(cut_h) / 2) + m.group(3), w)
-        s = s.replace(walls.group(0), w)
+        s = s.replace(walls.group(0), cut_walls(walls.group(0)))
+    s = re.sub(r'<link name="wall_[^"]*">.*?</link>', lambda m: cut_walls(m.group(0)), s, flags=re.S)
 camera = f"""    <model name="cam"><static>true</static><pose>{pose}</pose><link name="l">
       <sensor name="cam" type="camera"><update_rate>2</update_rate><always_on>true</always_on><topic>render/cam</topic>
         <camera><horizontal_fov>{fov}</horizontal_fov><image><width>1600</width><height>1000</height></image>
@@ -82,7 +86,8 @@ render() {
 }
 
 mkdir -p "${tmp}/overview" "${tmp}/inside"
-world_copy 1 "-10.5 -10.0 11.0 0 0.72 0.76" 1.0 > "${tmp}/overview/world.sdf"
-world_copy 0 "-1.4 2.2 1.0 0 0.22 2.906" 1.5 > "${tmp}/inside/world.sdf"
+# Camera poses "x y z roll pitch yaw" (defaults: lab_office); other worlds set CAM_* / FOV_*.
+world_copy 1 "${CAM_OVERVIEW:--10.5 -10.0 11.0 0 0.72 0.76}" "${FOV_OVERVIEW:-1.0}" > "${tmp}/overview/world.sdf"
+world_copy 0 "${CAM_INSIDE:--1.4 2.2 1.0 0 0.22 2.906}" "${FOV_INSIDE:-1.5}" > "${tmp}/inside/world.sdf"
 render overview
 render inside

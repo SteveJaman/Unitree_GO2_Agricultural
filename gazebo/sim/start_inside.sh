@@ -45,9 +45,37 @@ export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
 # model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
 export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
+ARM_ARGS=()
+if [ "${SIM_MOVEIT:-0}" = 1 ]; then
+    # MoveIt drives the arm through gz_ros2_control (go2-sim-moveit image):
+    # build d1_moveit_config + d1_550_description (mounted read-only by
+    # run_sim.sh), expand the robot description with the camera, and merge
+    # that arm into the Go2 instead of models/d1_description.
+    echo "[sim] MoveIt mode: building d1_moveit_config (ROS domain ${SIM_ARM_DOMAIN:-66})"
+    MWS=/tmp/moveit_ws
+    rm -rf "$MWS" && mkdir -p "$MWS/src"
+    cp -r /moveit_src/d1_moveit_config /moveit_d1/d1_550_description "$MWS/src/"
+    # upstream installs scripts/ and urdf.rviz that its repository does not contain
+    mkdir -p "$MWS/src/d1_550_description/scripts"
+    touch "$MWS/src/d1_550_description/scripts/environment_publisher.py" "$MWS/src/d1_550_description/urdf.rviz"
+    set +u
+    # shellcheck disable=SC1091
+    source /opt/ros/humble/setup.bash
+    (cd "$MWS" && colcon build --packages-select d1_550_description d1_moveit_config > "$GEN/moveit_build.log" 2>&1) \
+        || { echo "[sim] ERROR: d1_moveit_config build failed:" >&2; tail -20 "$GEN/moveit_build.log" >&2; exit 1; }
+    # shellcheck disable=SC1091
+    source "$MWS/install/setup.bash"
+    # gz_ros2_control (source build in the image): pluginlib must find its package
+    # shellcheck disable=SC1091
+    source /opt/gz_ros2_control/setup.bash
+    xacro "$MWS/install/d1_moveit_config/share/d1_moveit_config/config/d1_go2.urdf.xacro" \
+        hardware:=gazebo end_effector:=camera > "$GEN/d1_moveit.urdf"
+    ARM_ARGS=(--arm-urdf "$GEN/d1_moveit.urdf" --arm-mesh-root "$MWS/install/d1_550_description/share")
+fi
+
 echo "[sim] building model..."
 python3 "$SIM/sim/build_model.py" --go2 "$SIM/models/go2_description" --d1 "$SIM/models/d1_description" \
-    --mesh-root "$SIM/models" --out "$GEN"
+    --mesh-root "$SIM/models" --out "$GEN" "${ARM_ARGS[@]}"
 sed "s/@RENDER_ENGINE@/${SIM_RENDER_ENGINE}/" "$SIM/worlds/${WORLD}.sdf" > "$GEN/world.sdf"
 SPAWN_Z="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_z"])' "$GEN/sim_params.json")"
 ROBOT_IN_WORLD=0
@@ -124,13 +152,32 @@ GZ_SERVER_ARGS=(-r -s --render-engine "$SIM_RENDER_ENGINE")
 # is only for machines with no display: on software GL (no GPU) it returns
 # lidar scans that are all inf (empty /lidar3d/registered, no map).
 [ -n "${DISPLAY:-}" ] || GZ_SERVER_ARGS+=(--headless-rendering)
+
+if [ "${SIM_MOVEIT:-0}" = 1 ]; then
+    # The arm stack has a ROS domain of its own (the Go2 topics stay on
+    # GO2_RELAY_DOMAIN_ID): robot_state_publisher, move_group and the
+    # controller spawners. gz_ros2_control (inside Gazebo, below) reads the
+    # robot description from robot_state_publisher when it loads, so this
+    # starts first.
+    export ROS_DOMAIN_ID="${SIM_ARM_DOMAIN:-66}" RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI="file://$GEN/cyclonedds.xml"
+    ros2 launch d1_moveit_config demo.launch.py hardware:=gazebo end_effector:=camera use_rviz:=false \
+        > "$GEN/moveit.log" 2>&1 &
+    PIDS+=("$!")
+    echo "[sim] MoveIt: move_group + controllers starting on domain ${ROS_DOMAIN_ID} (log $GEN/moveit.log)"
+fi
 echo "[sim] starting Gazebo server (${SIM_RENDER_ENGINE}, GUI=${SIM_GUI})..."
 gz sim "${GZ_SERVER_ARGS[@]}" "$GEN/world.sdf" &
 PIDS+=("$!")
+GZ_PID=$!
+if [ "${SIM_MOVEIT:-0}" = 1 ]; then
+    # sim time for move_group and the controllers
+    ros2 run ros_gz_bridge parameter_bridge /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock > "$GEN/clock_bridge.log" 2>&1 &
+    PIDS+=("$!")
+fi
 
 for _ in $(seq 1 120); do
     gz service -l 2>/dev/null | grep -q "^/world/${WORLD}/create$" && break
-    kill -0 "${PIDS[0]}" 2>/dev/null || { echo "[sim] ERROR: Gazebo server exited during startup" >&2; exit 1; }
+    kill -0 "$GZ_PID" 2>/dev/null || { echo "[sim] ERROR: Gazebo server exited during startup" >&2; exit 1; }
     sleep 0.5
 done
 gz service -l 2>/dev/null | grep -q "^/world/${WORLD}/create$" || { echo "[sim] ERROR: world never came up" >&2; exit 1; }
