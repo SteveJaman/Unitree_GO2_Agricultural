@@ -15,8 +15,10 @@
 #   SIM_ARM=1            run the D1 emulator on SIM_ARM_IFACE (default simarm0)
 #   SIM_SPAWN="x y yaw"  robot start pose (default "-4.5 0 0")
 #   SIM_WORLD            worlds/<name>.sdf: agri_rooms (default, field + building),
-#                        lab_office (indoor lab with furniture), agri_field
-#                        or agri_field (field only)
+#                        lab_office (indoor lab with furniture) or agri_field (field only)
+#   SIM_CONTACTS=0       1 = contact sensors on every robot link; their topics are
+#                        listed in /tmp/sim-gen/contact_topics.txt (contact_monitor.py,
+#                        tests/sim_benchmark.py)
 #   SIM_D1_MOUNT         D1 pose on the trunk, see build_model.py --mount
 #   SIM_SENSOR_YAML      lidar mount file (sensor_from_base), see build_model.py --sensor-yaml
 # ---------------------------------------------------------------------------
@@ -48,6 +50,42 @@ python3 "$SIM/sim/build_model.py" --go2 "$SIM/models/go2_description" --d1 "$SIM
     --mesh-root "$SIM/models" --out "$GEN"
 sed "s/@RENDER_ENGINE@/${SIM_RENDER_ENGINE}/" "$SIM/worlds/${WORLD}.sdf" > "$GEN/world.sdf"
 SPAWN_Z="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_z"])' "$GEN/sim_params.json")"
+ROBOT_IN_WORLD=0
+
+if [ "${SIM_CONTACTS:-0}" = 1 ]; then
+    # The URDF's fixed leg links are lumped into "base" on conversion, so the
+    # contact sensors go into the converted SDF, naming each lumped collision.
+    # Gazebo publishes each on its scoped name (a <topic> is ignored); the
+    # topics are listed in $GEN/contact_topics.txt for contact_monitor.py.
+    # The Contact system only sets up sensors of models in the world file, not
+    # of models spawned later (gz-sim 8), so the robot goes into world.sdf.
+    echo "[sim] contact sensors on every robot link ($GEN/contact_topics.txt)"
+    gz sdf -p "$GEN/go2_d1.urdf" > "$GEN/go2_d1_raw.sdf" 2>/dev/null
+    python3 - "$GEN/go2_d1_raw.sdf" "$GEN/go2_d1.sdf" "$GEN/contact_topics.txt" "$WORLD" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+src, dst, topics_out, world = sys.argv[1:]
+tree = ET.parse(src)
+links = []
+for link in tree.getroot().find("model").findall("link"):
+    cols = [c.get("name") for c in link.findall("collision")]
+    if not cols:
+        continue
+    name = link.get("name")
+    s = ET.SubElement(link, "sensor", name=f"contact_{name}", type="contact")
+    ET.SubElement(s, "always_on").text = "1"
+    ET.SubElement(s, "update_rate").text = "20"
+    c = ET.SubElement(s, "contact")
+    for n in cols:
+        ET.SubElement(c, "collision").text = n
+    links.append(f"/world/{world}/model/go2/link/{name}/sensor/contact_{name}/contact")
+tree.write(dst)
+open(topics_out, "w").write(" ".join(links) + "\n")
+PY
+    sed -i 's|<plugin filename="gz-sim-physics-system"|<plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>\n    &|' "$GEN/world.sdf"
+    sed -i "s|</world>|  <include><uri>file://$GEN/go2_d1.sdf</uri><name>go2</name><pose>${SPAWN_X} ${SPAWN_Y} ${SPAWN_Z} 0 0 ${SPAWN_YAW}</pose></include>\n  </world>|" "$GEN/world.sdf"
+    ROBOT_IN_WORLD=1
+fi
 
 # Same DDS settings the laptop session writes (go2-env.sh -> setup-robot-wifi.sh):
 # bind to the host address, explicit peer, SPDP multicast only.
@@ -103,10 +141,14 @@ set +u
 source /opt/ros/humble/setup.bash
 export ROS_DOMAIN_ID="$GO2_RELAY_DOMAIN_ID" RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI="file://$GEN/cyclonedds.xml"
 
-echo "[sim] spawning go2 at (${SPAWN_X}, ${SPAWN_Y}, ${SPAWN_Z}) yaw ${SPAWN_YAW}"
-# flag=value form: a separate negative value ("-x -4.5") can be read as a flag.
-ros2 run ros_gz_sim create -world="$WORLD" -file="$GEN/go2_d1.urdf" -name=go2 \
-    -x="$SPAWN_X" -y="$SPAWN_Y" -z="$SPAWN_Z" -Y="$SPAWN_YAW"
+if [ "$ROBOT_IN_WORLD" = 1 ]; then
+    echo "[sim] go2 is in the world file at (${SPAWN_X}, ${SPAWN_Y}, ${SPAWN_Z}) yaw ${SPAWN_YAW}"
+else
+    echo "[sim] spawning go2 at (${SPAWN_X}, ${SPAWN_Y}, ${SPAWN_Z}) yaw ${SPAWN_YAW}"
+    # flag=value form: a separate negative value ("-x -4.5") can be read as a flag.
+    ros2 run ros_gz_sim create -world="$WORLD" -file="$GEN/go2_d1.urdf" -name=go2 \
+        -x="$SPAWN_X" -y="$SPAWN_Y" -z="$SPAWN_Z" -Y="$SPAWN_YAW"
+fi
 
 if [ "$SIM_GUI" = 1 ]; then
     gz sim -g --render-engine "$SIM_RENDER_ENGINE" &

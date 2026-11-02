@@ -121,6 +121,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 | `SIM_SENSOR_FROM_BASE` | read from go2-nav2-wifi `lidar3d_robot_viz.yaml` | Lidar mount `x y z qx qy qz qw`; must match the laptop |
 | `SIM_DRIFT_YAW` | `0` | Heading error added per radian turned (e.g. `0.02`). Tests drift tolerance |
 | `SIM_DRIFT_SCALE` | `0` | Distance scale error (e.g. `0.03` = 3 % long) |
+| `SIM_CONTACTS` | `0` | `1` puts a contact sensor on every robot link (the lumped Go2 body and legs, each D1 link) and the robot into the world file (Gazebo only sets up contact sensors of models loaded with the world, not spawned ones). Topics in `/tmp/sim-gen/contact_topics.txt`; `sim/contact_monitor.py` logs touches; used by `tests/sim_benchmark.py` |
 
 ## Simulation differences
 
@@ -168,6 +169,7 @@ These are deliberate. They're listed so test results aren't over-read:
 | `sim/build_model.py` | Go2 + D1 → `go2_d1.urdf` + `sim_params.json` (stdlib only) |
 | `sim/sim_robot_bridge.py` | The "Jetson": robot topics + cmd_vel TCP server |
 | `sim/d1_arm_emulator.py` | The "D1 controller": JSON-over-DDS protocol → Gazebo joints |
+| `sim/contact_monitor.py` | With `SIM_CONTACTS=1`: logs every contact between the robot and anything but the floor (JSON lines), for `tests/sim_benchmark.py` |
 | `sim/bridge.yaml` | `ros_gz_bridge` topic map |
 | `worlds/agri_field.sdf` | 12 × 8 m field, three planted beds, walls, crates |
 | `worlds/agri_rooms.sdf` | Generated: the field + a 12 × 7 m building through a doorway in the field's north wall. A 2 m corridor, three 4 × 5 m rooms with 1.2 m doors (room 2 ↔ 3 too), crates, a workbench, an alcove. 1.2 m walls hide each room until the robot looks in |

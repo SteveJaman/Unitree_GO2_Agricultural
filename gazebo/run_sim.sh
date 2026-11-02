@@ -30,6 +30,7 @@
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
 #   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
 #   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
+#   SIM_CONTACTS=1        contact sensors on every robot link (tests/sim_benchmark.py)
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match
@@ -191,7 +192,7 @@ cmd_up() {
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
         -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
         -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
-        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" \
+        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" -e SIM_CONTACTS="${SIM_CONTACTS:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" \

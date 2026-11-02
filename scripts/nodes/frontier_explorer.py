@@ -1329,10 +1329,15 @@ class FrontierExplorer(Node):
             stack = [(x0, y0)]
             cluster_pts = []
             used[y0, x0] = True
+            # 8-connected: lidar rays seen through a doorway at an angle leave
+            # diagonal streaks of free cells, whose frontier cells touch only
+            # at corners. 4-connected, they broke into clusters under
+            # min_frontier_size and a half-seen room counted as explored (sim
+            # benchmark, lab_office, 2026-11-01: N1 82 % mapped at "complete").
             while stack:
                 cx, cy = stack.pop()
                 cluster_pts.append((cx, cy))
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
                     nx, ny = cx + dx, cy + dy
                     if (0 <= nx < grid.shape[1] and 0 <= ny < grid.shape[0]
                             and frontier_mask[ny, nx] and not used[ny, nx]):

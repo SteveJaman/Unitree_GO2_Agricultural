@@ -264,6 +264,34 @@ other room was mapped from the corridor and doorways.*
 - **Coverage counts known cells,** not how well they were seen. Costmap
   inflation (0.55 m) hides small gaps.
 
+## Automated benchmark (tests/sim_benchmark.py)
+
+One command runs an unattended exploration in this world with real Gazebo
+contact detection on every robot link (body, legs, head, D1 arm;
+`SIM_CONTACTS=1`) and prints `SCORE: X/100`: −10 per collision with a wall
+or piece of furniture, −5 per room under 90 % mapped.
+
+```bash
+python3 tests/sim_benchmark.py              # --drive hybrid (default), up to 300 simulated s
+```
+
+| Date | Explorer | Runs (hybrid) | Scores | Collisions |
+|---|---|---|---|---|
+| 2026-11-01 | as before | 3 | 100, 95, 95 | 0 |
+| 2026-11-01 | 8-connected frontier clusters | 3 | 100, 100, 100 | 0 |
+
+The two 95s lost 5 points each for the open office: only 82 % mapped when
+the explorer reported "complete". The rays it had seen through the doorway
+at an angle left diagonal streaks of free cells; their frontier cells touch
+only at corners, so the explorer's 4-connected grouping split them into
+pieces under `min_frontier_size` (4 cells) and found **no** frontier.
+Replaying its detection on the saved maps: 0 frontiers as before, 2–3 in the
+open office with 8-connected grouping. The explorer now groups frontier
+cells 8-connected, the usual choice (`explore_lite` does the same).
+Exploring takes longer (98–132 s instead of 50–75 s) because it no longer
+skips those pockets. No Nav2 or costmap setting needed changing: no run
+touched a table leg, chair or wall.
+
 ## Found along the way
 
 - **Mapped areas had been reported 4× too large.** `analyze.py` turned cell

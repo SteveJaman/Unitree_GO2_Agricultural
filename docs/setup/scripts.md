@@ -63,6 +63,7 @@ of anything left to fix (exit 1).
 |---|---|
 | [`auto_walk.sh`](../../scripts/tools/auto_walk.sh) | Scripted 1 m square patrol via `/goal_pose` — proof the motion path works |
 | [`test_goal_cli.sh`](../../tests/test_goal_cli.sh) | Publish a single `PoseStamped` goal from the CLI |
+| [`sim_benchmark.py`](../../tests/sim_benchmark.py) | Automated exploration benchmark in the Gazebo `lab_office` world: explores up to 5 simulated minutes, records every Gazebo contact between the dog (body, legs, arm) and the furniture or walls, scores 100 − 10 per collision − 5 per room under 90 % mapped, prints `SCORE: X/100` with the cause of each deduction (`--drive`, `--sim-seconds`) |
 | [`test_explore.sh`](../../tests/test_explore.sh) | Diagnose the explorer without the RViz button |
 | [`ros_shell.sh`](../../scripts/tools/ros_shell.sh) | ROS 2 shell in `go2-lidar3d` (or `go2-sim`) on the stack's DDS settings, so `ros2 topic list` sees its topics; also runs one command |
 | [`preflight.sh`](../../scripts/tools/preflight.sh) | Layered verification: container, DDS, packages, nodes, topics, TF |
