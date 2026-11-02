@@ -19,7 +19,7 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | You give | Joint angles in degrees (`joint 1 30`, `joints …`), or poses taught by hand | Where the **gripper** should be: a position and orientation in space |
 | Who works out the joints | You do | MoveIt: inverse kinematics (KDL), then a collision-free path (OMPL) |
 | Collisions | Only the joint limits are checked: it can hit the dog or a plant | Plans around the Go2's body and the objects in the planning scene |
-| Drives | **The real arm**: wired, or over Wi-Fi through the Go2 | The real arm (with --real), mock hardware (RViz), or Gazebo (with --gazebo) |
+| Drives | **The real arm**: wired, or over Wi-Fi through the Go2 | The real arm (with `--real`), mock hardware (RViz), or Gazebo (with `--gazebo`) |
 | Use it for | Bring-up, calibration, fold, Teach & Playback scans | Designing scan viewpoints around a plant, checking reach, planning |
 
 Direct control is what moves the real arm today. MoveIt is the planning side:
@@ -45,8 +45,9 @@ anything?". Connecting it to the real arm is the open step (see
 | `scripts/nodes/direct_test_movement.py` | Small safe movement test (needs `d1_arm_control.py` alongside) |
 | `scripts/robot/arm_bridge_wifi.{sh,py}` | **On the robot:** the arm (plugged into the Go2) ↔ laptop over Wi-Fi, TCP 18100 |
 | `scripts/robot/unitree_arm/` | One-message ROS 2 package (`ArmString`) the bridge is built with on the robot |
-| `scripts/runtime/arm_moveit.sh` | **MoveIt 2:** builds the MoveIt package and the D1 description, starts RViz + `move_group` on mock hardware; `--inspect` runs the plant-inspection demo |
+| `scripts/runtime/arm_moveit.sh` | **MoveIt 2:** builds the MoveIt package and the D1 description, starts RViz + `move_group`; `--real` uses the hardware bridge, `--inspect` runs the plant-inspection demo |
 | `src/d1_moveit_config/` | MoveIt 2 config for the D1-550 on the Go2: URDF + SRDF, kinematics, joint limits, controllers, launch, `inspect_plant.py` |
+| `scripts/nodes/moveit_d1_bridge.py` | **Hardware Bridge:** Translates MoveIt trajectories (radians) into D1 DDS JSON commands (degrees) using the `d1_motion.py` smoothing. |
 
 `./scripts/runtime/wifi_nav.sh --arm` runs `start_arm.sh fold` in the
 background, alongside navigation; `--arm-wifi` does the same with the arm
@@ -596,8 +597,8 @@ used here, so a ±90° target is clamped by 0.05°. See [docs/simulation/gazebo.
 the D1-550 on the Go2's back. Instead of joint angles, you give MoveIt a target
 for the gripper (a position and an orientation in space). MoveIt solves the
 inverse kinematics and plans a collision-free motion to it. It can run on mock hardware 
-(the arm moves in RViz only), Gazebo (for simulation), or the real arm (with --real). 
-The --realflag launchesmoveit_d1_bridge.py, which translates MoveIt's trajectories into 
+(the arm moves in RViz only), Gazebo (for simulation), or the real arm (with `--real`). 
+The `--real` flag launches `moveit_d1_bridge.py`, which translates MoveIt's trajectories into 
 D1 DDS JSON commands and streams them at 50 Hz with min-jerk smoothing to prevent wrist wobble.
 
 ### Install and run
@@ -612,6 +613,7 @@ git clone https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM ~/files
 ```bash
 ./scripts/runtime/arm_moveit.sh              # build if needed, then RViz + MoveIt
 ./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
+./scripts/runtime/arm_moveit.sh --real       # real arm: bridge + 3-point inspect
 ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
 ./scripts/runtime/arm_moveit.sh --no-rviz    # headless (move_group + controllers only)
 ```
@@ -708,6 +710,7 @@ firmware (the URDF's `Joint1` axis is −z).
 | [`moveit_controllers.yaml`](../../src/d1_moveit_config/config/moveit_controllers.yaml), [`ros2_controllers.yaml`](../../src/d1_moveit_config/config/ros2_controllers.yaml) | `FollowJointTrajectory` controllers for the arm and gripper |
 | [`demo.launch.py`](../../src/d1_moveit_config/launch/demo.launch.py) | MoveIt demo launch (OMPL pipeline) |
 | [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py) | Plant-inspection demo |
+| `moveit_d1_bridge.py` | The hardware bridge for `--real` |
 
 ### Plant-inspection demo (`--inspect`)
 
@@ -750,19 +753,15 @@ workspace (earlier trials showed ±50° pushing the limits at this standoff).
 
 ### From plan to the real arm
 
-Not done yet. MoveIt's trajectories need to reach the D1 as JSON commands
-(funcode 2, all joints, degrees). Either:
+**Implemented (pending physical test).** The `--real` flag bridges MoveIt's planning to the physical D1 arm using `scripts/nodes/moveit_d1_bridge.py`. 
 
-- **A ros2_control hardware plugin** in place of `mock_components/GenericSystem`
-  in `d1_go2.ros2_control.xacro`, writing positions to `rt/arm_Command` and
-  reading `rt/arm_Feedback`; or
-- **A `FollowJointTrajectory` bridge** that takes the `arm_controller`
-  trajectory and streams it through `D1Arm` (`d1_arm_control.py`), so it would
-  also work over Wi-Fi.
+It acts as a `FollowJointTrajectory` action server. When MoveIt sends a planned trajectory, the bridge:
+1. Converts the radians to degrees.
+2. Buffers the waypoints.
+3. Streams them to the D1 arm at 50 Hz using the `d1_motion.py` minimum-jerk smoothing (preventing the wrist wobble that occurs when MoveIt's raw waypoints are sent directly).
+4. Publishes the real arm's `/joint_states` back to MoveIt so the planning scene stays accurate.
 
-Before that, check the joint signs and zero offsets against the firmware
-(`start_arm.sh feedback` at known poses), and keep MoveIt's velocity scaling
-low: the arm is on a walking robot.
+Before the first physical run, verify the joint signs and zero offsets against the firmware (`start_arm.sh feedback` at known poses).
 
 ## Troubleshooting
 
@@ -793,9 +792,9 @@ low: the arm is on a walking robot.
 | 2. ROS 2 bridge node | Subscribe to `/arm/command` instead of the raw script | Pending |
 | 2b. Arm on the Go2 over Wi-Fi | Robot-side TCP bridge, `--robot` / `--arm-wifi` | Verified on the robot (2026-10-27): state, `joint`, `home`, `fold` over Wi-Fi; `power 0` open |
 | 3. RViz panel | Slider per joint, alongside the explorer panel | Pending |
-| 3b. MoveIt 2 planning | Cartesian goals, collision-free plans around the Go2 and the plant (`arm_moveit.sh`) | Implemented on mock hardware (pending physical test); real-arm bridge pending |
+| 3b. MoveIt 2 planning | Cartesian goals, collision-free plans around the Go2 and the plant (`arm_moveit.sh`) | Implemented; **real-arm bridge built (`moveit_d1_bridge.py`, pending physical test)** |
 | 4. Camera mount | 3D-printed attachment for the hyperspectral camera | Hardware |
-| 5. Scan routine | Move the camera through a plant-scanning path | Teach & Playback on the real arm; `inspect_plant.py` viewpoints in MoveIt |
+| 5. Scan routine | Move the camera through a plant-scanning path | Teach & Playback on the real arm; `inspect_plant.py` 3-point scan in MoveIt |
 | 6. AI autonomy | Model commands both the dog and the arm | Long-term |
 
 See [docs/roadmap.md](../roadmap.md) for the overall project roadmap.
