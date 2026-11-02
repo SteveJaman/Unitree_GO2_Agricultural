@@ -19,7 +19,7 @@ Do not use `--peer` (unicast): it breaks discovery on this arm's firmware.
 | You give | Joint angles in degrees (`joint 1 30`, `joints …`), or poses taught by hand | Where the **gripper** should be: a position and orientation in space |
 | Who works out the joints | You do | MoveIt: inverse kinematics (KDL), then a collision-free path (OMPL) |
 | Collisions | Only the joint limits are checked: it can hit the dog or a plant | Plans around the Go2's body and the objects in the planning scene |
-| Drives | **The real arm**: wired, or over Wi-Fi through the Go2 | **Mock hardware only** for now: the arm moves in RViz, not for real |
+| Drives | **The real arm**: wired, or over Wi-Fi through the Go2 | The real arm (with --real), mock hardware (RViz), or Gazebo (with --gazebo) |
 | Use it for | Bring-up, calibration, fold, Teach & Playback scans | Designing scan viewpoints around a plant, checking reach, planning |
 
 Direct control is what moves the real arm today. MoveIt is the planning side:
@@ -595,10 +595,10 @@ used here, so a ±90° target is clamped by 0.05°. See [docs/simulation/gazebo.
 [`src/d1_moveit_config`](../../src/d1_moveit_config/) is a MoveIt 2 setup for
 the D1-550 on the Go2's back. Instead of joint angles, you give MoveIt a target
 for the gripper (a position and an orientation in space). MoveIt solves the
-inverse kinematics and plans a collision-free motion to it. It runs on
-ros2_control **mock hardware**: commanded positions are echoed back as the
-state, so the arm moves in RViz exactly as planned, and the real arm is never
-touched.
+inverse kinematics and plans a collision-free motion to it. It can run on mock hardware 
+(the arm moves in RViz only), Gazebo (for simulation), or the real arm (with --real). 
+The --realflag launchesmoveit_d1_bridge.py, which translates MoveIt's trajectories into 
+D1 DDS JSON commands and streams them at 50 Hz with min-jerk smoothing to prevent wrist wobble.
 
 ### Install and run
 
