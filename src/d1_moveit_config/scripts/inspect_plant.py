@@ -108,7 +108,7 @@ class InspectPlant(Node):
     def __init__(self):
         super().__init__('inspect_plant')
         d = self.declare_parameter
-        d('plant_x', 0.10)
+        d('plant_x', -0.40)
         d('plant_y', -0.50)
         d('bed_height', 0.30)
         d('canopy_radius', 0.17)

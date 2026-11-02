@@ -52,9 +52,11 @@
   <!-- The arm: the D1-550 description, gripper or not (config/d1_550_arm.xacro) -->
   <xacro:include filename="$(find d1_moveit_config)/config/d1_550_arm.xacro"/>
   <xacro:d1_550_arm end_effector="${end_effector}"/>
+  
+  <!-- FIXED: Rotated 180 degrees (yaw = PI) so the arm faces the BACK of the dog -->
   <joint name="go2_to_d1" type="fixed">
     <parent link="go2_trunk"/><child link="base_link"/>
-    <origin xyz="0 0 0.057" rpy="0 0 0"/>
+    <origin xyz="0 0 0.057" rpy="0 0 3.14159"/>
   </joint>
 
   <xacro:if value="${end_effector == 'gripper'}">
