@@ -65,7 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- 3. librealsense from source, RSUSB backend --------------------------------
 # FORCE_RSUSB_BACKEND talks to the camera through libusb from user space, so the
 # Jetson kernel needs no RealSense patches and the host needs no udev rules.
-# IMPORT_DEPTH_CAM_FW=OFF and CHECK_FOR_UPDATES=OFF: no downloads at cmake time.
+# IMPORT_DEPTH_CAM_FW=OFF and CHECK_FOR_UPDATES=OFF: no downloads at cmake time;
+# BUILD_WITH_TM2=OFF (T265 only) is required once the firmware import is off.
 RUN git clone --depth 1 --branch "v${LIBREALSENSE_VERSION}" \
         https://github.com/IntelRealSense/librealsense.git /tmp/librealsense \
     && cmake -S /tmp/librealsense -B /tmp/librealsense/build \
@@ -80,6 +81,7 @@ RUN git clone --depth 1 --branch "v${LIBREALSENSE_VERSION}" \
         -DBUILD_PYTHON_BINDINGS=OFF \
         -DBUILD_UNIT_TESTS=OFF \
         -DIMPORT_DEPTH_CAM_FW=OFF \
+        -DBUILD_WITH_TM2=OFF \
         -DCHECK_FOR_UPDATES=OFF \
     && cmake --build /tmp/librealsense/build -j"${BUILD_JOBS}" \
     && cmake --install /tmp/librealsense/build \
