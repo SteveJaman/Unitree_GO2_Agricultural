@@ -171,6 +171,10 @@ Parameters: [explorer.md](explorer.md#parameters).
 
 ## Sim results (2026-10-28)
 
+> **Newer, in a furnished indoor lab:** [lab_office.md](../simulation/lab_office.md)
+> (2026-11-01, hybrid vs omni, mapping and an 8-goal navigation tour): hybrid
+> reached 22/24 goals vs 15/24, in about two-thirds of the time.
+
 **Setup.**
 
 - World: `agri_rooms` (a crop field, a corridor, three rooms), spawn
@@ -185,7 +189,7 @@ Parameters: [explorer.md](explorer.md#parameters).
 |---|---|---|---|
 | Time to "complete" | 206 s | 233 s | **299 s** |
 | Rooms walked into (of 3) | **3.0** | 2.7 | 1.7 |
-| Mapped area | 822 m² | 818 m² | 760 m² |
+| Mapped area (corrected, see below) | 206 m² | 205 m² | 190 m² |
 | Distance walked | 32 m | 39 m | 36 m |
 | Time standing still | 13 % | 16 % | 31 % |
 | Goals sent / reached | 9.3 / 1.3 | 11.0 / 1.0 | 9.0 / 2.0 |
@@ -205,21 +209,28 @@ dog arrives.
 
 | Trial | Time s | Rooms walked into | Area m² | Dist m | Still % | Goals | Reached | Dropped early | Aborts | Rec. retries | Rec. blocked | No progress | Fwd % | Rev % | Side % |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| diff1 | 196 | 1 2 3 | 827 | 31.0 | 12 | 7 | 0 | 6 | 1 | 1 | 0 | 0 | 95 | 1 | 0 |
-| diff2 | 232 | 1 2 3 | 825 | 35.1 | 15 | 9 | 1 | 7 | 6 | 5 | 0 | 0 | 90 | 7 | 0 |
-| diff3 | 190 | 1 2 3 | 813 | 30.7 | 12 | 12 | 3 | 6 | 0 | 0 | 0 | 0 | 91 | 0 | 0 |
-| hybrid1 | 215 | 1 2 3 | 826 | 33.6 | 16 | 11 | 2 | 6 | 5 | 4 | 0 | 0 | 86 | 3 | 1 |
-| hybrid2 | 264 | 1 2 3 | 819 | 41.9 | 21 | 12 | 1 | 5 | 7 | 4 | 3 | 0 | 89 | 2 | 1 |
-| hybrid3 | 219 | 2 3 | 810 | 40.5 | 11 | 10 | 0 | 9 | 3 | 3 | 0 | 0 | 96 | 0 | 2 |
-| omni1 | 367 | 1 2 | 810 | 53.0 | 12 | 10 | 2 | 6 | 0 | 0 | 0 | 1 | 60 | 14 | 25 |
-| omni2 | 309 | 2 3 | 803 | 38.5 | 18 | 8 | 1 | 5 | 0 | 0 | 0 | 1 | 31 | 29 | 37 |
-| omni3 | 221 | 1 | 668 | 15.9 | 63 | 9 | 3 | 3 | 0 | 0 | 0 | 3 | 60 | 26 | 14 |
+| diff1 | 196 | 1 2 3 | 207 | 31.0 | 12 | 7 | 0 | 6 | 1 | 1 | 0 | 0 | 95 | 1 | 0 |
+| diff2 | 232 | 1 2 3 | 206 | 35.1 | 15 | 9 | 1 | 7 | 6 | 5 | 0 | 0 | 90 | 7 | 0 |
+| diff3 | 190 | 1 2 3 | 203 | 30.7 | 12 | 12 | 3 | 6 | 0 | 0 | 0 | 0 | 91 | 0 | 0 |
+| hybrid1 | 215 | 1 2 3 | 206 | 33.6 | 16 | 11 | 2 | 6 | 5 | 4 | 0 | 0 | 86 | 3 | 1 |
+| hybrid2 | 264 | 1 2 3 | 205 | 41.9 | 21 | 12 | 1 | 5 | 7 | 4 | 3 | 0 | 89 | 2 | 1 |
+| hybrid3 | 219 | 2 3 | 202 | 40.5 | 11 | 10 | 0 | 9 | 3 | 3 | 0 | 0 | 96 | 0 | 2 |
+| omni1 | 367 | 1 2 | 202 | 53.0 | 12 | 10 | 2 | 6 | 0 | 0 | 0 | 1 | 60 | 14 | 25 |
+| omni2 | 309 | 2 3 | 201 | 38.5 | 18 | 8 | 1 | 5 | 0 | 0 | 0 | 1 | 31 | 29 | 37 |
+| omni3 | 221 | 1 | 167 | 15.9 | 63 | 9 | 3 | 3 | 0 | 0 | 0 | 3 | 60 | 26 | 14 |
 
 - **omni3** stalled: the dog stood still 63 % of the time, three goals were
   dropped for no progress, and the explorer then reported a false "complete"
   with room 2 and room 3 unmapped.
 - **hybrid3** mapped room 1 from its doorway without walking in, so "rooms
   walked into" is 2 while the map has all three.
+- **Areas corrected on 2026-11-01.** They were first converted from cell
+  counts with 0.1 m cells, but the global costmap uses 0.05 m cells, so the
+  published areas (822 / 818 / 760 m² and the per-trial column) were 4 times
+  too large. `analyze.py` now reads the cell size from the saved costmap. The
+  site is 12 × 15 m (180 m²); the rest is wall inflation around it. Nothing
+  else in these tables changes. The "Mapped area over time" plot below still
+  has the old y scale (divide by 4): its raw trials are not kept.
 - The costmap was not saved for diff1, diff2 and omni1 (a logger bug, fixed
   before the other trials). Their area comes from the explorer log, and the
   path plots use another trial's map as background.
@@ -291,9 +302,10 @@ The tools are in [`scripts/tools/nav_compare/`](../../scripts/tools/nav_compare/
 
 | Tool | What it does |
 |---|---|
-| `record.sh start NAME --drive X` / `record.sh stop NAME` | Logs one trial of a running session (sim or real dog): pose (5 Hz), every `/cmd_vel`, the final costmap, the explorer and recovery logs |
-| `sim_trial.sh NAME --drive X` | One unattended sim trial: starts the session, presses Auto Explore, records, stops at "complete" or `LIMIT` s (default 600) |
-| `run_analysis.sh --out DIR [--rooms agri_rooms] TRIAL...` | Metrics table and plots. Uses the `go2-3d:local` image if the host matplotlib is broken |
+| `record.sh start NAME --drive X` / `record.sh stop NAME` | Logs one trial of a running session (sim or real dog): pose (5 Hz), every `/cmd_vel`, the final costmap, the explorer and recovery logs. `record.sh snapshot NAME` also saves the costmap as it is now |
+| `sim_trial.sh NAME --drive X` | One unattended sim trial: starts the session, presses Auto Explore, records, stops at "complete" or `LIMIT` s (default 600). `SIM_WORLD` picks the world; when the world's JSON has a tour (`lab_office`), it then drives it (`nav_tour.py`) |
+| `nav_tour.py` | Runs in `go2-lidar3d`: sends one goal per room on `/goal_pose` and logs reached / timeout / stuck, time, path and Nav2 aborts per leg (`tour.csv`) |
+| `run_analysis.sh --out DIR [--rooms agri_rooms\|lab_office] TRIAL...` | Metrics table, `stats.md` (mean ± SD) and plots. With `lab_office` also ground-truth coverage per room, clearance to the furniture, and tour success / SPL. Uses the `go2-3d:local` image if the host matplotlib is broken |
 
 Trials go to `~/files/go2-nav2-wifi/ws/log/nav_compare/NAME/` (set
 `NAV_COMPARE_DIR` to change).

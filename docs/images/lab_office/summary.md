@@ -1,0 +1,17 @@
+# Trial summary (analyze.py)
+
+One row per trial, then the mean per drive mode.
+
+| name | drive | duration_s | finished | rooms_entered | rooms | area_m2 | distance_m | still_pct | goals | reached | dropped_early | nav2_aborts | recovery_retries | recovery_moves | recovery_blocked | no_progress | timeouts | wall_drops | cmd_forward_pct | cmd_turn_pct | cmd_reverse_pct | cmd_sidestep_pct | cmd_sideways_drift_pct | coverage_pct | rooms_mapped | t90_s | explore_min_clear_m | explore_contacts | explore_near_s | tour_reached | tour_goals | tour_time_s | tour_leg_s | tour_eff | tour_spl | tour_aborts | tour_min_clear_m | tour_contacts | tour_near_s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lab_hybrid1 | hybrid | 124.0 | True | 1 | S3 | 171.5 | 21.7 | 10.0 | 9 | 0 | 7 | 0 | 0 | 1 | 1 | 0 | 0 | 2 | 81.0 | 19.0 | 0.0 | 0.0 | 0.0 | 100.0 | 7 | 87.0 | 0.2 | 0 | 0.0 | 6 | 8 | 296.0 | 32.7 | 0.95 | 0.71 | 3 | 0.15 | 0 | 0.0 |
+| lab_hybrid2 | hybrid | 79.0 | True | 1 | N1 | 171.1 | 12.5 | 11.0 | 6 | 1 | 5 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 74.0 | 26.0 | 0.0 | 0.0 | 0.0 | 100.0 | 7 | 75.0 | 0.19 | 0 | 0.0 | 8 | 8 | 308.0 | 38.5 | 0.88 | 0.88 | 5 | 0.11 | 0 | 0.0 |
+| lab_hybrid3 | hybrid | 117.0 | True | 0 |  | 172.2 | 17.9 | 11.0 | 8 | 0 | 8 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 80.0 | 20.0 | 0.0 | 0.0 | 0.0 | 100.0 | 7 | 104.0 | 0.14 | 0 | 0.0 | 8 | 8 | 322.0 | 40.3 | 0.92 | 0.91 | 4 | 0.04 | 0 | 7.0 |
+| lab_omni1 | omni | 245.0 | True | 1 | N1 | 167.4 | 33.0 | 29.0 | 12 | 4 | 5 | 0 | 0 | 3 | 1 | 3 | 0 | 0 | 32.0 | 0.0 | 25.0 | 43.0 | 85.0 | 100.0 | 7 | 100.0 | 0.1 | 0 | 0.0 | 5 | 8 | 429.0 | 47.0 | 0.76 | 0.51 | 4 | 0.11 | 0 | 0.0 |
+| lab_omni2 | omni | 205.0 | True | 2 | S2 S3 | 167.5 | 25.1 | 35.0 | 15 | 5 | 5 | 0 | 0 | 7 | 0 | 2 | 0 | 3 | 45.0 | 0.0 | 24.0 | 31.0 | 81.0 | 99.0 | 7 | 152.0 | 0.12 | 0 | 0.0 | 4 | 8 | 572.0 | 60.3 | 0.88 | 0.44 | 7 | 0.13 | 0 | 0.0 |
+| lab_omni3 | omni | 150.0 | True | 1 | S1 | 159.2 | 28.3 | 5.0 | 7 | 4 | 3 | 1 | 1 | 6 | 1 | 0 | 0 | 0 | 52.0 | 0.0 | 38.0 | 10.0 | 83.0 | 95.0 | 6 | 100.0 | 0.13 | 0 | 0.0 | 6 | 8 | 548.0 | 62.7 | 0.92 | 0.69 | 6 | -0.06 | 1 | 3.0 |
+
+| drive | trials | duration_s | finished | rooms_entered | rooms | area_m2 | distance_m | still_pct | goals | reached | dropped_early | nav2_aborts | recovery_retries | recovery_moves | recovery_blocked | no_progress | timeouts | wall_drops | cmd_forward_pct | cmd_turn_pct | cmd_reverse_pct | cmd_sidestep_pct | cmd_sideways_drift_pct | coverage_pct | rooms_mapped | t90_s | explore_min_clear_m | explore_contacts | explore_near_s | tour_reached | tour_goals | tour_time_s | tour_leg_s | tour_eff | tour_spl | tour_aborts | tour_min_clear_m | tour_contacts | tour_near_s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hybrid | 3 | 106.7 | 1.0 | 0.7 |  | 171.6 | 17.4 | 10.7 | 7.7 | 0.3 | 6.7 | 0.0 | 0.0 | 3.3 | 0.3 | 0.0 | 0.0 | 0.7 | 78.3 | 21.7 | 0.0 | 0.0 | 0.0 | 100.0 | 7.0 | 88.7 | 0.2 | 0.0 | 0.0 | 7.3 | 8.0 | 308.7 | 37.2 | 0.9 | 0.8 | 4.0 | 0.1 | 0.0 | 2.3 |
+| omni | 3 | 200.0 | 1.0 | 1.3 |  | 164.7 | 28.8 | 23.0 | 11.3 | 4.3 | 4.3 | 0.3 | 0.3 | 5.3 | 0.7 | 1.7 | 0.0 | 1.0 | 43.0 | 0.0 | 29.0 | 28.0 | 83.0 | 98.0 | 6.7 | 117.3 | 0.1 | 0.0 | 0.0 | 5.0 | 8.0 | 516.3 | 56.7 | 0.9 | 0.5 | 5.7 | 0.1 | 0.3 | 1.0 |

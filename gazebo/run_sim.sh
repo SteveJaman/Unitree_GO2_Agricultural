@@ -25,7 +25,8 @@
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black)
 #   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the old 4-core VM)
 #   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halved the sim speed on the old 4-core VM
-#   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only)
+#   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only,
+#                         lab_office = indoor lab with furniture: SIM_SPAWN default fits it)
 #   SIM_SPAWN="-4.5 0 0"  SIM_D1_MOUNT="0 0 0.057 0 0 0"  SIM_TIMEOUT=240
 #   SIM_SENSOR_FROM_BASE="x y z qx qy qz qw"  (default: read from go2-nav2-wifi lidar3d_robot_viz.yaml)
 #   SIM_DRIFT_YAW=0.02 SIM_DRIFT_SCALE=0.03  odometry drift for testing (default 0 = ground truth)
@@ -151,6 +152,9 @@ cmd_up() {
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image ${IMAGE} missing: run ./gazebo/setup_gazebo.sh"
     [ -d "$GZ_DIR/models/go2_description" ] && [ -d "$GZ_DIR/models/d1_description" ] \
         || die "models missing: run ./gazebo/setup_gazebo.sh"
+    if grep -q "model://" "$GZ_DIR/worlds/${SIM_WORLD:-agri_rooms}.sdf" 2>/dev/null && [ ! -d "$GZ_DIR/models/furniture" ]; then
+        die "world ${SIM_WORLD} needs the furniture models: run ./gazebo/setup_gazebo.sh --furniture"
+    fi
     if sim_running; then
         echo "[sim] ${NAME} already running"
         return 0

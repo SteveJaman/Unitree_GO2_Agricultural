@@ -5,6 +5,10 @@
 #   1. Downloads the official Unitree models into gazebo/models/ (not in git):
 #        go2_description  unitreerobotics/unitree_ros (BSD-3-Clause), pinned commit
 #        d1_description   Unitree D1 gripper-version package, sha256-checked
+#        furniture/       desks, chairs, tables, shelves for the lab_office world:
+#                         3DGEMS models from the Gazebo Models & Worlds Collection
+#                         (leonhartyao/gazebo_models_worlds_collection, GPL-3.0), pinned commit;
+#                         the list is worlds/lab_office.json "models"
 #   2. Builds the go2-sim:local image (ROS 2 Humble + Gazebo Harmonic).
 #   3. Validates the combined model with Gazebo's own URDF->SDF converter.
 #
@@ -12,6 +16,7 @@
 #   ./gazebo/setup_gazebo.sh              # everything
 #   ./gazebo/setup_gazebo.sh --models     # downloads only
 #   ./gazebo/setup_gazebo.sh --image      # image build + validation only
+#   ./gazebo/setup_gazebo.sh --furniture  # the lab_office furniture only
 #   ./gazebo/setup_gazebo.sh --force      # re-download models
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -24,11 +29,14 @@ UNITREE_ROS_URL="https://github.com/unitreerobotics/unitree_ros.git"
 UNITREE_ROS_COMMIT="5994d4faef0a9cadd3287f8de0199a67eeb2a259"   # 2026-09-30
 D1_URL="https://oss-global-cdn.unitree.com/static/90b2525be5d84531ab9814f48b2f86a7.zip"
 D1_SHA256="76cbe7725b1640cf214a6aa97e27d995c33ad5e4a4e7f29d57ec7ff7346a7164"
+FURNITURE_URL="https://github.com/leonhartyao/gazebo_models_worlds_collection.git"
+FURNITURE_COMMIT="cce115b82691b7c529a02f47e5efa391145a4ca1"   # 2020-09-03
 
-DO_MODELS=1; DO_IMAGE=1; FORCE=0
+DO_MODELS=1; DO_IMAGE=1; DO_FURNITURE=1; FORCE=0
 for a in "$@"; do
     case "$a" in
         --models) DO_IMAGE=0 ;;
+        --furniture) DO_MODELS=0; DO_IMAGE=0 ;;
         --image)  DO_MODELS=0 ;;
         --force)  FORCE=1 ;;
         -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
@@ -89,6 +97,36 @@ if [ "$DO_MODELS" = 1 ]; then
     python3 "$GZ_DIR/sim/build_model.py" --out "$(mktemp -d)"
 fi
 
+if [ "$DO_FURNITURE" = 1 ]; then
+    step "Lab furniture (gazebo_models_worlds_collection @ ${FURNITURE_COMMIT:0:7})"
+    mapfile -t FURN < <(python3 -c 'import json, sys; print(*json.load(open(sys.argv[1]))["models"], sep="\n")' \
+        "$GZ_DIR/worlds/lab_office.json")
+    missing=()
+    for m in "${FURN[@]}"; do
+        [ -f "$MODELS/furniture/$m/model.sdf" ] && [ "$FORCE" = 0 ] || missing+=("$m")
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        echo "present: $MODELS/furniture (${#FURN[@]} models)"
+    else
+        tmp="$(mktemp -d)"
+        git init -q "$tmp"
+        git -C "$tmp" remote add origin "$FURNITURE_URL"
+        git -C "$tmp" config core.sparseCheckout true
+        { echo /LICENSE; for m in "${missing[@]}"; do echo "/models/$m/"; done; } > "$tmp/.git/info/sparse-checkout"
+        git -C "$tmp" fetch -q --depth 1 --filter=blob:none origin "$FURNITURE_COMMIT"
+        git -C "$tmp" checkout -q FETCH_HEAD
+        mkdir -p "$MODELS/furniture"
+        for m in "${missing[@]}"; do
+            [ -f "$tmp/models/$m/model.sdf" ] || die "furniture model $m missing in download"
+            rm -rf "${MODELS:?}/furniture/$m"
+            cp -r "$tmp/models/$m" "$MODELS/furniture/"
+        done
+        cp "$tmp/LICENSE" "$MODELS/furniture/LICENSE.gazebo_models_worlds_collection"
+        rm -rf "$tmp"
+        echo "installed: ${missing[*]} -> $MODELS/furniture"
+    fi
+fi
+
 if [ "$DO_IMAGE" = 1 ]; then
     [ -d "$MODELS/go2_description" ] && [ -d "$MODELS/d1_description" ] || die "models missing; run without --image first"
 
@@ -104,6 +142,9 @@ if [ "$DO_IMAGE" = 1 ]; then
         gz sdf -k /tmp/gen/go2_d1.sdf
         echo "sensors: $(grep -c "<sensor " /tmp/gen/go2_d1.sdf)  plugins: $(grep -c "<plugin " /tmp/gen/go2_d1.sdf)  revolute+prismatic joints: $(grep -cE "<joint name=\"[^\"]*\" type=\"(revolute|prismatic)\"" /tmp/gen/go2_d1.sdf)"
         gz sdf -k /sim/worlds/agri_field.sdf
+        if [ -d /sim/models/furniture ]; then
+            GZ_SIM_RESOURCE_PATH=/sim/models/furniture SDF_PATH=/sim/models/furniture gz sdf -k /sim/worlds/lab_office.sdf
+        fi
         python3 -c "import gz.transport13, gz.msgs10, cyclonedds; print(\"python bindings: OK\")"
     '
 fi

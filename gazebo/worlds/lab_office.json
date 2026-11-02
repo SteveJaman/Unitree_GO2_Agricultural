@@ -1,0 +1,914 @@
+{
+ "world": "lab_office",
+ "generated_by": "gazebo/worlds/build_lab_world.py",
+ "bounds": [
+  -7.0,
+  7.0,
+  -5.5,
+  5.5
+ ],
+ "spawn": [
+  -4.5,
+  0.0,
+  0.0
+ ],
+ "free_area_m2": 115.5,
+ "rooms": {
+  "corridor": [
+   -7.0,
+   7.0,
+   -1.0,
+   1.0
+  ],
+  "N1 open office": [
+   -7.0,
+   -1.0,
+   1.0,
+   5.5
+  ],
+  "N2 lab": [
+   -1.0,
+   3.0,
+   1.0,
+   5.5
+  ],
+  "N3 conference": [
+   3.0,
+   7.0,
+   1.0,
+   5.5
+  ],
+  "S1 break room": [
+   -7.0,
+   -3.0,
+   -5.5,
+   -1.0
+  ],
+  "S2 storage": [
+   -3.0,
+   0.0,
+   -5.5,
+   -1.0
+  ],
+  "S3 workshop": [
+   0.0,
+   4.0,
+   -5.5,
+   -1.0
+  ],
+  "S4 office": [
+   4.0,
+   7.0,
+   -5.5,
+   -1.0
+  ]
+ },
+ "tour": [
+  {
+   "name": "N1 open office",
+   "x": -4.0,
+   "y": 3.55
+  },
+  {
+   "name": "N2 lab",
+   "x": 1.75,
+   "y": 3.6
+  },
+  {
+   "name": "N3 conference",
+   "x": 5.0,
+   "y": 1.7
+  },
+  {
+   "name": "S4 office",
+   "x": 5.0,
+   "y": -2.5
+  },
+  {
+   "name": "S3 workshop",
+   "x": 3.35,
+   "y": -3.6
+  },
+  {
+   "name": "S2 storage",
+   "x": -1.5,
+   "y": -3.2
+  },
+  {
+   "name": "S1 break room",
+   "x": -4.0,
+   "y": -3.3
+  },
+  {
+   "name": "start",
+   "x": -4.5,
+   "y": 0.0
+  }
+ ],
+ "obstacles": [
+  {
+   "name": "wall_0_0",
+   "kind": "wall",
+   "cx": 0.0,
+   "cy": 5.5,
+   "yaw": 0.0,
+   "sx": 14.1,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_1_0",
+   "kind": "wall",
+   "cx": 0.0,
+   "cy": -5.5,
+   "yaw": 0.0,
+   "sx": 14.1,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_2_0",
+   "kind": "wall",
+   "cx": -7.0,
+   "cy": 0.0,
+   "yaw": 1.5708,
+   "sx": 11.1,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_3_0",
+   "kind": "wall",
+   "cx": 7.0,
+   "cy": 0.0,
+   "yaw": 1.5708,
+   "sx": 11.1,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_4_0",
+   "kind": "wall",
+   "cx": -5.225,
+   "cy": 1.0,
+   "yaw": 0.0,
+   "sx": 3.65,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_4_1",
+   "kind": "wall",
+   "cx": -0.9,
+   "cy": 1.0,
+   "yaw": 0.0,
+   "sx": 2.6,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_4_2",
+   "kind": "wall",
+   "cx": 2.6,
+   "cy": 1.0,
+   "yaw": 0.0,
+   "sx": 2.0,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_4_3",
+   "kind": "wall",
+   "cx": 5.925,
+   "cy": 1.0,
+   "yaw": 0.0,
+   "sx": 2.25,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_5_0",
+   "kind": "wall",
+   "cx": -5.925,
+   "cy": -1.0,
+   "yaw": 0.0,
+   "sx": 2.25,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_5_1",
+   "kind": "wall",
+   "cx": -2.85,
+   "cy": -1.0,
+   "yaw": 0.0,
+   "sx": 1.5,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_5_2",
+   "kind": "wall",
+   "cx": 0.25,
+   "cy": -1.0,
+   "yaw": 0.0,
+   "sx": 2.3,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_5_3",
+   "kind": "wall",
+   "cx": 3.75,
+   "cy": -1.0,
+   "yaw": 0.0,
+   "sx": 2.3,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_5_4",
+   "kind": "wall",
+   "cx": 6.575,
+   "cy": -1.0,
+   "yaw": 0.0,
+   "sx": 0.95,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_6_0",
+   "kind": "wall",
+   "cx": -1.0,
+   "cy": 1.375,
+   "yaw": 1.5708,
+   "sx": 0.85,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_6_1",
+   "kind": "wall",
+   "cx": -1.0,
+   "cy": 4.175,
+   "yaw": 1.5708,
+   "sx": 2.75,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_7_0",
+   "kind": "wall",
+   "cx": 3.0,
+   "cy": 3.25,
+   "yaw": 1.5708,
+   "sx": 4.6,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_8_0",
+   "kind": "wall",
+   "cx": -3.0,
+   "cy": -3.25,
+   "yaw": 1.5708,
+   "sx": 4.6,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_9_0",
+   "kind": "wall",
+   "cx": 0.0,
+   "cy": -3.25,
+   "yaw": 1.5708,
+   "sx": 4.6,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "wall_10_0",
+   "kind": "wall",
+   "cx": 4.0,
+   "cy": -3.25,
+   "yaw": 1.5708,
+   "sx": 4.6,
+   "sy": 0.1,
+   "h": 2.7
+  },
+  {
+   "name": "desk_brown_1",
+   "kind": "desk_brown",
+   "room": "N1",
+   "cx": -6.0,
+   "cy": 5.03,
+   "yaw": 0.0,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "desk_yellow_1",
+   "kind": "desk_yellow",
+   "room": "N1",
+   "cx": -4.1,
+   "cy": 5.03,
+   "yaw": 0.0,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "chair_1_1",
+   "kind": "chair_1",
+   "room": "N1",
+   "cx": -6.0,
+   "cy": 4.3,
+   "yaw": 3.1416,
+   "sx": 0.54,
+   "sy": 0.48,
+   "h": 0.82
+  },
+  {
+   "name": "chair_1_2",
+   "kind": "chair_1",
+   "room": "N1",
+   "cx": -4.1,
+   "cy": 4.3,
+   "yaw": 3.1416,
+   "sx": 0.54,
+   "sy": 0.48,
+   "h": 0.82
+  },
+  {
+   "name": "desk_brown_2",
+   "kind": "desk_brown",
+   "room": "N1",
+   "cx": -2.0,
+   "cy": 5.03,
+   "yaw": 0.0,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "chair_1_3",
+   "kind": "chair_1",
+   "room": "N1",
+   "cx": -2.0,
+   "cy": 4.3,
+   "yaw": 3.1416,
+   "sx": 0.54,
+   "sy": 0.48,
+   "h": 0.82
+  },
+  {
+   "name": "desk_yellow_2",
+   "kind": "desk_yellow",
+   "room": "N1",
+   "cx": -5.3,
+   "cy": 2.6,
+   "yaw": 0.0,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "chair_2_1",
+   "kind": "chair_2",
+   "room": "N1",
+   "cx": -5.3,
+   "cy": 1.9,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "bookshelf_large_1",
+   "kind": "bookshelf_large",
+   "room": "N1",
+   "cx": -6.73,
+   "cy": 3.5,
+   "yaw": 1.5708,
+   "sx": 1.66,
+   "sy": 0.42,
+   "h": 1.84
+  },
+  {
+   "name": "trash_bin_1",
+   "kind": "trash_bin",
+   "room": "N1",
+   "cx": -1.3,
+   "cy": 1.3,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "table_conference_2_1",
+   "kind": "table_conference_2",
+   "room": "N2",
+   "cx": 0.55,
+   "cy": 3.6,
+   "yaw": 1.5708,
+   "sx": 2.7,
+   "sy": 1.2,
+   "h": 0.71
+  },
+  {
+   "name": "desk_drawer_1",
+   "kind": "desk_drawer",
+   "room": "N2",
+   "cx": 2.62,
+   "cy": 3.6,
+   "yaw": 0.0,
+   "sx": 0.56,
+   "sy": 1.82,
+   "h": 0.76
+  },
+  {
+   "name": "chair_2_2",
+   "kind": "chair_2",
+   "room": "N2",
+   "cx": 0.2,
+   "cy": 5.12,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_3",
+   "kind": "chair_2",
+   "room": "N2",
+   "cx": 0.9,
+   "cy": 5.12,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "file_cabinet_large_1",
+   "kind": "file_cabinet_large",
+   "room": "N2",
+   "cx": 2.55,
+   "cy": 5.22,
+   "yaw": 0.0,
+   "sx": 0.62,
+   "sy": 0.38,
+   "h": 0.66
+  },
+  {
+   "name": "drawer_white_1",
+   "kind": "drawer_white",
+   "room": "N2",
+   "cx": -0.6,
+   "cy": 5.05,
+   "yaw": 0.0,
+   "sx": 0.55,
+   "sy": 0.74,
+   "h": 0.89
+  },
+  {
+   "name": "trash_bin_2",
+   "kind": "trash_bin",
+   "room": "N2",
+   "cx": -0.7,
+   "cy": 1.35,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "table_conference_2_2",
+   "kind": "table_conference_2",
+   "room": "N3",
+   "cx": 5.0,
+   "cy": 3.5,
+   "yaw": 0.0,
+   "sx": 2.7,
+   "sy": 1.2,
+   "h": 0.71
+  },
+  {
+   "name": "chair_2_4",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 4.2,
+   "cy": 4.45,
+   "yaw": -1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_5",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 5.0,
+   "cy": 4.45,
+   "yaw": -1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_6",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 5.8,
+   "cy": 4.45,
+   "yaw": -1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_7",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 4.2,
+   "cy": 2.55,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_8",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 5.0,
+   "cy": 2.55,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_9",
+   "kind": "chair_2",
+   "room": "N3",
+   "cx": 5.8,
+   "cy": 2.55,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "side_table_1_1",
+   "kind": "side_table_1",
+   "room": "N3",
+   "cx": 6.6,
+   "cy": 5.1,
+   "yaw": 0.0,
+   "sx": 0.45,
+   "sy": 0.45,
+   "h": 0.64
+  },
+  {
+   "name": "trash_bin_3",
+   "kind": "trash_bin",
+   "room": "N3",
+   "cx": 3.35,
+   "cy": 5.15,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "sofa_set_1_1",
+   "kind": "sofa_set_1",
+   "room": "S1",
+   "cx": -6.57,
+   "cy": -3.4,
+   "yaw": 1.5708,
+   "sx": 2.41,
+   "sy": 0.74,
+   "h": 0.68
+  },
+  {
+   "name": "side_table_1_2",
+   "kind": "side_table_1",
+   "room": "S1",
+   "cx": -6.6,
+   "cy": -1.6,
+   "yaw": 0.0,
+   "sx": 0.45,
+   "sy": 0.45,
+   "h": 0.64
+  },
+  {
+   "name": "cafe_table_1",
+   "kind": "cafe_table",
+   "room": "S1",
+   "cx": -5.1,
+   "cy": -3.3,
+   "yaw": 0.0,
+   "sx": 0.914,
+   "sy": 0.914,
+   "h": 0.775
+  },
+  {
+   "name": "chair_2_10",
+   "kind": "chair_2",
+   "room": "S1",
+   "cx": -5.1,
+   "cy": -2.45,
+   "yaw": 1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "chair_2_11",
+   "kind": "chair_2",
+   "room": "S1",
+   "cx": -5.1,
+   "cy": -4.15,
+   "yaw": -1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "h": 0.87
+  },
+  {
+   "name": "drawer_white_2",
+   "kind": "drawer_white",
+   "room": "S1",
+   "cx": -3.4,
+   "cy": -5.05,
+   "yaw": 0.0,
+   "sx": 0.55,
+   "sy": 0.74,
+   "h": 0.89
+  },
+  {
+   "name": "trash_bin_4",
+   "kind": "trash_bin",
+   "room": "S1",
+   "cx": -3.3,
+   "cy": -1.4,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "bookshelf_large_2",
+   "kind": "bookshelf_large",
+   "room": "S2",
+   "cx": -2.73,
+   "cy": -2.9,
+   "yaw": 1.5708,
+   "sx": 1.66,
+   "sy": 0.42,
+   "h": 1.84
+  },
+  {
+   "name": "bookshelf_large_3",
+   "kind": "bookshelf_large",
+   "room": "S2",
+   "cx": -2.73,
+   "cy": -4.62,
+   "yaw": 1.5708,
+   "sx": 1.66,
+   "sy": 0.42,
+   "h": 1.84
+  },
+  {
+   "name": "file_cabinet_large_2",
+   "kind": "file_cabinet_large",
+   "room": "S2",
+   "cx": -0.25,
+   "cy": -3.0,
+   "yaw": 1.5708,
+   "sx": 0.62,
+   "sy": 0.38,
+   "h": 0.66
+  },
+  {
+   "name": "file_cabinet_large_3",
+   "kind": "file_cabinet_large",
+   "room": "S2",
+   "cx": -0.25,
+   "cy": -3.7,
+   "yaw": 1.5708,
+   "sx": 0.62,
+   "sy": 0.38,
+   "h": 0.66
+  },
+  {
+   "name": "desk_brown_3",
+   "kind": "desk_brown",
+   "room": "S3",
+   "cx": 1.0,
+   "cy": -5.03,
+   "yaw": 3.1416,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "desk_yellow_3",
+   "kind": "desk_yellow",
+   "room": "S3",
+   "cx": 3.0,
+   "cy": -5.03,
+   "yaw": 3.1416,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "chair_1_4",
+   "kind": "chair_1",
+   "room": "S3",
+   "cx": 1.0,
+   "cy": -4.3,
+   "yaw": 0.0,
+   "sx": 0.54,
+   "sy": 0.48,
+   "h": 0.82
+  },
+  {
+   "name": "desk_yellow_4",
+   "kind": "desk_yellow",
+   "room": "S4",
+   "cx": 6.55,
+   "cy": -3.3,
+   "yaw": 1.5708,
+   "sx": 1.77,
+   "sy": 0.8,
+   "h": 0.72
+  },
+  {
+   "name": "chair_1_5",
+   "kind": "chair_1",
+   "room": "S4",
+   "cx": 5.75,
+   "cy": -3.3,
+   "yaw": 0.0,
+   "sx": 0.54,
+   "sy": 0.48,
+   "h": 0.82
+  },
+  {
+   "name": "bookshelf_large_4",
+   "kind": "bookshelf_large",
+   "room": "S4",
+   "cx": 5.2,
+   "cy": -5.24,
+   "yaw": 0.0,
+   "sx": 1.66,
+   "sy": 0.42,
+   "h": 1.84
+  },
+  {
+   "name": "file_cabinet_small_1",
+   "kind": "file_cabinet_small",
+   "room": "S4",
+   "cx": 4.4,
+   "cy": -4.3,
+   "yaw": 0.0,
+   "sx": 0.61,
+   "sy": 0.75,
+   "h": 0.65
+  },
+  {
+   "name": "trash_bin_5",
+   "kind": "trash_bin",
+   "room": "S4",
+   "cx": 6.7,
+   "cy": -1.35,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "trash_bin_6",
+   "kind": "trash_bin",
+   "room": "corridor",
+   "cx": -1.0,
+   "cy": 0.8,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "h": 0.3
+  },
+  {
+   "name": "side_table_1_3",
+   "kind": "side_table_1",
+   "room": "corridor",
+   "cx": 6.7,
+   "cy": 0.7,
+   "yaw": 0.0,
+   "sx": 0.45,
+   "sy": 0.45,
+   "h": 0.64
+  },
+  {
+   "name": "cubicle_wall",
+   "kind": "box",
+   "cx": -2.95,
+   "cy": 4.225,
+   "yaw": 0.0,
+   "sx": 0.06,
+   "sy": 2.45,
+   "h": 1.3
+  },
+  {
+   "name": "boxes_1",
+   "kind": "box",
+   "cx": -1.5,
+   "cy": -4.9,
+   "yaw": 0.0,
+   "sx": 0.7,
+   "sy": 0.5,
+   "h": 0.6
+  },
+  {
+   "name": "boxes_2",
+   "kind": "box",
+   "cx": -0.6,
+   "cy": -5.0,
+   "yaw": 0.0,
+   "sx": 0.5,
+   "sy": 0.5,
+   "h": 0.45
+  },
+  {
+   "name": "pallet",
+   "kind": "box",
+   "cx": 2.4,
+   "cy": -3.0,
+   "yaw": 0.0,
+   "sx": 1.0,
+   "sy": 0.8,
+   "h": 0.35
+  },
+  {
+   "name": "tool_cart",
+   "kind": "box",
+   "cx": 0.5,
+   "cy": -2.2,
+   "yaw": 0.0,
+   "sx": 0.5,
+   "sy": 0.8,
+   "h": 0.9
+  },
+  {
+   "name": "corridor_cart",
+   "kind": "box",
+   "cx": 3.4,
+   "cy": -0.6,
+   "yaw": 0.0,
+   "sx": 0.8,
+   "sy": 0.5,
+   "h": 0.9
+  },
+  {
+   "name": "pc_tower_1",
+   "kind": "box",
+   "cx": 2.8,
+   "cy": 1.5,
+   "yaw": 0.0,
+   "sx": 0.2,
+   "sy": 0.48,
+   "h": 0.44
+  },
+  {
+   "name": "pc_tower_2",
+   "kind": "box",
+   "cx": 3.75,
+   "cy": -4.4,
+   "yaw": 0.0,
+   "sx": 0.2,
+   "sy": 0.48,
+   "h": 0.44
+  }
+ ],
+ "models": [
+  "bookshelf_large",
+  "cafe_table",
+  "chair_1",
+  "chair_2",
+  "desk_brown",
+  "desk_drawer",
+  "desk_yellow",
+  "drawer_white",
+  "file_cabinet_large",
+  "file_cabinet_small",
+  "monitor_1",
+  "side_table_1",
+  "sofa_set_1",
+  "table_conference_2",
+  "trash_bin"
+ ]
+}

@@ -4,5 +4,7 @@
   // Tables, URLs and command lines are long by nature.
   "MD013": false,
   // Same heading text under different parents (e.g. "Troubleshooting").
-  "MD024": { "siblings_only": true }
+  "MD024": { "siblings_only": true },
+  // Collapsible sections for long data tables (GitHub renders them).
+  "MD033": { "allowed_elements": ["details", "summary"] }
 }

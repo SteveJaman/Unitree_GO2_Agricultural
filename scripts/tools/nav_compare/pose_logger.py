@@ -12,7 +12,8 @@ Runs inside go2-lidar3d next to the session (sim or real dog) and writes to
                /global_costmap/costmap_updates patches applied
 
 Stop it with SIGINT/SIGTERM; files are flushed as they are written and the
-costmap is saved on exit.
+costmap is saved on exit. SIGUSR1 saves the costmap as it is now to
+costmap_explore.npz (record.sh snapshot: the map when exploration ended).
 
   python3 pose_logger.py --out /tmp/nav_trial [--map-frame lidar3d_map]
 """
@@ -88,16 +89,19 @@ class PoseLogger(Node):
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         self.pose_f.write(f'{time.time():.3f},{p.x:.3f},{p.y:.3f},{yaw:.4f}\n')
 
-    def save(self):
-        self.pose_f.close()
-        self.cmd_f.close()
+    def save_costmap(self, name):
         if self.costmap is None:
             return
         info, grid = self.costmap
         np.savez_compressed(
-            os.path.join(self.out, 'costmap.npz'), data=grid,
+            os.path.join(self.out, name), data=grid,
             resolution=info.resolution,
             origin=[info.origin.position.x, info.origin.position.y])
+
+    def save(self):
+        self.pose_f.close()
+        self.cmd_f.close()
+        self.save_costmap('costmap.npz')
 
 
 def main():
@@ -110,11 +114,15 @@ def main():
     # mid-spin (ExternalShutdownException), which would skip save().
     rclpy.init(args=ros_args, signal_handler_options=SignalHandlerOptions.NO)
     node = PoseLogger(a.out, a.map_frame, a.base_frame)
-    stop = []
+    stop, snap = [], []
     signal.signal(signal.SIGINT, lambda *_: stop.append(1))
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    signal.signal(signal.SIGUSR1, lambda *_: snap.append(1))
     while rclpy.ok() and not stop:
         rclpy.spin_once(node, timeout_sec=0.1)
+        if snap:
+            snap.clear()
+            node.save_costmap('costmap_explore.npz')
     node.save()
     node.destroy_node()
     rclpy.try_shutdown()

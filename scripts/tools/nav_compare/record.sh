@@ -5,12 +5,15 @@
 #
 #   record.sh start NAME --drive diff|hybrid|omni [--note "text"]
 #   ... let the dog explore (dashboard / RViz Auto Explore) ...
+#   record.sh snapshot NAME     (optional: save the costmap as it is now)
 #   record.sh stop NAME
 #
 # start: copies pose_logger.py into go2-lidar3d and logs the robot pose, every
 #        /cmd_vel and (on stop) the final costmap.
+# snapshot: costmap_explore.npz, e.g. when exploration ends (sim_trial.sh)
 # stop:  stops the logger and collects into $NAV_COMPARE_DIR/NAME/:
-#        pose.csv cmd.csv costmap.npz frontier.log recovery.log meta.env
+#        pose.csv cmd.csv costmap.npz [costmap_explore.npz] frontier.log
+#        recovery.log meta.env
 #
 # NAV_COMPARE_DIR defaults to ~/files/go2-nav2-wifi/ws/log/nav_compare.
 # sim_trial.sh wraps this for unattended Gazebo runs. See
@@ -57,6 +60,10 @@ start)
         "source /opt/ros/humble/setup.bash; rm -rf ${CTR_OUT}; nohup python3 /tmp/nav_compare_pose_logger.py --out ${CTR_OUT} > /tmp/nav_compare_${NAME}.log 2>&1 & echo \$! > ${CTR_OUT}.pid"
     echo "[record] ${NAME} (${DRIVE}) logging; stop with: $0 stop ${NAME}"
     ;;
+snapshot)
+    docker exec -u root "${CONTAINER}" bash -c "kill -USR1 \$(cat ${CTR_OUT}.pid)" || die "no logger running for ${NAME}"
+    sleep 2
+    ;;
 stop)
     [ -f "${OUT}/meta.env" ] || die "no trial ${NAME} in ${OUT_ROOT} (start it first)"
     # By PID: a pkill -f pattern would also match (and kill) this bash -c.
@@ -65,10 +72,11 @@ stop)
     for f in pose.csv cmd.csv costmap.npz; do
         docker cp "${CONTAINER}:${CTR_OUT}/${f}" "${OUT}/${f}" 2>/dev/null || echo "[record] WARN: no ${f}"
     done
+    docker cp "${CONTAINER}:${CTR_OUT}/costmap_explore.npz" "${OUT}/costmap_explore.npz" 2>/dev/null || true
     docker exec "${CONTAINER}" cat /tmp/stuck_recovery.log > "${OUT}/recovery.log" 2>/dev/null || true
     cp "${NAV2_WIFI_DIR}/ws/log/frontier.log" "${OUT}/frontier.log" 2>/dev/null || echo "[record] WARN: no frontier.log"
     echo "END=$(date +%s)" >> "${OUT}/meta.env"
     echo "[record] ${NAME} saved to ${OUT}"
     ;;
-*) die "unknown action ${ACTION} (start|stop)" ;;
+*) die "unknown action ${ACTION} (start|snapshot|stop)" ;;
 esac

@@ -6,7 +6,8 @@ The simulation's files live in [`gazebo/`](../../gazebo/).
 
 A Gazebo Harmonic simulation of the Unitree Go2 with the D1 arm on its back, in a
 small field with raised beds and plants, plus a building with rooms for
-exploration tests. The simulator stands in for the real
+exploration tests, or in an indoor research lab furnished with desks, chairs,
+tables and shelves ([lab_office.md](lab_office.md)). The simulator stands in for the real
 robot: the **unchanged** project scripts (`wifi_nav.sh`, `start_arm.sh`,
 `d1_arm_control.py`, `d1_arm_calibration.py`, the explorer, `diag_arm.sh` …)
 run against it.
@@ -55,6 +56,7 @@ launches, pointed at this machine instead of the robot.
 |---|---|---|
 | `go2_description` | [unitreerobotics/unitree_ros](https://github.com/unitreerobotics/unitree_ros) `robots/go2_description`, commit `5994d4f`, BSD-3-Clause | URDF + DAE meshes |
 | `d1_description` | Unitree D1 gripper-version package (`oss-global-cdn.unitree.com/…/90b2525b….zip`), SHA-256 checked | URDF + STL meshes, 6 joints + 2 fingers |
+| `furniture/` | 3DGEMS models from the [Gazebo Models & Worlds Collection](https://github.com/leonhartyao/gazebo_models_worlds_collection), commit `cce115b`, GPL-3.0 (its `LICENSE` is copied next to them) | 15 furniture models for `lab_office` (`./gazebo/setup_gazebo.sh --furniture`) |
 
 `sim/build_model.py` combines them (run automatically at start):
 
@@ -110,7 +112,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
 | `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the old 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
 | `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the old 4-core VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
-| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only |
+| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only. `lab_office`: the furnished indoor lab ([lab_office.md](lab_office.md)) |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
@@ -170,8 +172,30 @@ These are deliberate. They're listed so test results aren't over-read:
 | `worlds/agri_field.sdf` | 12 × 8 m field, three planted beds, walls, crates |
 | `worlds/agri_rooms.sdf` | Generated: the field + a 12 × 7 m building through a doorway in the field's north wall. A 2 m corridor, three 4 × 5 m rooms with 1.2 m doors (room 2 ↔ 3 too), crates, a workbench, an alcove. 1.2 m walls hide each room until the robot looks in |
 | `worlds/build_rooms_world.py` | Writes `agri_rooms.sdf` from `agri_field.sdf`. Edit the layout there and rerun |
+| `worlds/lab_office.sdf`, `lab_office.json` | Generated: the 14 × 11 m indoor lab (7 rooms off a corridor, 53 furniture pieces, 2.7 m ceiling); the JSON holds rooms, footprints and tour goals for the analysis |
+| `worlds/build_lab_world.py` | Writes both from the layout tables in it, after checking every room and tour goal is reachable. `--plan PNG` draws the floor plan |
+| `worlds/render_world.sh` | Renders a world with Gazebo for the docs: a cutaway overview and a view from inside (`docs/images/lab_office/world_*.png`) |
 
 ## Exploration world
+
+For a furnished indoor test (desks, chairs, tables, shelves, cluttered but
+navigable), use `SIM_WORLD=lab_office`: see [lab_office.md](lab_office.md),
+with the hybrid vs omni results.
+
+![lab_office in Gazebo: cutaway from above the south-west corner](../images/lab_office/world_overview.png)
+
+*`lab_office` rendered by Gazebo. Cutaway view: ceiling removed and walls cut
+to 0.9 m for the picture (in the sim they reach the 2.7 m ceiling). Front:
+break room (sofa, café table) and storage; middle: corridor, workshop
+(pallet, cart) and office; back: open office, lab, conference room.*
+
+![Inside the open office at head height](../images/lab_office/world_inside.png)
+
+*Inside the open office, with full walls and ceiling: the island desk, a
+bookshelf, chairs and the cubicle wall (right). The furniture is untextured
+because Gazebo Harmonic does not read the models' Gazebo Classic material
+scripts; the lidar sees the shapes all the same. Both images:
+`./gazebo/worlds/render_world.sh lab_office docs/images/lab_office`.*
 
 The open field is mapped from the spawn point in one scan, so the frontier
 explorer reports "Exploration complete" after two or three goals. The default

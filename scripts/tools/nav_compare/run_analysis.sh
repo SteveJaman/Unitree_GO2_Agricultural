@@ -3,6 +3,7 @@
 # the host has no working matplotlib (e.g. numpy 2 with Ubuntu's matplotlib).
 #
 #   run_analysis.sh --out docs/images/locomotion --rooms agri_rooms TRIAL_DIR...
+#   run_analysis.sh --out docs/images/lab_office --rooms lab_office TRIAL_DIR...
 set -eo pipefail
 HERE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 if python3 -c 'import matplotlib, numpy' 2>/dev/null; then
@@ -11,6 +12,9 @@ fi
 # Paths (trial dirs, the --out value) are bound at the same place inside the
 # container; other option values (--rooms, --resolution) pass unchanged.
 mounts=(-v "${HERE}:${HERE}:ro")
+# analyze.py reads world ground truth from ../../../gazebo/worlds (--rooms lab_office)
+WORLDS="$(realpath -m "${HERE}/../../../gazebo/worlds")"
+[ -d "${WORLDS}" ] && mounts+=(-v "${WORLDS}:${WORLDS}:ro")
 args=()
 prev=""
 for arg in "$@"; do

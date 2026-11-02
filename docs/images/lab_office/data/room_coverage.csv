@@ -1,0 +1,7 @@
+trial,drive,corridor,N1 open office,N2 lab,N3 conference,S1 break room,S2 storage,S3 workshop,S4 office
+lab_hybrid1,hybrid,100.0,100.0,100.0,100.0,100.0,100.0,100.0,98.7
+lab_hybrid2,hybrid,100.0,99.5,99.9,99.9,99.8,99.9,100.0,98.6
+lab_hybrid3,hybrid,100.0,100.0,100.0,100.0,99.9,100.0,100.0,98.9
+lab_omni1,omni,100.0,100.0,99.5,100.0,100.0,100.0,100.0,98.3
+lab_omni2,omni,100.0,99.9,100.0,100.0,99.9,99.9,96.0,98.1
+lab_omni3,omni,100.0,95.9,100.0,100.0,99.9,100.0,99.0,55.7

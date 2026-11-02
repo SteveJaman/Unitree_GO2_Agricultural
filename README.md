@@ -108,7 +108,12 @@ Other entry points:
   a camera pose (Cartesian goals, IK + OMPL) around the dog and a plant, with a
   plant-inspection demo. Mock hardware for now.
 - **Simulation:** Go2 + D1 in Gazebo Harmonic, and the explorer + Nav2 in the
-  CMU Unity sim, for testing without hardware.
+  CMU Unity sim, for testing without hardware. Worlds include a furnished
+  indoor lab (`SIM_WORLD=lab_office`: 7 rooms, desks, chairs, tables,
+  shelves), where `--drive hybrid` reached 22 of 24 navigation goals against
+  15 for `omni` ([results](docs/simulation/lab_office.md)).
+
+![The lab_office world in Gazebo](docs/images/lab_office/world_overview.png)
 
 ## Documentation
 
@@ -134,7 +139,8 @@ troubleshooting cover every area and sit at its top level.
 | | [Camera](docs/ai_and_vision/camera.md) | Go2 camera relay, RViz display, who uses the feed |
 | | [Camera + LiDAR fusion](docs/ai_and_vision/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
 | Hardware | [D1-T arm](docs/hardware/d1arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and **new:** MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
-| Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms world |
+| Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms and lab worlds |
+| | [Indoor lab world](docs/simulation/lab_office.md) | **New:** a furnished 7-room lab in Gazebo (3DGEMS desks, chairs, tables, shelves) and the hybrid vs omni mapping and navigation results, with statistics and graphs |
 | | [Unity sim](docs/simulation/unity.md) | **New:** the explorer + Nav2 in the CMU Unity sim on the host (`sim_explore.sh`, no robot) |
 | Config | [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations, rooms and survey reports |
 
@@ -172,7 +178,9 @@ This repo adds:
   - one command each for 2D, 3D, arm and simulation;
   - DHCP-proof networking that keeps the arm and dog networks isolated;
   - live camera over Wi-Fi (+ calibration), floor filter, diagnostics and tuning scripts.
-- **Gazebo simulation** of the Go2 + D1 from the official Unitree models.
+- **Gazebo simulation** of the Go2 + D1 from the official Unitree models, with
+  outdoor (`agri_rooms`) and furnished indoor (`lab_office`) test worlds and
+  unattended trial tooling (`scripts/tools/nav_compare/`).
 
 ## License
 

@@ -1,0 +1,7 @@
+trial,drive,reached,dropped_early,nav2_aborts,no_progress,recovery_retries
+lab_hybrid1,hybrid,0,7,0,0,0
+lab_hybrid2,hybrid,1,5,0,0,0
+lab_hybrid3,hybrid,0,8,0,0,0
+lab_omni1,omni,4,5,0,3,0
+lab_omni2,omni,5,5,0,2,0
+lab_omni3,omni,4,3,1,0,1

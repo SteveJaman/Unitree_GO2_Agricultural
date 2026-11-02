@@ -14,7 +14,8 @@
 #   SIM_RENDER_ENGINE    ogre2 (default) or ogre (older/software GL)
 #   SIM_ARM=1            run the D1 emulator on SIM_ARM_IFACE (default simarm0)
 #   SIM_SPAWN="x y yaw"  robot start pose (default "-4.5 0 0")
-#   SIM_WORLD            worlds/<name>.sdf: agri_rooms (default, field + building)
+#   SIM_WORLD            worlds/<name>.sdf: agri_rooms (default, field + building),
+#                        lab_office (indoor lab with furniture), agri_field
 #                        or agri_field (field only)
 #   SIM_D1_MOUNT         D1 pose on the trunk, see build_model.py --mount
 #   SIM_SENSOR_YAML      lidar mount file (sensor_from_base), see build_model.py --sensor-yaml
@@ -39,6 +40,8 @@ export HOME="${HOME:-/tmp/simhome}"
 # One gz-transport partition and interface for every gz process here,
 # including the arm emulator (which runs with a cleaned environment).
 export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
+# model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
+export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
 echo "[sim] building model..."
 python3 "$SIM/sim/build_model.py" --go2 "$SIM/models/go2_description" --d1 "$SIM/models/d1_description" \
