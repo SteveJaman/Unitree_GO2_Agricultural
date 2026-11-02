@@ -8,6 +8,7 @@
 # Usage:
 #   ./scripts/runtime/arm_moveit.sh              # build if needed, RViz + MoveIt
 #   ./scripts/runtime/arm_moveit.sh --inspect    # same, then run the plant inspection
+#   ./scripts/runtime/arm_moveit.sh --real       # same as --inspect but on the REAL arm
 #   ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
 #   ./scripts/runtime/arm_moveit.sh --no-rviz    # headless
 #
@@ -23,13 +24,14 @@ REPO_ROOT="$( cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd )"
 D1_ARM_DIR="${D1_ARM_DIR:-$HOME/files/unitree-D1-550-Robot-ARM}"
 ARM_ROS_DOMAIN_ID="${ARM_ROS_DOMAIN_ID:-78}"
 
-BUILD="auto"; INSPECT="false"; RVIZ="true"
+BUILD="auto"; INSPECT="false"; REAL="false"; RVIZ="true"
 while [ $# -gt 0 ]; do
     case "$1" in
         --build)   BUILD="always" ;;
         --inspect) INSPECT="true" ;;
+        --real)    REAL="true"; INSPECT="true" ;;
         --no-rviz) RVIZ="false" ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -61,12 +63,27 @@ fi
 source install/setup.bash
 
 if [ "${INSPECT}" = "true" ]; then
+    # --real: velocity scaled to 20 % and the MoveIt→D1 bridge replaces mock hardware
+    VELOCITY_SCALE="0.3"
+    if [ "${REAL}" = "true" ]; then
+        VELOCITY_SCALE="0.2"
+        echo "[real] velocity_scaling=${VELOCITY_SCALE}, launching moveit_d1_bridge..."
+        python3 "${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py" &
+        BRIDGE_PID=$!
+    fi
+
     ros2 launch d1_moveit_config demo.launch.py use_rviz:="${RVIZ}" &
     LAUNCH_PID=$!
-    trap 'kill -INT ${LAUNCH_PID} 2>/dev/null; wait ${LAUNCH_PID} 2>/dev/null' EXIT INT TERM
+    trap 'kill -INT ${LAUNCH_PID} 2>/dev/null; [ -n "${BRIDGE_PID:-}" ] && kill -INT ${BRIDGE_PID} 2>/dev/null; wait 2>/dev/null' EXIT INT TERM
     echo "[inspect] waiting for MoveIt..."
     sleep 8
-    ros2 run d1_moveit_config inspect_plant.py
+
+    INSPECT_ARGS=""
+    if [ "${REAL}" = "true" ]; then
+        INSPECT_ARGS="--ros-args -p velocity_scaling:=${VELOCITY_SCALE}"
+    fi
+    ros2 run d1_moveit_config inspect_plant.py ${INSPECT_ARGS}
+
     echo "[inspect] done. Ctrl+C to close RViz."
     wait ${LAUNCH_PID}
 else

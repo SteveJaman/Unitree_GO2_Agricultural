@@ -711,44 +711,42 @@ firmware (the URDF's `Joint1` axis is −z).
 
 ### Plant-inspection demo (`--inspect`)
 
-[`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py) is
-also the example to copy for planning from code (the `MoveGroup` action with
-position + orientation constraints):
+[`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py)
+performs a **discrete 3-point scan** of a plant on a hydroponic rack. The dog
+MUST park at a **0.333 m standoff** from the rack front edge (Nav2 handles
+this).
 
-1. Adds a raised bed (0.3 m) and a plant (0.3 m stem, 0.17 m canopy) to the
-   planning scene, 0.5 m to the right of the dog. These are the same sizes as
-   `gazebo/worlds/agri_field.sdf`.
-2. Places viewpoints on a sphere 0.10 m outside the canopy, on the dog's side:
-   5 directions (−50° to +50°) × 2 heights (level and 30° above), ordered as a
-   sweep.
-3. For each one, asks MoveIt for a collision-free move with `tool0` pointing at
-   the canopy centre, holds for `dwell_s`, then moves on. Unreachable
-   viewpoints are skipped. Arrows in RViz (`/inspect_plant/markers`) show each
-   viewpoint: green reached, red not.
-4. Returns to `home`.
+**Flow (7 steps):**
+
+1. **Pre-grasp** — extend from stow to a safe pre-grasp pose in front of the plant.
+2. **Front** (0° azimuth) — camera aimed at the plant centre, 25° look-up. Hold 3 s for capture.
+3. **Left** (−45° azimuth) — rotate the camera 45° left. Hold 3 s.
+4. **Right** (+45° azimuth) — rotate 45° right of centre. Hold 3 s.
+5. **Front** — return to the front view (confirmation shot).
+6. **Retract** — pull back to pre-grasp.
+7. **Stow** — fold arm to walking pose (`J2 = −80°, J3 = 45°, J5 = 80°`).
+
+The stow pose keeps the arm folded tight over the dog's back:
+`STOW_ANGLES = [0.0, −1.396, 0.785, 0.0, 1.396, 0.0]` (radians).
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `plant_x`, `plant_y` | `0.10`, `-0.50` | Plant position in `world` (x forward, y left) |
-| `bed_height` | `0.30` | Raised-bed height (m) |
-| `canopy_radius` | `0.17` | Canopy sphere radius (m); centre 0.38 m above the bed |
-| `standoff` | `0.10` | Camera distance from the canopy surface (m) |
-| `azimuths_deg` | `[-50, -25, 0, 25, 50]` | Viewpoint directions around the plant, 0 = facing the dog |
-| `elevations_deg` | `[0, 30]` | Viewpoint heights, 0 = level with the canopy centre |
-| `dwell_s` | `1.5` | Pause at each viewpoint (the capture moment) |
-| `plan_only` | `false` | Plan each move without executing it |
-| `planning_time` | `5.0` | Seconds per plan (5 attempts) |
-| `velocity_scaling` | `0.3` | Speed and acceleration scaling |
-| `image_topic` / `image_dir` | *(none)* / `~/plant_inspection` | Save a frame from this topic at each viewpoint |
+| `look_up_deg` | `25.0` | Camera look-up angle at each pose (degrees) |
+| `dwell_s` | `3.0` | Pause at each of the 3 viewpoints (the capture moment) |
+| `velocity_scaling` | `0.3` | Speed and acceleration scaling (0.2 with `--real`) |
 
 ```bash
-ros2 run d1_moveit_config inspect_plant.py --ros-args -p plant_x:=0.2 -p plan_only:=true
+# Sim / mock hardware:
+./scripts/runtime/arm_moveit.sh --inspect
+
+# Real arm (velocity scaled to 20 %, bridge auto-started):
+./scripts/runtime/arm_moveit.sh --real
 ```
 
-This is the MoveIt counterpart of the
-[advisor goal](../roadmap.md#current-goals-advisor-week-of-2026-10-22) to scan
-the fake plant from left, front and right. On the real arm the same goal uses
-Teach & Playback for now.
+The 3-point scan covers Front, Left (−45°) and Right (+45°) at 0.333 m
+standoff, well within the D1-550's 0.605 m reach. The ±45° azimuth was chosen
+to capture three distinct leaf angles while staying inside the arm's IK
+workspace (earlier trials showed ±50° pushing the limits at this standoff).
 
 ### From plan to the real arm
 

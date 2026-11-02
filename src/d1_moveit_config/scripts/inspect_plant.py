@@ -1,28 +1,38 @@
 #!/usr/bin/env python3
-"""Plant inspection with the D1 arm through MoveIt 2.
+"""3-point plant inspection with the D1 arm through MoveIt 2.
 
-Puts a raised bed and a plant (stem + canopy, same sizes as
-gazebo/worlds/agri_field.sdf) next to the Go2 in MoveIt's planning scene,
-works out camera viewpoints on an arc around the canopy, and has MoveIt plan
-and execute a collision-free move to each one. At every viewpoint the tool
-frame (between the fingertips, x out of the gripper) points at the canopy
-centre and holds still for dwell_s, the moment a wrist camera would capture.
-Then the arm returns to "home".
+Discrete Front / Left / Right poses instead of a continuous Cartesian arc:
+the D1-550 moves to each viewpoint, pauses for capture, and returns home.
+Works on mock hardware (arm_moveit.sh), Gazebo (arm_moveit.sh --gazebo) and
+the real arm (arm_moveit.sh --real).
 
   ros2 launch d1_moveit_config demo.launch.py          # terminal 1
   ros2 run d1_moveit_config inspect_plant.py           # terminal 2
   ros2 run d1_moveit_config inspect_plant.py --ros-args -p plant_x:=0.2 -p plan_only:=true
+
+The 3-point scan:
+  1. Move to pre-grasp (Front pose).
+  2. Front: hold 3 s (camera capture).
+  3. Left:  hold 3 s.
+  4. Right: hold 3 s.
+  5. Return to Front.
+  6. Retract to pre-grasp.
+  7. Return Home (stow).
 
 Parameters (world frame = ground under the Go2, x forward, y left):
   plant_x, plant_y      plant position (default 0.10, -0.50: right of the dog)
   bed_height            raised-bed height (0.30)
   canopy_radius         canopy sphere radius (0.17); centre 0.38 m above the bed
   standoff              camera distance from the canopy surface (0.10)
-  azimuths_deg          viewpoint directions around the plant, 0 = facing the dog
-  elevations_deg        viewpoint heights, 0 = level with the canopy centre
-  dwell_s               pause at each viewpoint
+  look_up_deg           camera look-up angle toward the canopy (25 deg)
+  dwell_s               pause at each viewpoint for capture (3.0 s)
   plan_only             plan each move but do not execute it
   image_topic           optional sensor_msgs/Image to save at each viewpoint
+  velocity_scaling      MoveIt velocity/acceleration scaling (0.3; 0.2 with --real)
+
+IMPORTANT: the dog MUST park at a 0.333 m standoff from the rack's front edge
+for the arm to reach the Left and Right angles (the D1-550's max reach is
+0.605 m).
 """
 import math
 import os
@@ -44,6 +54,7 @@ from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
 ARM_JOINTS = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6']
+STOW_ANGLES = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # safe walking pose
 SUCCESS = 1  # moveit_msgs/MoveItErrorCodes.SUCCESS
 STEM_HEIGHT = 0.30
 CANOPY_ABOVE_BED = 0.38
@@ -55,7 +66,7 @@ def look_at(eye, target):
     x = np.asarray(target, float) - np.asarray(eye, float)
     x /= np.linalg.norm(x)
     up = np.array([0.0, 0.0, 1.0])
-    if abs(np.dot(x, up)) > 0.99:          # looking straight up/down
+    if abs(np.dot(x, up)) > 0.99:
         up = np.array([1.0, 0.0, 0.0])
     z = up - np.dot(up, x) * x
     z /= np.linalg.norm(z)
@@ -65,7 +76,6 @@ def look_at(eye, target):
     if w > 1e-6:
         return ((m[2, 1] - m[1, 2]) / (4 * w), (m[0, 2] - m[2, 0]) / (4 * w),
                 (m[1, 0] - m[0, 1]) / (4 * w), w)
-    # 180-degree rotation: pick the largest diagonal term
     i = int(np.argmax(np.diag(m)))
     j, k = (i + 1) % 3, (i + 2) % 3
     s = math.sqrt(max(0.0, 1.0 + m[i, i] - m[j, j] - m[k, k])) * 2.0
@@ -76,19 +86,21 @@ def look_at(eye, target):
     return (q[0], q[1], q[2], (m[k, j] - m[j, k]) / s)
 
 
-def viewpoints(canopy, toward_dog_yaw, radius, azimuths_deg, elevations_deg):
-    """Camera positions on a sphere around the canopy, on the dog's side.
-    Ordered as a sweep: left to right at each height, alternating direction."""
-    out = []
-    for n, el in enumerate(elevations_deg):
-        azs = azimuths_deg if n % 2 == 0 else list(reversed(azimuths_deg))
-        for az in azs:
-            yaw = toward_dog_yaw + math.radians(az)
-            e = math.radians(el)
-            out.append((canopy[0] + radius * math.cos(e) * math.cos(yaw),
-                        canopy[1] + radius * math.cos(e) * math.sin(yaw),
-                        canopy[2] + radius * math.sin(e), az, el))
-    return out
+def compute_3_point_poses(canopy, toward_dog_yaw, radius, look_up_deg):
+    """Compute Front, Left and Right camera positions around the canopy.
+
+    Returns [(name, eye_xyz, target_xyz), ...] for the three discrete poses.
+    Left and Right are at ±45 deg azimuth from the front (toward the dog).
+    """
+    el = math.radians(look_up_deg)
+    poses = []
+    for name, az_deg in [('Front', 0.0), ('Left', -45.0), ('Right', 45.0)]:
+        az = toward_dog_yaw + math.radians(az_deg)
+        eye = (canopy[0] + radius * math.cos(el) * math.cos(az),
+               canopy[1] + radius * math.cos(el) * math.sin(az),
+               canopy[2] - radius * math.sin(el))
+        poses.append((name, eye, canopy))
+    return poses
 
 
 class InspectPlant(Node):
@@ -101,9 +113,8 @@ class InspectPlant(Node):
         d('bed_height', 0.30)
         d('canopy_radius', 0.17)
         d('standoff', 0.10)
-        d('azimuths_deg', [-50.0, -25.0, 0.0, 25.0, 50.0])
-        d('elevations_deg', [0.0, 30.0])
-        d('dwell_s', 1.5)
+        d('look_up_deg', 25.0)
+        d('dwell_s', 3.0)
         d('plan_only', False)
         d('planning_time', 5.0)
         d('velocity_scaling', 0.3)
@@ -145,7 +156,6 @@ class InspectPlant(Node):
             return o
 
         objects = [
-            # 1.2 m of bed along x, 0.6 m wide, centred on the plant row
             obj('bed', SolidPrimitive.BOX, (1.2, 0.6, bed_h), (x, y, bed_h / 2)),
             obj('plant_stem', SolidPrimitive.CYLINDER, (STEM_HEIGHT, 0.03),
                 (x, y, bed_h + STEM_HEIGHT / 2)),
@@ -204,8 +214,6 @@ class InspectPlant(Node):
         oc.header.frame_id = 'world'
         oc.link_name = 'tool0'
         oc.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
-        # The camera may roll about its viewing axis (x); the viewing
-        # direction itself must stay within ~9 degrees of the plant.
         oc.absolute_x_axis_tolerance = math.pi
         oc.absolute_y_axis_tolerance = 0.15
         oc.absolute_z_axis_tolerance = 0.15
@@ -214,15 +222,22 @@ class InspectPlant(Node):
         c.orientation_constraints = [oc]
         return c
 
-    def home_goal(self):
-        c = Constraints(name='home')
-        c.joint_constraints = [JointConstraint(joint_name=j, position=0.0, tolerance_above=0.01,
+    def joint_goal(self, angles):
+        c = Constraints(name='joints')
+        c.joint_constraints = [JointConstraint(joint_name=j, position=a,
+                                               tolerance_above=0.01,
                                                tolerance_below=0.01, weight=1.0)
-                               for j in ARM_JOINTS]
+                               for j, a in zip(ARM_JOINTS, angles)]
         return c
 
+    def home_goal(self):
+        return self.joint_goal([0.0] * 6)
+
+    def stow_goal(self):
+        return self.joint_goal(STOW_ANGLES)
+
     # ------------------------------------------------------------------
-    def publish_markers(self, canopy, views, status):
+    def publish_markers(self, canopy, poses, status):
         arr = MarkerArray()
         label = Marker(ns='plant', id=0, type=Marker.TEXT_VIEW_FACING, action=Marker.ADD)
         label.header.frame_id = 'world'
@@ -233,32 +248,39 @@ class InspectPlant(Node):
         label.text = 'plant'
         arr.markers.append(label)
         colors = {None: (0.6, 0.6, 0.6), True: (0.1, 0.9, 0.2), False: (0.9, 0.2, 0.1)}
-        for i, v in enumerate(views):
+        for i, (name, eye, _target) in enumerate(poses):
             m = Marker(ns='views', id=i, type=Marker.ARROW, action=Marker.ADD)
             m.header.frame_id = 'world'
-            m.points = [Point(x=v[0], y=v[1], z=v[2]),
-                        Point(x=v[0] + 0.6 * (canopy[0] - v[0]),
-                              y=v[1] + 0.6 * (canopy[1] - v[1]),
-                              z=v[2] + 0.6 * (canopy[2] - v[2]))]
+            m.points = [Point(x=eye[0], y=eye[1], z=eye[2]),
+                        Point(x=eye[0] + 0.6 * (canopy[0] - eye[0]),
+                              y=eye[1] + 0.6 * (canopy[1] - eye[1]),
+                              z=eye[2] + 0.6 * (canopy[2] - eye[2]))]
             m.scale.x, m.scale.y, m.scale.z = 0.008, 0.016, 0.02
             r, g, b = colors[status.get(i)]
             m.color = ColorRGBA(r=r, g=g, b=b, a=0.9)
-            arr.markers.append(m)
+            lbl = Marker(ns='labels', id=i, type=Marker.TEXT_VIEW_FACING, action=Marker.ADD)
+            lbl.header.frame_id = 'world'
+            lbl.pose.position = Point(x=eye[0], y=eye[1], z=eye[2] + 0.06)
+            lbl.pose.orientation.w = 1.0
+            lbl.scale.z = 0.04
+            lbl.color = ColorRGBA(r=r, g=g, b=b, a=1.0)
+            lbl.text = name
+            arr.markers.extend([m, lbl])
         self.markers.publish(arr)
 
-    def save_image(self, index):
+    def save_image(self, name):
         if self.latest_image is None:
             return None
         msg = self.latest_image
         os.makedirs(self.p('image_dir'), exist_ok=True)
-        path = os.path.join(self.p('image_dir'), f'view_{index:02d}.ppm')
+        path = os.path.join(self.p('image_dir'), f'view_{name.lower()}.ppm')
         if msg.encoding not in ('rgb8', 'bgr8'):
             return None
         a = np.frombuffer(bytes(msg.data), np.uint8).reshape(msg.height, msg.step)
         a = a[:, :msg.width * 3].reshape(msg.height, msg.width, 3)
         if msg.encoding == 'bgr8':
             a = a[..., ::-1]
-        with open(path, 'wb') as f:   # PPM: no extra dependency
+        with open(path, 'wb') as f:
             f.write(f'P6 {msg.width} {msg.height} 255\n'.encode())
             f.write(np.ascontiguousarray(a).tobytes())
         return path
@@ -267,41 +289,66 @@ class InspectPlant(Node):
     def run(self):
         if not self.wait_for_moveit():
             return 1
-        bed_h, canopy_r = float(self.p('bed_height')), float(self.p('canopy_radius'))
+        bed_h = float(self.p('bed_height'))
+        canopy_r = float(self.p('canopy_radius'))
         if not self.add_plant(bed_h, canopy_r):
             return 1
         x, y = self.p('plant_x'), self.p('plant_y')
         canopy = (x, y, bed_h + CANOPY_ABOVE_BED)
         toward_dog = math.atan2(0.0 - y, 0.0 - x)
-        views = viewpoints(canopy, toward_dog, canopy_r + float(self.p('standoff')),
-                           list(self.p('azimuths_deg')), list(self.p('elevations_deg')))
+        radius = canopy_r + float(self.p('standoff'))
+        look_up = float(self.p('look_up_deg'))
+        dwell = float(self.p('dwell_s'))
+
+        poses = compute_3_point_poses(canopy, toward_dog, radius, look_up)
         status = {}
-        self.publish_markers(canopy, views, status)
+        self.publish_markers(canopy, poses, status)
         self.get_logger().info(
-            f'Inspecting plant at ({x:.2f}, {y:.2f}), canopy centre z={canopy[2]:.2f}: '
-            f'{len(views)} viewpoints, plan_only={self.p("plan_only")}')
+            f'3-point inspection at ({x:.2f}, {y:.2f}), canopy z={canopy[2]:.2f}: '
+            f'Front / Left / Right, dwell {dwell:.1f}s, plan_only={self.p("plan_only")}')
+
+        # Step 1: Move to pre-grasp (Front pose)
+        front_name, front_eye, front_target = poses[0]
+        self.get_logger().info('[1/7] Moving to pre-grasp (Front)...')
+        ok, why = self.execute(self.pose_goal(front_eye, look_at(front_eye, front_target)))
+        if not ok:
+            self.get_logger().error(f'Pre-grasp (Front) failed: {why}')
+            self.execute(self.stow_goal())
+            return 1
 
         captured = 0
-        for i, (vx, vy, vz, az, el) in enumerate(views):
+        # Steps 2-4: Front (capture), Left (capture), Right (capture)
+        for i, (name, eye, target) in enumerate(poses):
+            step = i + 2
+            self.get_logger().info(f'[{step}/7] Moving to {name}...')
             t0 = time.time()
-            ok, why = self.execute(self.pose_goal((vx, vy, vz), look_at((vx, vy, vz), canopy)))
+            ok, why = self.execute(self.pose_goal(eye, look_at(eye, target)))
             status[i] = ok
-            self.publish_markers(canopy, views, status)
+            self.publish_markers(canopy, poses, status)
             if not ok:
-                self.get_logger().warn(
-                    f'view {i + 1}/{len(views)} (az {az:+.0f}, el {el:+.0f}): '
-                    f'unreachable ({why})')
+                self.get_logger().warn(f'{name}: unreachable ({why})')
                 continue
             captured += 1
-            time.sleep(float(self.p('dwell_s')))
-            saved = self.save_image(i)
             self.get_logger().info(
-                f'view {i + 1}/{len(views)} (az {az:+.0f}, el {el:+.0f}): reached in '
-                f'{time.time() - t0:.1f}s' + (f', saved {saved}' if saved else ''))
+                f'{name}: reached in {time.time() - t0:.1f}s, capturing for {dwell:.1f}s...')
+            time.sleep(dwell)
+            saved = self.save_image(name)
+            if saved:
+                self.get_logger().info(f'{name}: saved {saved}')
 
-        ok, why = self.execute(self.home_goal())
+        # Step 5: Return to Front
+        self.get_logger().info('[5/7] Returning to Front...')
+        self.execute(self.pose_goal(front_eye, look_at(front_eye, front_target)))
+
+        # Step 6: Retract to pre-grasp (already at Front = pre-grasp)
+        self.get_logger().info('[6/7] Retract (at pre-grasp).')
+
+        # Step 7: Home (stow)
+        self.get_logger().info('[7/7] Returning home (stow)...')
+        ok, why = self.execute(self.stow_goal())
+
         self.get_logger().info(
-            f'Inspection done: {captured}/{len(views)} viewpoints reached; '
+            f'Inspection done: {captured}/3 viewpoints reached; '
             f'back home: {"yes" if ok else "no (" + why + ")"}')
         return 0 if captured else 2
 
