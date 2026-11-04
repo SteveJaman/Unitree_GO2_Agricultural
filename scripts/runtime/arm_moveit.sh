@@ -91,12 +91,13 @@ if [ "${INSPECT}" = "true" ]; then
         # A folded arm first moves to stow: MoveIt plans nothing from the fold.
         ARM_START_STOW=1 python3 "${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py" &
         BRIDGE_PID=$!
-        # MoveIt starts only once the bridge reports the real arm's joints.
-        for _ in $(seq 1 30); do
-            kill -0 "${BRIDGE_PID}" 2>/dev/null || fail "moveit_d1_bridge stopped: no real arm, nothing was moved"
-            timeout 3 ros2 topic echo --once /joint_states >/dev/null 2>&1 && break
+        # MoveIt starts only once the bridge reports the real arm's joints, which
+        # is after any move to stow. The type makes echo wait for a publisher.
+        DEADLINE=$((SECONDS + 90))
+        until timeout 3 ros2 topic echo --once /joint_states sensor_msgs/msg/JointState >/dev/null 2>&1; do
+            kill -0 "${BRIDGE_PID}" 2>/dev/null || fail "moveit_d1_bridge stopped: see its message above"
+            [ "${SECONDS}" -lt "${DEADLINE}" ] || fail "no joint states from moveit_d1_bridge in 90 s"
         done
-        timeout 3 ros2 topic echo --once /joint_states >/dev/null 2>&1 || fail "no joint states from moveit_d1_bridge"
     fi
 
     ros2 launch d1_moveit_config demo.launch.py "${LAUNCH_ARGS[@]}" &

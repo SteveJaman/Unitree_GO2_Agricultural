@@ -335,7 +335,8 @@ class InspectPlant(Node):
             step = i + 2
             self.get_logger().info(f'[{step}/7] Moving to {name}...')
             t0 = time.time()
-            ok, why = self.execute(self.pose_goal(eye, look_at(eye, target)))
+            # Pre-grasp is the Front pose: planning it again only whirls the wrist.
+            ok, why = (True, '') if i == 0 else self.execute(self.pose_goal(eye, look_at(eye, target)))
             status[i] = ok
             self.publish_markers(canopy, poses, status)
             if not ok:

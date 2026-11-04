@@ -66,6 +66,8 @@ class FakeArm:
         self.setpoints, self.calls = [], []
         self.enabled, self.powered = enabled, enabled
         self.blocked = self.silent = False
+        self.delay = 0.0  # s behind the commands
+        self.history = []
         self.playback = None
         self.next_telemetry = 0.0
         self.link = FakeLink(self) if robot else None
@@ -88,8 +90,13 @@ class FakeArm:
             self.command = points[min(i, len(points) - 1)]
             if i >= len(points):
                 self.playback = None
-        if not self.blocked:
-            self.pos = list(self.command)
+        if self.blocked:
+            return
+        now = time.monotonic()
+        self.history.append((now, list(self.command)))
+        while len(self.history) > 1 and self.history[1][0] <= now - self.delay:
+            self.history.pop(0)
+        self.pos = list(self.history[0][1])
 
     def _telemetry(self):
         self._step()
@@ -275,10 +282,20 @@ def test_cancel_stops_at_once_and_holds():
 def test_blocked_arm_aborts():
     node, arm = make()
     arm.blocked = True
-    goal = FakeGoal(trajectory([0] * 6, [25] * 6, 2.0))
+    goal = FakeGoal(trajectory([0] * 6, [45] * 6, 3.0))
     result = node.run_goal(goal)
     assert goal.state == "aborted" and result.error_code == Result.PATH_TOLERANCE_VIOLATED
     assert "behind" in result.error_string
+    node.destroy_node()
+
+
+def test_arm_a_second_late_is_not_blocked():
+    # Seen on the real arm over Wi-Fi at wrist speed.
+    node, arm = make()
+    arm.delay = 0.8
+    goal = FakeGoal(trajectory([0] * 6, [0, 0, 0, 40, 0, 0], 2.5))
+    node.run_goal(goal)
+    assert goal.state == "succeeded"
     node.destroy_node()
 
 
@@ -314,6 +331,37 @@ def test_start_stow_moves_a_folded_arm_to_stow():
     node, arm = make(angles=FOLD, start_stow=True)
     assert np.allclose(arm.pos, STOW_DEG, atol=0.1)
     assert all(s["angle6"] == -29.5 for s in arm.setpoints)
+    node.destroy_node()
+
+
+def test_start_stow_accepts_a_fold_with_the_wrist_rolled():
+    # Read from the real arm after a sign test: joint 5 left at +30.
+    node, arm = make(angles=(-5.5, -88.8, 91.8, 8.3, 19.9, 29.9), start_stow=True)
+    assert np.allclose(arm.pos, STOW_DEG, atol=0.1)
+    node.destroy_node()
+
+
+def test_ctrl_c_during_the_stow_move_stops_the_robot():
+    real_move = bridge.smooth_move
+
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+
+    bridge.smooth_move = interrupted
+    arm = FakeArm(angles=FOLD, robot=True)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            bridge.MoveItD1Bridge([1] * 6, arm=arm, start_stow=True)
+    finally:
+        bridge.smooth_move = real_move
+    assert any("traj_stop" in m for m in arm.link.sent)
+
+
+def test_start_stow_needs_the_shoulder_on_the_fold():
+    angles = list(FOLD)
+    angles[1] += 12
+    node, arm = make(angles=angles, start_stow=True)
+    assert arm.setpoints == []
     node.destroy_node()
 
 

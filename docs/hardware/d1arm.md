@@ -781,9 +781,12 @@ fold as a self-collision (the wrist against `Empty_Link1`) and plans nothing fro
 it, so with `ARM_START_STOW=1`, which `--real` sets, the bridge glides the arm to
 stow at 15 °/s before MoveIt starts. That path was checked pose by pose in
 MoveIt: the only contacts are between the arm's own links near the fold, and it
-never touches the dog's boxes. It runs only from within 8° of `FOLDED_ANGLES`:
-from any other pose the arm stays where it is. Refold it with `start_arm.sh
-fold` after a run. A bridge started by hand does not move the arm unless you set
+never touches the dog's boxes. It runs only when the shoulder, elbow and wrist
+pitch are within 8° of `FOLDED_ANGLES` (the roll joints 0, 3 and 5 within 35°):
+from any other pose the arm stays where it is, and the log names the joint that
+is off. Refold it with `start_arm.sh
+fold` after a run. Ctrl+C during this move stops it, and the arm holds where it
+is. A bridge started by hand does not move the arm unless you set
 `ARM_START_STOW=1`.
 
 On start-up the bridge powers and enables the arm only if it needs to: enable-all
@@ -801,7 +804,8 @@ angle it finds. For each trajectory it:
    success only within 2° of the goal.
 
 It stops at once and reports the failure to MoveIt on a cancel, when the arm
-falls 20° behind the path (something is blocking it), or when telemetry stops
+falls 20° behind where the path was 1 s ago (something is blocking it; the 1 s
+covers Wi-Fi and firmware delay), or when telemetry stops
 for 1 s. Shutting down leaves the arm **enabled and holding**; fold it with
 `start_arm.sh fold`.
 

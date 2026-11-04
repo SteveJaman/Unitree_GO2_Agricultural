@@ -31,8 +31,8 @@ held at the angle it has on start-up.
 
 With ARM_START_STOW=1 (arm_moveit.sh --real), an arm resting on its fold is then
 moved to stow: MoveIt's model counts the real fold as a self-collision and plans
-nothing from it. Only from the fold: from any other pose this straight
-joint-space move is unchecked, so the arm stays where it is.
+nothing from it. Only from the fold, whatever the roll joints: from any other
+pose this straight joint-space move is unchecked, so the arm stays where it is.
 
 Usage (arm_moveit.sh --real does this):
     ARM_JOINT_SIGNS="1 1 1 1 1 1" python3 scripts/nodes/moveit_d1_bridge.py
@@ -53,6 +53,7 @@ Joint mapping: MoveIt Joint1..Joint6 (radians) <-> D1 joint 0..5 (degrees).
 import json
 import math
 import os
+import signal
 import sys
 import threading
 import time
@@ -68,6 +69,7 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
 
 from d1_arm_calibration import FOLDED_ANGLES
@@ -102,11 +104,15 @@ START_TOLERANCE_DEG = (
     5.0  # mode 0 would jump: refuse a trajectory that starts elsewhere
 )
 PATH_TOLERANCE_DEG = 20.0  # behind the setpoint: something is blocking the arm
+PATH_LAG_S = 1.0  # measured against the setpoint this long ago: Wi-Fi and the
+# firmware delay telemetry, at wrist speed 1 s reads as 20 deg (real arm, 2026-11-03)
 GOAL_TOLERANCE_DEG = 2.0
 TELEMETRY_TIMEOUT_S = 1.0
 T_POWER, T_ENABLE = 1.5, 1.0  # s, as d1_arm_calibration.py
 STOW_RAD = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # "stow" in d1_go2.srdf, MoveIt angles
-FOLD_TOLERANCE_DEG = 8.0  # counts as resting on the fold
+# Counts as resting on the fold: shoulder, elbow and wrist pitch decide that; the
+# roll joints (base, 3, 5) only turn the wrist in place, e.g. after a sign test.
+FOLD_TOLERANCE_DEG = np.array([35.0, 8.0, 8.0, 35.0, 8.0, 35.0])
 STOW_TOLERANCE_DEG = 5.0  # already there, nothing to do
 STOW_MAX_MOVE_DEG = 65.0  # fold to stow is 57 at most: more means a wrong sign
 STOW_VEL_DEG_S, STOW_ACC_DEG_S2 = 15.0, 30.0
@@ -187,7 +193,7 @@ class MoveItD1Bridge(Node):
         self.busy = False
         try:
             self.connect(arm, start_stow)
-        except RuntimeError:
+        except (RuntimeError, KeyboardInterrupt):
             self.destroy_node()  # left half-built it crashes Python on exit
             raise
 
@@ -260,10 +266,15 @@ class MoveItD1Bridge(Node):
         if np.abs(now - stow).max() <= STOW_TOLERANCE_DEG:
             self.get_logger().info("Already at stow")
             return
-        fold = np.array(FOLDED_ANGLES[:ARM_JOINTS])
-        if np.abs(now - fold).max() > FOLD_TOLERANCE_DEG:
+        off = np.abs(now - np.array(FOLDED_ANGLES[:ARM_JOINTS]))
+        if (off > FOLD_TOLERANCE_DEG).any():
+            joints = ", ".join(
+                f"joint {j} off by {off[j]:.1f}"
+                for j in np.flatnonzero(off > FOLD_TOLERANCE_DEG)
+            )
             self.get_logger().warn(
-                "Not on the fold: staying here (MoveIt plans from this pose)"
+                f"Not on the fold ({joints} deg, arm at {np.round(now, 1).tolist()}): "
+                "staying here. If MoveIt refuses this pose, move the arm to stow"
             )
             return
         if np.abs(stow - now).max() > STOW_MAX_MOVE_DEG:
@@ -277,13 +288,19 @@ class MoveItD1Bridge(Node):
             max_acc=STOW_ACC_DEG_S2,
             settle_timeout=4.0,
         )
-        done = smooth_move(
-            self.arm,
-            list(stow),
-            gripper=self.gripper,
-            cfg=cfg,
-            limits={j: JOINT_LIMITS[j] + LIMIT_MARGIN_DEG for j in range(ARM_JOINTS)},
-        )
+        try:
+            done = smooth_move(
+                self.arm,
+                list(stow),
+                gripper=self.gripper,
+                cfg=cfg,
+                limits={
+                    j: JOINT_LIMITS[j] + LIMIT_MARGIN_DEG for j in range(ARM_JOINTS)
+                },
+            )
+        except KeyboardInterrupt:
+            self.stop_arm()  # on the Go2 the robot would otherwise finish the move
+            raise
         if not done.reached:
             raise RuntimeError(f"stow not reached (off by {done.final_error:.1f} deg)")
 
@@ -367,7 +384,8 @@ class MoveItD1Bridge(Node):
             now = time.monotonic()
             if now - self.measured_at > TELEMETRY_TIMEOUT_S:
                 return "no telemetry from the arm"
-            behind = float(np.abs(point - np.array(self.measured)).max())
+            reference = points[max(0, i - int(PATH_LAG_S / dt))]
+            behind = float(np.abs(reference - np.array(self.measured)).max())
             if behind > PATH_TOLERANCE_DEG:
                 return (
                     f"{behind:.1f} deg behind the path: is something blocking the arm?"
@@ -405,6 +423,20 @@ class MoveItD1Bridge(Node):
         self.get_logger().error(f"Trajectory failed: {why}")
         goal_handle.abort()
         return FollowJointTrajectory.Result(error_code=code, error_string=why)
+
+    def wait_until_still(self, timeout=2.0):
+        """After a stop the arm coasts to its last setpoint: planning from a moving
+        arm fails MoveIt's start check. Publishes the joints meanwhile."""
+        end = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < end:
+            time.sleep(0.2)
+            self.poll_angles()
+            self.publish_joint_states()
+            now = np.array(self.measured)
+            if last is not None and np.abs(now - last).max() < 0.3:
+                return
+            last = now
 
     def stop_arm(self):
         """Stop the robot's playback; streamed from here, the arm holds the last setpoint."""
@@ -450,8 +482,7 @@ class MoveItD1Bridge(Node):
             why = self.play(points, dt, goal_handle)
             if why:
                 self.stop_arm()
-                self.poll_angles()
-                self.publish_joint_states()
+                self.wait_until_still()
                 if why == "cancelled":
                     self.get_logger().info("Trajectory cancelled: holding")
                     goal_handle.canceled()
@@ -485,12 +516,19 @@ def main():
         signs = parse_signs(os.environ.get("ARM_JOINT_SIGNS", ""))
     except ValueError as e:
         sys.exit(f"[bridge] {e}")
-    rclpy.init()
+    # Python's own handlers, not rclpy's: those only flag the shutdown, and the
+    # stow move in the constructor would run on after Ctrl+C. Explicit because
+    # a background job (arm_moveit.sh) starts with SIGINT ignored.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         node = MoveItD1Bridge(signs, start_stow=os.environ.get("ARM_START_STOW") == "1")
-    except RuntimeError as e:
+    except (RuntimeError, KeyboardInterrupt) as e:
         rclpy.shutdown()
-        sys.exit(f"[bridge] {e}")
+        sys.exit(
+            f"[bridge] {e}" if str(e) else "[bridge] stopped: the arm holds where it is"
+        )
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:
