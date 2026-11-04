@@ -1,0 +1,17 @@
+# hardware:=real: the arm through scripts/nodes/moveit_d1_bridge.py (no gripper controller).
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names: [arm_controller]
+  arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [Joint1, Joint2, Joint3, Joint4, Joint5, Joint6]
+
+# A real arm sags a degree or two where a simulated one stops exactly (0.01 rad,
+# the default, refuses every plan), and the bridge settles after the trajectory.
+trajectory_execution:
+  allowed_start_tolerance: 0.05          # rad; the bridge refuses more than 5 deg itself
+  allowed_execution_duration_scaling: 1.5
+  allowed_goal_duration_margin: 4.0      # s, for the settle at the end

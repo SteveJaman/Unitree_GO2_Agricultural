@@ -11,6 +11,8 @@
                   gazebo: gz_ros2_control/GazeboSimSystem in Gazebo Harmonic
                   (the go2-sim-moveit image; SIM_MOVEIT=1 merges this arm into
                   the simulated Go2, see docs/simulation/hydroponic_trial.md).
+                  real: the real arm through moveit_d1_bridge.py. Nothing reads
+                  the <ros2_control> block: demo.launch.py starts no ros2_control.
     end_effector  gripper (default): the D1's two-finger gripper, tool frame
                   tool0 between the fingertips.
                   camera: no gripper; a mock depth camera (RealSense D405 size)
@@ -52,7 +54,7 @@
   <!-- The arm: the D1-550 description, gripper or not (config/d1_550_arm.xacro) -->
   <xacro:include filename="$(find d1_moveit_config)/config/d1_550_arm.xacro"/>
   <xacro:d1_550_arm end_effector="${end_effector}"/>
-  
+
   <!-- FIXED: Rotated 180 degrees (yaw = PI) so the arm faces the BACK of the dog -->
   <joint name="go2_to_d1" type="fixed">
     <parent link="go2_trunk"/><child link="base_link"/>

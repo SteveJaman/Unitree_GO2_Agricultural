@@ -2,38 +2,49 @@
 """
 moveit_d1_bridge.py
 
-Bridge between MoveIt 2's joint trajectory controller and the physical D1 arm.
-MoveIt speaks ROS 2 trajectories (radians); the D1 speaks JSON DDS (degrees).
+The real D1 arm as MoveIt's arm_controller. MoveIt speaks ROS 2 trajectories
+(radians); the D1 speaks JSON (degrees). Started by arm_moveit.sh --real, with
+demo.launch.py hardware:=real, which runs no ros2_control: this node is the
+only server of /arm_controller/follow_joint_trajectory and the only publisher
+of /joint_states.
 
-Subscribes to /arm_controller/joint_trajectory, buffers the waypoints, and
-streams them to the D1 at 50 Hz using the min-jerk smoothing from d1_motion.py.
-This prevents the wrist shaking that occurs when waypoints are sent blindly.
+Each FollowJointTrajectory goal:
+  1. is checked before anything moves: all six joints, within the arm's limits
+     and max_vel, and starting where the arm actually is;
+  2. is resampled at BRIDGE_RATE (50 Hz) with MoveIt's own timing, so Cartesian
+     paths stay straight and the arm never stops between waypoints;
+  3. plays in mode 0 (direct). With the arm on the Go2 the whole trajectory goes
+     to the robot in one traj_points message, because streamed over Wi-Fi the
+     setpoints bunch up and the arm shakes (docs/hardware/d1arm.md). Wired, it
+     is streamed from here;
+  4. ends with smooth_move() on the last point, whose outer PID removes gravity
+     sag, and succeeds only if the arm is within GOAL_TOLERANCE_DEG.
 
-Usage:
-    # In one terminal, with MoveIt running:
-    python3 scripts/nodes/moveit_d1_bridge.py
+It stops at once on a cancel, when the arm falls PATH_TOLERANCE_DEG behind, or
+when telemetry stops, and reports that to MoveIt. The arm then holds where it
+is. Shutting down leaves the arm enabled and holding: it never releases by
+itself, the arm would fall. Fold it with start_arm.sh fold.
 
-    # Or launched by arm_moveit.sh --real
+Start-up powers and enables the arm only if it is not already: enable-all sent
+to an enabled arm drives it back to its last target (d1arm.md). The gripper is
+held at the angle it has on start-up.
+
+Usage (arm_moveit.sh --real does this):
+    ARM_JOINT_SIGNS="1 1 1 1 1 1" python3 scripts/nodes/moveit_d1_bridge.py
 
 Environment:
-    ARM_IFACE       Arm network interface (default: from d1_arm_control auto-detect)
-    ARM_ROBOT       Go2 Wi-Fi IP for arm-over-Wi-Fi (optional)
-    BRIDGE_RATE     Streaming rate in Hz (default: 50)
+    ARM_JOINT_SIGNS Required: "+1/-1" for each of Joint1..Joint6, firmware angle
+                    = sign x MoveIt angle. The D1-550 URDF and Unitree's own
+                    d1_description disagree on Joint1 and Joint6: test on the
+                    arm (d1arm.md, "Joint signs") before setting this.
+    ARM_IFACE       Arm network interface (default: d1_arm_control's auto-detect)
+    ARM_ROBOT       Go2 Wi-Fi IP, for an arm plugged into the Go2
+    BRIDGE_RATE     Trajectory rate in Hz (default: 50)
 
-The bridge:
-  1. Subscribes to /arm_controller/joint_trajectory (trajectory_msgs/JointTrajectory).
-  2. For each incoming trajectory, extracts the final waypoint as the target.
-  3. Uses d1_motion.smooth_move() to stream the arm there at 50 Hz with
-     min-jerk interpolation and the outer PID for settling — the same
-     anti-wobble logic that d1_arm_control uses for all real arm moves.
-  4. Also provides a FollowJointTrajectory action server so MoveIt's
-     trajectory controller can send goals and get feedback.
-
-Joint mapping:
-    MoveIt Joint1..Joint6 (radians) ↔ D1 joint 0..5 (degrees)
-    The D1-550 URDF and Unitree's firmware use the same joint order and sign
-    convention, verified against the real arm.
+Joint mapping: MoveIt Joint1..Joint6 (radians) <-> D1 joint 0..5 (degrees).
 """
+
+import json
 import math
 import os
 import sys
@@ -43,208 +54,383 @@ import time
 # Add the nodes directory so d1_arm_control and d1_motion can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import numpy as np
 import rclpy
-from rclpy.action import ActionServer
+from control_msgs.action import FollowJointTrajectory
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from control_msgs.action import FollowJointTrajectory
 from sensor_msgs.msg import JointState
-from trajectory_msgs.msg import JointTrajectory
 
-from d1_arm_control import D1Arm, JOINT_LIMITS
-from d1_motion import MotionConfig, smooth_move, read_angles, ARM_JOINTS
+from d1_arm_control import (
+    ADDR_CMD,
+    ADDR_TELEM,
+    D1Arm,
+    ENABLE_FULL,
+    FUNC_JOINTS,
+    JOINT_LIMITS,
+)
+from d1_motion import (
+    ARM_JOINTS,
+    MotionConfig,
+    robot_has,
+    smooth_move,
+    steady_gripper,
+    stop_stream,
+)
 
-MOVEIT_JOINTS = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6']
+MOVEIT_JOINTS = ["Joint1", "Joint2", "Joint3", "Joint4", "Joint5", "Joint6"]
+FINGER_JOINTS = ["Joint_L", "Joint_R"]  # in the gripper model; not driven from here
 RAD2DEG = 180.0 / math.pi
 DEG2RAD = math.pi / 180.0
 
-# Safety: scale MoveIt's already-scaled velocity down further for the real arm.
-# arm_moveit.sh --real sets velocity_scaling to 0.2; the bridge adds its own
-# limit via d1_motion's max_vel.
-REAL_MAX_VEL_DEG_S = 30.0   # degrees/s per joint (d1_motion default)
-REAL_MAX_ACC_DEG_S2 = 60.0  # degrees/s^2
-STREAM_RATE = float(os.environ.get('BRIDGE_RATE', '50'))
+STREAM_RATE = float(os.environ.get("BRIDGE_RATE", "50"))
+REAL_MAX_VEL_DEG_S = 30.0  # refuse faster trajectories (d1_motion's limit)
+REAL_MAX_ACC_DEG_S2 = 60.0
+LIMIT_MARGIN_DEG = 3.0  # the real fold reads joint 2 at +91.8
+START_TOLERANCE_DEG = (
+    5.0  # mode 0 would jump: refuse a trajectory that starts elsewhere
+)
+PATH_TOLERANCE_DEG = 20.0  # behind the setpoint: something is blocking the arm
+GOAL_TOLERANCE_DEG = 2.0
+TELEMETRY_TIMEOUT_S = 1.0
+T_POWER, T_ENABLE = 1.5, 1.0  # s, as d1_arm_calibration.py
+
+
+def parse_signs(text):
+    """ARM_JOINT_SIGNS: six values, each +1 or -1."""
+    try:
+        signs = [int(v) for v in text.split()]
+    except (AttributeError, ValueError):
+        signs = []
+    if len(signs) != ARM_JOINTS or any(s not in (1, -1) for s in signs):
+        raise ValueError(f'ARM_JOINT_SIGNS needs six values of 1 or -1, got "{text}"')
+    return signs
+
+
+def seconds(duration):
+    return duration.sec + duration.nanosec * 1e-9
+
+
+def resample(trajectory, rate):
+    """MoveIt's trajectory at a fixed rate, positions in radians, Joint1..Joint6
+    in columns, (cubic Hermite through the points where MoveIt gives velocities).
+    Raises ValueError if a joint is missing or there are no points."""
+    missing = [j for j in MOVEIT_JOINTS if j not in trajectory.joint_names]
+    if missing:
+        raise ValueError(f"no {', '.join(missing)} in the trajectory")
+    if not trajectory.points:
+        raise ValueError("the trajectory has no points")
+    order = [trajectory.joint_names.index(j) for j in MOVEIT_JOINTS]
+    times, pos, vel = [], [], []
+    for pt in trajectory.points:
+        t = seconds(pt.time_from_start)
+        if times and t <= times[-1]:
+            continue
+        times.append(t)
+        pos.append([pt.positions[i] for i in order])
+        vel.append([pt.velocities[i] for i in order] if len(pt.velocities) else None)
+    times, pos = np.array(times), np.array(pos)
+    if len(times) == 1:
+        return pos.copy()
+    if any(v is None for v in vel):
+        vel = np.gradient(pos, times, axis=0)  # no velocities: secant slopes
+    vel = np.array(vel, dtype=float)
+    samples = np.append(np.arange(times[0], times[-1], 1.0 / rate), times[-1])
+    i = np.clip(np.searchsorted(times, samples, side="right") - 1, 0, len(times) - 2)
+    h = (times[i + 1] - times[i])[:, None]
+    s = (samples - times[i])[:, None] / h
+    h00, h10 = 2 * s**3 - 3 * s**2 + 1, s**3 - 2 * s**2 + s
+    h01, h11 = -2 * s**3 + 3 * s**2, s**3 - s**2
+    return h00 * pos[i] + h10 * h * vel[i] + h01 * pos[i + 1] + h11 * h * vel[i + 1]
+
+
+def check_points(points, dt, limits=JOINT_LIMITS):
+    """Why these firmware-angle setpoints (degrees) must not be played, or None."""
+    for j in range(ARM_JOINTS):
+        worst = float(np.abs(points[:, j]).max())
+        if worst > limits[j] + LIMIT_MARGIN_DEG:
+            return f"joint {j} reaches {worst:.1f} deg (limit {limits[j]:.0f})"
+    if len(points) > 1:
+        fastest = float((np.abs(np.diff(points, axis=0)) / dt).max())
+        if fastest > REAL_MAX_VEL_DEG_S:
+            return f"{fastest:.0f} deg/s (limit {REAL_MAX_VEL_DEG_S:.0f}): lower the velocity scaling"
+    return None
 
 
 class MoveItD1Bridge(Node):
-    """Bridges MoveIt joint trajectories to the physical D1 arm."""
+    """The physical D1 arm as a FollowJointTrajectory controller."""
 
-    def __init__(self):
-        super().__init__('moveit_d1_bridge')
-        self.get_logger().info('Starting MoveIt → D1 bridge...')
+    def __init__(self, signs, arm=None):
+        super().__init__("moveit_d1_bridge")
+        self.signs = np.array(signs, dtype=float)
+        self.arm = arm or D1Arm(
+            iface=os.environ.get("ARM_IFACE"), robot=os.environ.get("ARM_ROBOT")
+        )
+        if not self.arm.ok:
+            raise RuntimeError(
+                "the D1 arm did not answer (powered? ARM_ROBOT / ARM_IFACE?)"
+            )
+        self.arm_lock = (
+            threading.Lock()
+        )  # telemetry is drained on read: one reader at a time
+        self.measured = None  # firmware degrees, joints 0-5
+        self.measured_at = 0.0
+        self.busy = False
 
-        # Connect to the D1 arm
-        robot_ip = os.environ.get('ARM_ROBOT')
-        iface = os.environ.get('ARM_IFACE')
-        self.arm = D1Arm(iface=iface, robot=robot_ip)
-        self.arm_lock = threading.Lock()
-
-        # Motion config tuned for real hardware: conservative, smooth
-        self.cfg = MotionConfig(
+        self.bring_up()
+        self.gripper = steady_gripper(self.arm)
+        self.settle_cfg = MotionConfig(
             max_vel=REAL_MAX_VEL_DEG_S,
             max_acc=REAL_MAX_ACC_DEG_S2,
-            rate=STREAM_RATE,
-            min_duration=1.0,       # at least 1 s per move for safety
-            tolerance=1.5,          # deg, counted as reached
-            settle_time=0.5,
-            settle_timeout=4.0,
-            cmd_mode=1,
-            stream_mode=1,
-            robot_traj=True,        # use Go2 bridge if available
-            robot_rate=50.0,
+            min_duration=0.5,
+            tolerance=GOAL_TOLERANCE_DEG,
+            settle_time=0.3,
+            settle_timeout=2.0,
         )
 
-        cb_group = ReentrantCallbackGroup()
-
-        # Subscribe to raw trajectory topic (for monitoring / simple use)
-        self.traj_sub = self.create_subscription(
-            JointTrajectory,
-            '/arm_controller/joint_trajectory',
-            self._on_trajectory,
-            10,
-            callback_group=cb_group,
-        )
-
-        # FollowJointTrajectory action server — MoveIt's controller sends goals here
-        self._action_server = ActionServer(
+        group = ReentrantCallbackGroup()
+        self.js_pub = self.create_publisher(JointState, "/joint_states", 10)
+        self.create_timer(0.1, self.poll_joint_states, callback_group=group)
+        self.action = ActionServer(
             self,
             FollowJointTrajectory,
-            '/arm_controller/follow_joint_trajectory',
-            self._execute_trajectory,
-            callback_group=cb_group,
+            "/arm_controller/follow_joint_trajectory",
+            execute_callback=self.execute,
+            goal_callback=self.on_goal,
+            cancel_callback=lambda _goal: CancelResponse.ACCEPT,
+            callback_group=group,
+        )
+        self.get_logger().info(
+            f"Bridge ready: {STREAM_RATE:.0f} Hz, on the robot: {robot_has(self.arm, 'traj_points')}, "
+            f"signs {[int(s) for s in signs]}, gripper held at {self.gripper:.1f} deg"
         )
 
-        # Publish joint states from the real arm so MoveIt sees the actual positions
-        self.js_pub = self.create_publisher(JointState, '/joint_states', 10)
-        self.js_timer = self.create_timer(0.1, self._publish_joint_states)  # 10 Hz
-
-        self.get_logger().info(
-            f'Bridge ready. Streaming at {STREAM_RATE} Hz, '
-            f'max_vel={REAL_MAX_VEL_DEG_S} deg/s')
-
-    def _rad_to_deg(self, radians):
-        """Convert MoveIt joint angles (radians) to D1 angles (degrees)."""
-        return [r * RAD2DEG for r in radians]
-
-    def _deg_to_rad(self, degrees):
-        """Convert D1 joint angles (degrees) to MoveIt angles (radians)."""
-        return [d * DEG2RAD for d in degrees]
-
-    def _reorder_joints(self, joint_names, positions):
-        """Reorder positions from the trajectory's joint_names to our Joint1..6 order."""
-        ordered = [0.0] * ARM_JOINTS
-        for i, name in enumerate(MOVEIT_JOINTS):
-            if name in joint_names:
-                idx = joint_names.index(name)
-                ordered[i] = positions[idx]
-        return ordered
-
-    def _on_trajectory(self, msg):
-        """Handle a raw JointTrajectory message (topic subscriber)."""
-        if not msg.points:
+    def bring_up(self):
+        """Power and enable, each only if needed: enable-all on an enabled arm
+        drives it back to its last target."""
+        status = (self.arm.state() or {}).get("data")
+        if not status:
+            raise RuntimeError("no status from the arm")
+        if status.get("power_status") != 1:
+            self.get_logger().info("Motor power on")
+            self.arm.power(True)
+            time.sleep(T_POWER)
+            status = (self.arm.state() or {}).get("data", {})
+        if status.get("enable_status") == 1:
+            self.get_logger().info("Motors already enabled (holding): not re-enabled")
             return
-        # Take the last waypoint as the target
-        final = msg.points[-1]
-        target_rad = self._reorder_joints(msg.joint_names, list(final.positions))
-        target_deg = self._rad_to_deg(target_rad)
-        self.get_logger().info(
-            f'Trajectory received ({len(msg.points)} points), '
-            f'target: [{", ".join(f"{d:.1f}" for d in target_deg)}] deg')
-        self._move_to(target_deg)
+        self.get_logger().info("Enabling the motors")
+        self.arm.enable(ENABLE_FULL)
+        time.sleep(T_ENABLE)
+        if (self.arm.state() or {}).get("data", {}).get("enable_status") != 1:
+            raise RuntimeError("the motors did not enable")
 
-    def _execute_trajectory(self, goal_handle):
-        """FollowJointTrajectory action: execute MoveIt's planned trajectory."""
-        traj = goal_handle.request.trajectory
-        if not traj.points:
-            goal_handle.abort()
-            result = FollowJointTrajectory.Result()
-            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
-            return result
-
-        self.get_logger().info(
-            f'Action goal: {len(traj.points)} waypoints over '
-            f'{traj.points[-1].time_from_start.sec + traj.points[-1].time_from_start.nanosec * 1e-9:.2f}s')
-
-        # For the real arm, we don't blindly replay every waypoint — that causes
-        # shaking. Instead, we use d1_motion's smooth_move to glide to each
-        # significant waypoint with min-jerk interpolation.
-        #
-        # Strategy: move through a subset of waypoints (every ~0.5s or the last one)
-        # to approximate the planned path while keeping the motion smooth.
-        dt_threshold = 0.5  # seconds between waypoints we actually execute
-        waypoints = []
-        last_t = -dt_threshold
-        for pt in traj.points:
-            t = pt.time_from_start.sec + pt.time_from_start.nanosec * 1e-9
-            if t - last_t >= dt_threshold or pt is traj.points[-1]:
-                target_rad = self._reorder_joints(traj.joint_names, list(pt.positions))
-                waypoints.append(self._rad_to_deg(target_rad))
-                last_t = t
-
-        # Always include the final point
-        final_rad = self._reorder_joints(traj.joint_names, list(traj.points[-1].positions))
-        final_deg = self._rad_to_deg(final_rad)
-        if waypoints[-1] != final_deg:
-            waypoints.append(final_deg)
-
-        self.get_logger().info(f'Executing {len(waypoints)} smoothed waypoints...')
-
-        ok = True
-        for i, wp in enumerate(waypoints):
-            feedback = FollowJointTrajectory.Feedback()
-            feedback.joint_names = list(MOVEIT_JOINTS)
-            # Report the target we're heading toward
-            feedback.desired.positions = self._deg_to_rad(wp)
-            goal_handle.publish_feedback(feedback)
-
-            result = self._move_to(wp)
-            if result is not None and not result.reached:
-                self.get_logger().warn(
-                    f'Waypoint {i + 1}/{len(waypoints)} not reached '
-                    f'(final error {result.final_error:.1f} deg)')
-                # Continue anyway — the arm is close enough for the next move
-
-        goal_handle.succeed()
-        result = FollowJointTrajectory.Result()
-        result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
-        return result
-
-    def _move_to(self, target_deg):
-        """Move the arm to target_deg using smooth_move (anti-wobble)."""
-        with self.arm_lock:
+    # ------------------------------------------------------------------ state
+    def poll_angles(self):
+        """Newest telemetry without waiting (d1_motion.read_angles sleeps)."""
+        for text in self.arm._take():
             try:
-                result = smooth_move(
-                    self.arm, target_deg, gripper=0.0,
-                    cfg=self.cfg, limits=JOINT_LIMITS,
-                    log=lambda m: self.get_logger().info(m),
-                )
-                self.get_logger().info(
-                    f'  move: reached={result.reached}, '
-                    f'duration={result.duration:.2f}s, '
-                    f'final_error={result.final_error:.1f} deg')
-                return result
-            except Exception as e:
-                self.get_logger().error(f'Move failed: {e}')
-                return None
+                m = json.loads(text)
+            except ValueError:
+                continue
+            if m.get("address") == ADDR_TELEM and m.get("funcode") == 1:
+                data = m.get("data", {})
+                angles = [data.get(f"angle{j}") for j in range(ARM_JOINTS)]
+                if None not in angles:
+                    self.measured, self.measured_at = (
+                        [float(a) for a in angles],
+                        time.monotonic(),
+                    )
 
-    def _publish_joint_states(self):
-        """Read the real arm angles and publish as /joint_states."""
-        angles = read_angles(self.arm, timeout=0.05)
-        if angles is None:
+    def publish_joint_states(self):
+        if self.measured is None:
             return
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = list(MOVEIT_JOINTS)
-        msg.position = self._deg_to_rad(angles[:ARM_JOINTS])
-        msg.velocity = [0.0] * ARM_JOINTS
-        msg.effort = [0.0] * ARM_JOINTS
+        msg.name = MOVEIT_JOINTS + FINGER_JOINTS
+        msg.position = list(np.array(self.measured) * self.signs * DEG2RAD) + [0.0, 0.0]
         self.js_pub.publish(msg)
+
+    def poll_joint_states(self):
+        """10 Hz. During a move execute() holds the lock and publishes instead."""
+        if self.arm_lock.acquire(blocking=False):
+            try:
+                self.poll_angles()
+            finally:
+                self.arm_lock.release()
+            self.publish_joint_states()
+
+    # ---------------------------------------------------------------- commands
+    def send_setpoint(self, angles):
+        """One funcode 2 setpoint, mode 0, with no wait (arm._send sleeps 0.1 s)."""
+        data = {
+            "mode": 0,
+            **{f"angle{j}": round(float(a), 2) for j, a in enumerate(angles)},
+            "angle6": self.gripper,
+        }
+        self.arm.seq += 1
+        payload = {
+            "seq": self.arm.seq,
+            "address": ADDR_CMD,
+            "funcode": FUNC_JOINTS,
+            "data": data,
+        }
+        self.arm._write(json.dumps(payload, separators=(",", ":")))
+
+    def play(self, points, dt, goal_handle):
+        """Play the setpoints. Returns None, or why it stopped early."""
+        on_robot = robot_has(self.arm, "traj_points")
+        if on_robot:
+            self.arm.link.write(
+                json.dumps(
+                    {
+                        "traj_points": {
+                            "dt": dt,
+                            "points": [[round(float(a), 2) for a in p] for p in points],
+                            "gripper": self.gripper,
+                            "mode": 0,
+                        }
+                    },
+                    separators=(",", ":"),
+                )
+            )
+        t0 = self.measured_at = time.monotonic()
+        last_publish = 0.0
+        for i, point in enumerate(points):
+            if goal_handle.is_cancel_requested:
+                return "cancelled"
+            if not on_robot:
+                self.send_setpoint(point)
+            self.poll_angles()
+            now = time.monotonic()
+            if now - self.measured_at > TELEMETRY_TIMEOUT_S:
+                return "no telemetry from the arm"
+            behind = float(np.abs(point - np.array(self.measured)).max())
+            if behind > PATH_TOLERANCE_DEG:
+                return (
+                    f"{behind:.1f} deg behind the path: is something blocking the arm?"
+                )
+            if now - last_publish >= 0.1:
+                last_publish = now
+                self.publish_joint_states()
+            time.sleep(max(0.0, t0 + (i + 1) * dt - time.monotonic()))
+        if on_robot:
+            time.sleep(0.25)  # the robot's last sends
+        return None
+
+    # ------------------------------------------------------------------ action
+    def on_goal(self, _goal):
+        if self.busy:
+            self.get_logger().warn("Goal refused: the arm is still moving")
+            return GoalResponse.REJECT
+        self.busy = True
+        return GoalResponse.ACCEPT
+
+    def execute(self, goal_handle):
+        try:
+            return self.run_goal(goal_handle)
+        except Exception as e:  # e.g. the Wi-Fi link to the Go2 bridge broke
+            self.stop_arm()
+            return self.fail(
+                goal_handle,
+                FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED,
+                f"{e}",
+            )
+        finally:
+            self.busy = False
+
+    def fail(self, goal_handle, code, why):
+        self.get_logger().error(f"Trajectory failed: {why}")
+        goal_handle.abort()
+        return FollowJointTrajectory.Result(error_code=code, error_string=why)
+
+    def stop_arm(self):
+        """Stop the robot's playback; streamed from here, the arm holds the last setpoint."""
+        try:
+            stop_stream(self.arm)
+        except Exception as e:
+            self.get_logger().error(f"Could not stop the trajectory: {e}")
+
+    def run_goal(self, goal_handle):
+        Result = FollowJointTrajectory.Result
+        dt = 1.0 / STREAM_RATE
+        try:
+            points = resample(goal_handle.request.trajectory, STREAM_RATE)
+        except ValueError as e:
+            return self.fail(goal_handle, Result.INVALID_JOINTS, str(e))
+        points = points * RAD2DEG * self.signs
+        why = check_points(points, dt)
+        if why:
+            return self.fail(goal_handle, Result.INVALID_GOAL, why)
+
+        with self.arm_lock:
+            self.poll_angles()
+            if (
+                self.measured is None
+                or time.monotonic() - self.measured_at > TELEMETRY_TIMEOUT_S
+            ):
+                return self.fail(
+                    goal_handle,
+                    Result.PATH_TOLERANCE_VIOLATED,
+                    "no telemetry from the arm",
+                )
+            off = float(np.abs(points[0] - np.array(self.measured)).max())
+            if off > START_TOLERANCE_DEG:
+                return self.fail(
+                    goal_handle,
+                    Result.PATH_TOLERANCE_VIOLATED,
+                    f"the trajectory starts {off:.1f} deg from where the arm is",
+                )
+
+            self.get_logger().info(
+                f"Playing {len(points)} setpoints, {len(points) * dt:.1f} s"
+            )
+            why = self.play(points, dt, goal_handle)
+            if why:
+                self.stop_arm()
+                self.poll_angles()
+                self.publish_joint_states()
+                if why == "cancelled":
+                    self.get_logger().info("Trajectory cancelled: holding")
+                    goal_handle.canceled()
+                    return Result(error_code=Result.SUCCESSFUL, error_string=why)
+                return self.fail(goal_handle, Result.PATH_TOLERANCE_VIOLATED, why)
+
+            done = smooth_move(
+                self.arm,
+                list(points[-1]),
+                gripper=self.gripper,
+                cfg=self.settle_cfg,
+                limits={
+                    j: JOINT_LIMITS[j] + LIMIT_MARGIN_DEG for j in range(ARM_JOINTS)
+                },
+            )
+            self.poll_angles()
+            self.publish_joint_states()
+        if not done.reached:
+            return self.fail(
+                goal_handle,
+                Result.GOAL_TOLERANCE_VIOLATED,
+                f"stopped {done.final_error:.1f} deg from the goal",
+            )
+        self.get_logger().info(f"Goal reached (off by {done.final_error:.1f} deg)")
+        goal_handle.succeed()
+        return Result(error_code=Result.SUCCESSFUL)
 
 
 def main():
+    try:
+        signs = parse_signs(os.environ.get("ARM_JOINT_SIGNS", ""))
+    except ValueError as e:
+        sys.exit(f"[bridge] {e}")
     rclpy.init()
-    node = MoveItD1Bridge()
+    try:
+        node = MoveItD1Bridge(signs)
+    except RuntimeError as e:
+        rclpy.shutdown()
+        sys.exit(f"[bridge] {e}")
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:
@@ -252,10 +438,14 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info('Bridge shutting down.')
+        node.stop_arm()
+        node.get_logger().info(
+            "Bridge shutting down: the arm stays enabled and holding."
+        )
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

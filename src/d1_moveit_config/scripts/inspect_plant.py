@@ -19,20 +19,30 @@ The 3-point scan:
   6. Retract to pre-grasp.
   7. Return Home (stow).
 
-Parameters (world frame = ground under the Go2, x forward, y left):
-  plant_x, plant_y      plant position (default 0.10, -0.50: right of the dog)
-  bed_height            raised-bed height (0.30)
-  canopy_radius         canopy sphere radius (0.17); centre 0.38 m above the bed
-  standoff              camera distance from the canopy surface (0.10)
-  look_up_deg           camera look-up angle toward the canopy (25 deg)
+Parameters (world frame = ground under the Go2, x forward, y left). The
+defaults are the hydroponic trial's rack and lettuce (docs/simulation/
+hydroponic_trial.md) behind the dog, where the arm faces (mount yaw 180 deg):
+  plant_x, plant_y      plant position (-0.465, 0: the trial's 0.333 m standoff)
+  bed_height            rack height (0.864, the NFT stand)
+  bed_depth, bed_width  rack size along x and y (0.254, 1.02), centred on the plant
+  canopy_above_bed      canopy centre above the rack (0.09)
+  canopy_radius         canopy sphere radius (0.055)
+  standoff              camera distance from the canopy surface (0.095: 0.15 m
+                        from the plant centre, the trial's orbit radius)
+  look_up_deg           camera look-up angle toward the canopy (15 deg)
+  azimuth_deg           Left / Right viewpoints, either side of Front (30 deg).
+                        Planned against the solid rack box, 30 / 15 and 35 / 15
+                        reach 3/3; 45 / 25 only 1/3 (the camera ends up in the rack)
   dwell_s               pause at each viewpoint for capture (3.0 s)
   plan_only             plan each move but do not execute it
   image_topic           optional sensor_msgs/Image to save at each viewpoint
+  tool_link             link aimed at the plant: tool0 (gripper), or camera_link
+                        with end_effector:=camera, as the trial
   velocity_scaling      MoveIt velocity/acceleration scaling (0.3; 0.2 with --real)
 
-IMPORTANT: the dog MUST park at a 0.333 m standoff from the rack's front edge
-for the arm to reach the Left and Right angles (the D1-550's max reach is
-0.605 m).
+IMPORTANT: the dog MUST park with its tail 0.333 m from the rack's front edge
+(the arm is mounted facing backward) for the arm to reach the Left and Right
+angles (the D1-550's max reach is 0.605 m).
 """
 import math
 import os
@@ -56,8 +66,6 @@ from visualization_msgs.msg import Marker, MarkerArray
 ARM_JOINTS = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6']
 STOW_ANGLES = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # safe walking pose
 SUCCESS = 1  # moveit_msgs/MoveItErrorCodes.SUCCESS
-STEM_HEIGHT = 0.30
-CANOPY_ABOVE_BED = 0.38
 
 
 def look_at(eye, target):
@@ -86,15 +94,15 @@ def look_at(eye, target):
     return (q[0], q[1], q[2], (m[k, j] - m[j, k]) / s)
 
 
-def compute_3_point_poses(canopy, toward_dog_yaw, radius, look_up_deg):
+def compute_3_point_poses(canopy, toward_dog_yaw, radius, look_up_deg, azimuth_deg=30.0):
     """Compute Front, Left and Right camera positions around the canopy.
 
     Returns [(name, eye_xyz, target_xyz), ...] for the three discrete poses.
-    Left and Right are at ±45 deg azimuth from the front (toward the dog).
+    Left and Right are at ±azimuth_deg from the front (toward the dog).
     """
     el = math.radians(look_up_deg)
     poses = []
-    for name, az_deg in [('Front', 0.0), ('Left', -45.0), ('Right', 45.0)]:
+    for name, az_deg in [('Front', 0.0), ('Left', -azimuth_deg), ('Right', azimuth_deg)]:
         az = toward_dog_yaw + math.radians(az_deg)
         eye = (canopy[0] + radius * math.cos(el) * math.cos(az),
                canopy[1] + radius * math.cos(el) * math.sin(az),
@@ -108,17 +116,22 @@ class InspectPlant(Node):
     def __init__(self):
         super().__init__('inspect_plant')
         d = self.declare_parameter
-        d('plant_x', -0.40)
-        d('plant_y', -0.50)
-        d('bed_height', 0.30)
-        d('canopy_radius', 0.17)
-        d('standoff', 0.10)
-        d('look_up_deg', 25.0)
+        d('plant_x', -0.465)
+        d('plant_y', 0.0)
+        d('bed_height', 0.864)
+        d('bed_depth', 0.254)
+        d('bed_width', 1.02)
+        d('canopy_above_bed', 0.09)
+        d('canopy_radius', 0.055)
+        d('standoff', 0.095)
+        d('look_up_deg', 15.0)
+        d('azimuth_deg', 30.0)
         d('dwell_s', 3.0)
         d('plan_only', False)
         d('planning_time', 5.0)
         d('velocity_scaling', 0.3)
         d('image_topic', '')
+        d('tool_link', 'tool0')
         d('image_dir', os.path.expanduser('~/plant_inspection'))
         self.p = lambda n: self.get_parameter(n).value
 
@@ -142,6 +155,7 @@ class InspectPlant(Node):
 
     def add_plant(self, bed_h, canopy_r):
         x, y = self.p('plant_x'), self.p('plant_y')
+        above = float(self.p('canopy_above_bed'))
 
         def obj(name, kind, dims, pos):
             o = CollisionObject()
@@ -156,11 +170,10 @@ class InspectPlant(Node):
             return o
 
         objects = [
-            obj('bed', SolidPrimitive.BOX, (1.2, 0.6, bed_h), (x, y, bed_h / 2)),
-            obj('plant_stem', SolidPrimitive.CYLINDER, (STEM_HEIGHT, 0.03),
-                (x, y, bed_h + STEM_HEIGHT / 2)),
-            obj('plant_canopy', SolidPrimitive.SPHERE, (canopy_r,),
-                (x, y, bed_h + CANOPY_ABOVE_BED)),
+            obj('bed', SolidPrimitive.BOX, (self.p('bed_depth'), self.p('bed_width'), bed_h),
+                (x, y, bed_h / 2)),
+            obj('plant_stem', SolidPrimitive.CYLINDER, (above, 0.03), (x, y, bed_h + above / 2)),
+            obj('plant_canopy', SolidPrimitive.SPHERE, (canopy_r,), (x, y, bed_h + above)),
         ]
         req = ApplyPlanningScene.Request()
         req.scene = PlanningScene(is_diff=True)
@@ -204,7 +217,7 @@ class InspectPlant(Node):
         c = Constraints(name='view')
         pc = PositionConstraint()
         pc.header.frame_id = 'world'
-        pc.link_name = 'tool0'
+        pc.link_name = self.p('tool_link')
         pc.constraint_region = BoundingVolume(
             primitives=[SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.01])],
             primitive_poses=[Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]),
@@ -212,7 +225,7 @@ class InspectPlant(Node):
         pc.weight = 1.0
         oc = OrientationConstraint()
         oc.header.frame_id = 'world'
-        oc.link_name = 'tool0'
+        oc.link_name = self.p('tool_link')
         oc.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
         oc.absolute_x_axis_tolerance = math.pi
         oc.absolute_y_axis_tolerance = 0.15
@@ -294,13 +307,13 @@ class InspectPlant(Node):
         if not self.add_plant(bed_h, canopy_r):
             return 1
         x, y = self.p('plant_x'), self.p('plant_y')
-        canopy = (x, y, bed_h + CANOPY_ABOVE_BED)
+        canopy = (x, y, bed_h + float(self.p('canopy_above_bed')))
         toward_dog = math.atan2(0.0 - y, 0.0 - x)
         radius = canopy_r + float(self.p('standoff'))
         look_up = float(self.p('look_up_deg'))
         dwell = float(self.p('dwell_s'))
 
-        poses = compute_3_point_poses(canopy, toward_dog, radius, look_up)
+        poses = compute_3_point_poses(canopy, toward_dog, radius, look_up, float(self.p('azimuth_deg')))
         status = {}
         self.publish_markers(canopy, poses, status)
         self.get_logger().info(

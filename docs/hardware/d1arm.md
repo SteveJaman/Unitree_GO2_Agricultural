@@ -596,10 +596,11 @@ used here, so a ±90° target is clamped by 0.05°. See [docs/simulation/gazebo.
 [`src/d1_moveit_config`](../../src/d1_moveit_config/) is a MoveIt 2 setup for
 the D1-550 on the Go2's back. Instead of joint angles, you give MoveIt a target
 for the gripper (a position and an orientation in space). MoveIt solves the
-inverse kinematics and plans a collision-free motion to it. It can run on mock hardware 
-(the arm moves in RViz only), Gazebo (for simulation), or the real arm (with `--real`). 
-The `--real` flag launches `moveit_d1_bridge.py`, which translates MoveIt's trajectories into 
-D1 DDS JSON commands and streams them at 50 Hz with min-jerk smoothing to prevent wrist wobble.
+inverse kinematics and plans a collision-free motion to it. It can run on mock
+hardware (the arm moves in RViz only), Gazebo (for simulation), or the real arm
+(with `--real`). With `--real`, `moveit_d1_bridge.py` takes the place of the
+mock controller and plays MoveIt's trajectories on the arm; there is no mock arm
+behind it.
 
 ### Install and run
 
@@ -613,7 +614,9 @@ git clone https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM ~/files
 ```bash
 ./scripts/runtime/arm_moveit.sh              # build if needed, then RViz + MoveIt
 ./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
-./scripts/runtime/arm_moveit.sh --real       # real arm: bridge + 3-point inspect
+ARM_JOINT_SIGNS="1 1 1 1 1 1" ./scripts/runtime/arm_moveit.sh --real   # MOVES THE ARM: see "Joint signs"
+./scripts/runtime/arm_moveit.sh --real --robot <go2-ip>                # arm plugged into the Go2 (or ARM_ROBOT)
+./scripts/runtime/arm_moveit.sh --real --camera                        # camera on the wrist flange, as the sim trial
 ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
 ./scripts/runtime/arm_moveit.sh --no-rviz    # headless (move_group + controllers only)
 ```
@@ -627,7 +630,8 @@ What `arm_moveit.sh` does:
    `install/`, the first time or with `--build`.
 3. Isolates DDS: `ROS_DOMAIN_ID=78` (`ARM_ROS_DOMAIN_ID`),
    `ROS_LOCALHOST_ONLY=1`, no `CYCLONEDDS_URI`. Nothing it publishes can reach
-   the robot (domain 64) or the arm (domain 0).
+   the robot (domain 64) or the arm (domain 0). Only `--real` touches the
+   arm, through the bridge.
 4. Launches [`demo.launch.py`](../../src/d1_moveit_config/launch/demo.launch.py):
    `robot_state_publisher`, `move_group` (OMPL), `ros2_control` with the
    `arm_controller` and `gripper_controller` trajectory controllers, and RViz.
@@ -687,8 +691,8 @@ used yet.
 | Angles | degrees | radians |
 | Limits | ±135, ±90, ±90, ±135, ±90, ±135 | from the D1-550 URDF (±134.6° / ±89.95°) |
 
-The joint order matches; the signs have **not** yet been checked against the
-firmware (the URDF's `Joint1` axis is −z).
+The joint order matches. The signs have **not** been checked against the
+firmware: see [Joint signs](#joint-signs).
 
 ### Model
 
@@ -708,33 +712,42 @@ firmware (the URDF's `Joint1` axis is −z).
 | [`kinematics.yaml`](../../src/d1_moveit_config/config/kinematics.yaml) | KDL IK solver |
 | [`joint_limits.yaml`](../../src/d1_moveit_config/config/joint_limits.yaml) | Velocity / acceleration limits, 0.3 default scaling |
 | [`moveit_controllers.yaml`](../../src/d1_moveit_config/config/moveit_controllers.yaml), [`ros2_controllers.yaml`](../../src/d1_moveit_config/config/ros2_controllers.yaml) | `FollowJointTrajectory` controllers for the arm and gripper |
+| [`moveit_controllers_real.yaml`](../../src/d1_moveit_config/config/moveit_controllers_real.yaml) | `hardware:=real`: the arm only, with the execution tolerances a real arm needs |
 | [`demo.launch.py`](../../src/d1_moveit_config/launch/demo.launch.py) | MoveIt demo launch (OMPL pipeline) |
 | [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py) | Plant-inspection demo |
-| `moveit_d1_bridge.py` | The hardware bridge for `--real` |
+| [`moveit_d1_bridge.py`](../../scripts/nodes/moveit_d1_bridge.py) | The hardware bridge for `--real` |
 
 ### Plant-inspection demo (`--inspect`)
 
 [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py)
-performs a **discrete 3-point scan** of a plant on a hydroponic rack. The dog
-MUST park at a **0.333 m standoff** from the rack front edge (Nav2 handles
-this).
+performs a **discrete 3-point scan** of a plant. Its defaults are the
+[hydroponic trial's](../simulation/hydroponic_trial.md) rack and lettuce (rack
+0.864 m high, plant centre at 0.954 m, camera 0.15 m from it), placed **behind**
+the dog, where the arm faces (mount yaw 180°). The dog parks with its **tail**
+0.333 m from the rack's front edge.
 
 **Flow (7 steps):**
 
-1. **Pre-grasp** — extend from stow to a safe pre-grasp pose in front of the plant.
-2. **Front** (0° azimuth) — camera aimed at the plant centre, 25° look-up. Hold 3 s for capture.
-3. **Left** (−45° azimuth) — rotate the camera 45° left. Hold 3 s.
-4. **Right** (+45° azimuth) — rotate 45° right of centre. Hold 3 s.
+1. **Pre-grasp** — extend from stow to the Front pose.
+2. **Front** (0° azimuth) — camera aimed at the plant centre, 15° look-up. Hold 3 s for capture.
+3. **Left** (−30° azimuth). Hold 3 s.
+4. **Right** (+30° azimuth). Hold 3 s.
 5. **Front** — return to the front view (confirmation shot).
-6. **Retract** — pull back to pre-grasp.
+6. **Retract** — the arm is already at pre-grasp.
 7. **Stow** — fold arm to walking pose (`J2 = −80°, J3 = 45°, J5 = 80°`).
 
 The stow pose keeps the arm folded tight over the dog's back:
-`STOW_ANGLES = [0.0, −1.396, 0.785, 0.0, 1.396, 0.0]` (radians).
+`STOW_ANGLES = [0.0, −1.396, 0.785, 0.0, 1.396, 0.0]` (radians). The mock arm
+starts there too, like the folded real arm.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `look_up_deg` | `25.0` | Camera look-up angle at each pose (degrees) |
+| `plant_x`, `plant_y` | `-0.465`, `0.0` | Plant position (world: ground under the dog, x forward) |
+| `bed_height`, `bed_depth`, `bed_width` | `0.864`, `0.254`, `1.02` | The rack, centred on the plant |
+| `canopy_above_bed`, `canopy_radius`, `standoff` | `0.09`, `0.055`, `0.095` | Plant centre, its size, camera distance from its surface |
+| `look_up_deg` | `15.0` | Camera look-up angle at each pose (degrees) |
+| `azimuth_deg` | `30.0` | Left and Right, either side of Front (degrees) |
+| `tool_link` | `tool0` | Link aimed at the plant; `camera_link` with `--camera` |
 | `dwell_s` | `3.0` | Pause at each of the 3 viewpoints (the capture moment) |
 | `velocity_scaling` | `0.3` | Speed and acceleration scaling (0.2 with `--real`) |
 
@@ -743,25 +756,80 @@ The stow pose keeps the arm folded tight over the dog's back:
 ./scripts/runtime/arm_moveit.sh --inspect
 
 # Real arm (velocity scaled to 20 %, bridge auto-started):
-./scripts/runtime/arm_moveit.sh --real
+ARM_JOINT_SIGNS="1 1 1 1 1 1" ./scripts/runtime/arm_moveit.sh --real
 ```
 
-The 3-point scan covers Front, Left (−45°) and Right (+45°) at 0.333 m
-standoff, well within the D1-550's 0.605 m reach. The ±45° azimuth was chosen
-to capture three distinct leaf angles while staying inside the arm's IK
-workspace (earlier trials showed ±50° pushing the limits at this standoff).
+Against the solid rack box, ±30° at 15° look-up reaches 3/3 viewpoints with the
+gripper and the camera; ±35° also does with the camera. ±45° at 25° reaches only
+1/3: the camera ends up just above the box. The trial's ±45° orbit ran against
+Gazebo's detailed rack, not this solid box. The arc itself (`compute_cartesian_path`) only runs in
+[`full_mission_test.py`](../../src/d1_moveit_config/scripts/full_mission_test.py),
+in Gazebo.
 
 ### From plan to the real arm
 
-**Implemented (pending physical test).** The `--real` flag bridges MoveIt's planning to the physical D1 arm using `scripts/nodes/moveit_d1_bridge.py`. 
+**Implemented; tested on a simulated arm, pending a physical test.**
 
-It acts as a `FollowJointTrajectory` action server. When MoveIt sends a planned trajectory, the bridge:
-1. Converts the radians to degrees.
-2. Buffers the waypoints.
-3. Streams them to the D1 arm at 50 Hz using the `d1_motion.py` minimum-jerk smoothing (preventing the wrist wobble that occurs when MoveIt's raw waypoints are sent directly).
-4. Publishes the real arm's `/joint_states` back to MoveIt so the planning scene stays accurate.
+`demo.launch.py hardware:=real` starts `move_group` without `ros2_control`, and
+[`moveit_d1_bridge.py`](../../scripts/nodes/moveit_d1_bridge.py) is the only
+`/arm_controller/follow_joint_trajectory` server and the only `/joint_states`
+publisher. `arm_moveit.sh --real` starts MoveIt only once the bridge reports the
+real arm's joints, and stops if the bridge cannot reach the arm.
 
-Before the first physical run, verify the joint signs and zero offsets against the firmware (`start_arm.sh feedback` at known poses).
+On start-up the bridge powers and enables the arm only if it needs to: enable-all
+on an enabled arm drives it back to its last target. It holds the gripper at the
+angle it finds. For each trajectory it:
+
+1. Checks it before anything moves: all six joints, within the joint limits,
+   at most 30 °/s, and starting within 5° of where the arm is.
+2. Resamples it at 50 Hz with MoveIt's own timing, so the arm never stops
+   between waypoints.
+3. Plays it in mode 0. With the arm on the Go2 the whole trajectory goes to the
+   robot in one `traj_points` message (streamed over Wi-Fi, the arm shakes);
+   wired, it streams from the laptop.
+4. Finishes with `smooth_move`, whose outer PID removes gravity sag, and reports
+   success only within 2° of the goal.
+
+It stops at once and reports the failure to MoveIt on a cancel, when the arm
+falls 20° behind the path (something is blocking it), or when telemetry stops
+for 1 s. Shutting down leaves the arm **enabled and holding**; fold it with
+`start_arm.sh fold`.
+
+`python3 -m pytest tests/test_moveit_bridge.py` tests all of this on a simulated
+arm. With `--serve` the simulated arm can stand in for the real one behind
+`demo.launch.py hardware:=real`.
+
+### Joint signs
+
+`--real` refuses to start without `ARM_JOINT_SIGNS`, six values of `1` or `-1`
+for `Joint1`–`Joint6` (firmware angle = sign × MoveIt angle). The D1-550 URDF
+MoveIt uses and Unitree's own `d1_description` (dashboard, IK scan) agree on
+joints 2, 3, 4 and 5 and **disagree on Joint1 and Joint6**; nothing here has
+measured which matches the firmware. A wrong sign sends the arm to the other side
+of the one MoveIt checked for collisions.
+
+Test it once, with the arm clear of the dog and a hand on the power. Joint
+numbers are `0`–`5` in the command:
+
+```bash
+A=./scripts/runtime/start_arm.sh
+$A state                       # enable_status 1: skip the next line, never re-enable
+$A enable sleep 2
+$A joint 0 10 sleep 3 feedback # base
+$A joint 5 30 sleep 3 feedback # wrist roll
+$A joint 5 0 sleep 3 joint 0 0 # back
+```
+
+| Command | Seen from | MoveIt's direction | Sign |
+|---|---|---|---|
+| `joint 0 10` | above | clockwise | `1` if it turned clockwise, else `-1` |
+| `joint 5 30` | behind the wrist, looking along the arm toward the gripper | clockwise | `1` if it turned clockwise, else `-1` |
+
+Set the other four to `1`, for example `ARM_JOINT_SIGNS="-1 1 1 1 1 -1"` if both
+are reversed. Check the mount at the same time: at `home` (all zeros) the forearm
+must point over the dog's **tail**, as in `d1_go2.urdf.xacro` (yaw 180°). The
+dashboard, `twin/d1_tf_urdf.py` and `arm_ik_scanner.py` still assume it points
+forward.
 
 ## Troubleshooting
 
@@ -782,6 +850,10 @@ Before the first physical run, verify the joint signs and zero offsets against t
 | `arm_moveit.sh`: `D1 description not found` | the D1-550 description repo is elsewhere | `D1_ARM_DIR=<path> ./scripts/runtime/arm_moveit.sh` |
 | MoveIt: Plan fails / viewpoint marked red | pose out of reach, or every IK solution collides | move the target closer to the arm, loosen the orientation, or raise `planning_time` |
 | MoveIt topics invisible from another terminal | different DDS domain | `export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1` first |
+| `arm_moveit.sh --real`: `needs ARM_JOINT_SIGNS` | the joint signs are not set | run the [joint sign test](#joint-signs) |
+| `arm_moveit.sh --real`: `moveit_d1_bridge stopped` | the bridge could not reach the arm; nothing moved | check as for `DDS discovery failed`; on the Go2, `--robot <go2-ip>` |
+| Bridge: `the trajectory starts N deg from where the arm is` | the arm moved outside MoveIt, or a wrong sign | restart `--real`; check `ARM_JOINT_SIGNS` |
+| Bridge: `N deg behind the path` | the arm is blocked or the signs are wrong | clear the arm; check `ARM_JOINT_SIGNS` |
 | `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |
 
 ## Arm roadmap

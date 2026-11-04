@@ -29,6 +29,11 @@ python3 src/d1_moveit_config/scripts/hydroponic_report.py \
     --out docs/images/hydroponic_trial
 ```
 
+> **These scores predate the mount change.** Trials A and B ran with the arm
+> facing forward. `01f5e8b` and `bc32285` then turned it 180° to match the real
+> dog, so the arm faces away from the rack here and, by an IK estimate, the pre-grasp
+> is out of reach until the dog approaches tail-first. The trials have not been re-run since.
+
 ---
 
 ## The world: CropKing NFT 8-4 hydroponic station
@@ -212,7 +217,7 @@ mission.
 
 ## Mission Score formula
 
-```
+```text
 Score = collision_pts + completion_pts + accuracy_pts   (0–100)
 
 collision_pts  = 40 − 10 × N_collisions                (max 40)

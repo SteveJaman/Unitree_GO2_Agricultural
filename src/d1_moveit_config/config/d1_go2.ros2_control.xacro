@@ -25,11 +25,15 @@
           <plugin>mock_components/GenericSystem</plugin>
         </xacro:unless>
       </hardware>
+      <!-- Mock starts folded (the SRDF's stow), like the real arm: all zeros
+           would put it inside inspect_plant.py's rack. Gazebo spawns at zero
+           and the mission stows it. -->
+      <xacro:property name="stow" value="${hardware != 'gazebo'}"/>
       <xacro:d1_joint name="Joint1" initial="0.0"/>
-      <xacro:d1_joint name="Joint2" initial="0.0"/>
-      <xacro:d1_joint name="Joint3" initial="0.0"/>
+      <xacro:d1_joint name="Joint2" initial="${-1.396 if stow else 0.0}"/>
+      <xacro:d1_joint name="Joint3" initial="${0.785 if stow else 0.0}"/>
       <xacro:d1_joint name="Joint4" initial="0.0"/>
-      <xacro:d1_joint name="Joint5" initial="0.0"/>
+      <xacro:d1_joint name="Joint5" initial="${1.396 if stow else 0.0}"/>
       <xacro:d1_joint name="Joint6" initial="0.0"/>
       <xacro:if value="${end_effector == 'gripper'}">
         <xacro:d1_joint name="Joint_L" initial="0.0"/>

@@ -24,16 +24,19 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
-from moveit_configs_utils.launches import generate_demo_launch
 
 REPO = os.environ.get('GO2_REPO', os.path.expanduser('~/files/Unitree_GO2_Agricultural'))
 
 
 def moveit_config(hardware, end_effector):
     mappings = {'hardware': hardware, 'end_effector': end_effector,
-                'use_mock_hardware': 'true' if hardware == 'mock' else 'false'}
-    controllers = 'config/moveit_controllers_camera.yaml' if end_effector == 'camera' \
-        else 'config/moveit_controllers.yaml'
+                'use_mock_hardware': 'false' if hardware == 'gazebo' else 'true'}
+    if hardware == 'real':
+        controllers = 'config/moveit_controllers_real.yaml'
+    elif end_effector == 'camera':
+        controllers = 'config/moveit_controllers_camera.yaml'
+    else:
+        controllers = 'config/moveit_controllers.yaml'
     return (
         MoveItConfigsBuilder('d1_go2', package_name='d1_moveit_config')
         .robot_description(file_path='config/d1_go2.urdf.xacro', mappings=mappings)
@@ -88,13 +91,57 @@ def gazebo_nodes(context):
 
 
 def mock_nodes(context):
+    # Explicit nodes instead of generate_demo_launch(): that helper includes
+    # launch/rsp.launch.py, move_group.launch.py, ... from this package, which
+    # the MoveIt Setup Assistant would generate but this package does not have.
     end_effector = LaunchConfiguration('end_effector').perform(context)
-    return generate_demo_launch(moveit_config('mock', end_effector)).entities
+    use_rviz = LaunchConfiguration('use_rviz').perform(context) == 'true'
+    cfg = moveit_config('mock', end_effector)
+    controllers_yaml = str(cfg.package_path / 'config' / 'ros2_controllers.yaml')
+    nodes = [
+        Node(package='robot_state_publisher', executable='robot_state_publisher',
+             name='robot_state_publisher', output='screen',
+             parameters=[cfg.robot_description]),
+        Node(package='controller_manager', executable='ros2_control_node', output='screen',
+             parameters=[cfg.robot_description, controllers_yaml]),
+        Node(package='moveit_ros_move_group', executable='move_group', output='screen',
+             parameters=[cfg.to_dict()]),
+    ]
+    for ctrl in ['joint_state_broadcaster', 'arm_controller'] + (['gripper_controller'] if end_effector == 'gripper' else []):
+        nodes.append(Node(package='controller_manager', executable='spawner', output='screen',
+                          arguments=[ctrl, '--controller-manager', '/controller_manager']))
+    if use_rviz:
+        nodes.append(Node(package='rviz2', executable='rviz2', output='log',
+                          arguments=['-d', str(cfg.package_path / 'config' / 'moveit.rviz')],
+                          parameters=[cfg.robot_description, cfg.robot_description_semantic,
+                                      cfg.planning_pipelines, cfg.robot_description_kinematics]))
+    return nodes
+
+
+def real_nodes(context):
+    # The real arm: no ros2_control. moveit_d1_bridge.py (started by arm_moveit.sh
+    # --real) is the only arm_controller action server and /joint_states publisher.
+    end_effector = LaunchConfiguration('end_effector').perform(context)
+    use_rviz = LaunchConfiguration('use_rviz').perform(context) == 'true'
+    cfg = moveit_config('real', end_effector)
+    nodes = [
+        Node(package='robot_state_publisher', executable='robot_state_publisher',
+             name='robot_state_publisher', output='screen',
+             parameters=[cfg.robot_description]),
+        Node(package='moveit_ros_move_group', executable='move_group', output='screen',
+             parameters=[cfg.to_dict()]),
+    ]
+    if use_rviz:
+        nodes.append(Node(package='rviz2', executable='rviz2', output='log',
+                          arguments=['-d', str(cfg.package_path / 'config' / 'moveit.rviz')],
+                          parameters=[cfg.robot_description, cfg.robot_description_semantic,
+                                      cfg.planning_pipelines, cfg.robot_description_kinematics]))
+    return nodes
 
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument('hardware', default_value='mock', description='mock or gazebo'),
+        DeclareLaunchArgument('hardware', default_value='mock', description='mock, gazebo or real'),
         DeclareLaunchArgument('end_effector', default_value='gripper', description='gripper or camera'),
         DeclareLaunchArgument('launch_gazebo', default_value='false',
                               description='hardware:=gazebo: also start Gazebo and spawn the arm'),
@@ -105,8 +152,9 @@ def generate_launch_description():
     ]
 
     def pick(context):
-        if LaunchConfiguration('hardware').perform(context) == 'gazebo':
+        hardware = LaunchConfiguration('hardware').perform(context)
+        if hardware == 'gazebo':
             return gazebo_nodes(context)
-        return mock_nodes(context)
+        return real_nodes(context) if hardware == 'real' else mock_nodes(context)
 
     return LaunchDescription(args + [OpaqueFunction(function=pick)])
