@@ -776,6 +776,16 @@ in Gazebo.
 publisher. `arm_moveit.sh --real` starts MoveIt only once the bridge reports the
 real arm's joints, and stops if the bridge cannot reach the arm.
 
+**It starts by moving a folded arm to stow.** MoveIt's model counts the real
+fold as a self-collision (the wrist against `Empty_Link1`) and plans nothing from
+it, so with `ARM_START_STOW=1`, which `--real` sets, the bridge glides the arm to
+stow at 15 °/s before MoveIt starts. That path was checked pose by pose in
+MoveIt: the only contacts are between the arm's own links near the fold, and it
+never touches the dog's boxes. It runs only from within 8° of `FOLDED_ANGLES`:
+from any other pose the arm stays where it is. Refold it with `start_arm.sh
+fold` after a run. A bridge started by hand does not move the arm unless you set
+`ARM_START_STOW=1`.
+
 On start-up the bridge powers and enables the arm only if it needs to: enable-all
 on an enabled arm drives it back to its last target. It holds the gripper at the
 angle it finds. For each trajectory it:
@@ -852,6 +862,8 @@ forward.
 | MoveIt topics invisible from another terminal | different DDS domain | `export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1` first |
 | `arm_moveit.sh --real`: `needs ARM_JOINT_SIGNS` | the joint signs are not set | run the [joint sign test](#joint-signs) |
 | `arm_moveit.sh --real`: `moveit_d1_bridge stopped` | the bridge could not reach the arm; nothing moved | check as for `DDS discovery failed`; on the Go2, `--robot <go2-ip>` |
+| `arm_moveit.sh --real`: first plan fails with error `-2` | the arm is in a pose MoveIt counts as a collision, and not close enough to the fold to be moved | move it to stow: `start_arm.sh joints 0 -80 45 0 80 0 0` |
+| Bridge: `stow is too far from the fold` | `ARM_JOINT_SIGNS` is wrong for joint 2, 3 or 5 | redo the [joint sign test](#joint-signs) |
 | Bridge: `the trajectory starts N deg from where the arm is` | the arm moved outside MoveIt, or a wrong sign | restart `--real`; check `ARM_JOINT_SIGNS` |
 | Bridge: `N deg behind the path` | the arm is blocked or the signs are wrong | clear the arm; check `ARM_JOINT_SIGNS` |
 | `--robot`: "no arm feedback" | arm not plugged into the Go2, not powered, or still booting (~1 min) | from the robot: `ping 192.168.123.100` |

@@ -160,9 +160,9 @@ def ros():
     rclpy.shutdown()
 
 
-def make(signs=(1, 1, 1, 1, 1, 1), **arm):
+def make(signs=(1, 1, 1, 1, 1, 1), start_stow=False, **arm):
     a = FakeArm(**arm)
-    return bridge.MoveItD1Bridge(list(signs), arm=a), a
+    return bridge.MoveItD1Bridge(list(signs), arm=a, start_stow=start_stow), a
 
 
 def test_signs_must_be_six_plus_or_minus_one():
@@ -304,6 +304,50 @@ def test_goal_short_of_the_target_is_a_failure_not_a_success():
         bridge.smooth_move = real_move
     assert goal.state == "aborted" and result.error_code == Result.GOAL_TOLERANCE_VIOLATED
     node.destroy_node()
+
+
+FOLD = bridge.FOLDED_ANGLES[:6]
+STOW_DEG = [math.degrees(a) for a in bridge.STOW_RAD]
+
+
+def test_start_stow_moves_a_folded_arm_to_stow():
+    node, arm = make(angles=FOLD, start_stow=True)
+    assert np.allclose(arm.pos, STOW_DEG, atol=0.1)
+    assert all(s["angle6"] == -29.5 for s in arm.setpoints)
+    node.destroy_node()
+
+
+def test_without_start_stow_a_folded_arm_stays():
+    node, arm = make(angles=FOLD)
+    assert arm.setpoints == [] and arm.pos == [float(a) for a in FOLD]
+    node.destroy_node()
+
+
+def test_start_stow_leaves_any_other_pose_alone():
+    node, arm = make(angles=(30, -20, 40, 0, 10, 0), start_stow=True)
+    assert arm.setpoints == []
+    node.destroy_node()
+
+
+def test_start_stow_does_nothing_at_stow():
+    node, arm = make(angles=STOW_DEG, start_stow=True)
+    assert arm.setpoints == []
+    node.destroy_node()
+
+
+def test_start_stow_refuses_a_wrong_sign():
+    with pytest.raises(RuntimeError, match="ARM_JOINT_SIGNS"):
+        make(signs=(1, -1, 1, 1, 1, 1), angles=FOLD, start_stow=True)
+
+
+def test_start_stow_fails_if_the_arm_does_not_get_there():
+    real_move = bridge.smooth_move
+    bridge.smooth_move = lambda *a, **k: SimpleNamespace(reached=False, final_error=9.0)
+    try:
+        with pytest.raises(RuntimeError, match="not reached"):
+            make(angles=FOLD, start_stow=True)
+    finally:
+        bridge.smooth_move = real_move
 
 
 def test_second_goal_is_refused_while_moving():

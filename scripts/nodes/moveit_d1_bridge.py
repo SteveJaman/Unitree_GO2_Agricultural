@@ -29,6 +29,11 @@ Start-up powers and enables the arm only if it is not already: enable-all sent
 to an enabled arm drives it back to its last target (d1arm.md). The gripper is
 held at the angle it has on start-up.
 
+With ARM_START_STOW=1 (arm_moveit.sh --real), an arm resting on its fold is then
+moved to stow: MoveIt's model counts the real fold as a self-collision and plans
+nothing from it. Only from the fold: from any other pose this straight
+joint-space move is unchecked, so the arm stays where it is.
+
 Usage (arm_moveit.sh --real does this):
     ARM_JOINT_SIGNS="1 1 1 1 1 1" python3 scripts/nodes/moveit_d1_bridge.py
 
@@ -40,6 +45,7 @@ Environment:
     ARM_IFACE       Arm network interface (default: d1_arm_control's auto-detect)
     ARM_ROBOT       Go2 Wi-Fi IP, for an arm plugged into the Go2
     BRIDGE_RATE     Trajectory rate in Hz (default: 50)
+    ARM_START_STOW  1: on start-up move from the fold to stow. MOVES THE ARM
 
 Joint mapping: MoveIt Joint1..Joint6 (radians) <-> D1 joint 0..5 (degrees).
 """
@@ -50,6 +56,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 
 # Add the nodes directory so d1_arm_control and d1_motion can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,6 +70,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
+from d1_arm_calibration import FOLDED_ANGLES
 from d1_arm_control import (
     ADDR_CMD,
     ADDR_TELEM,
@@ -74,6 +82,7 @@ from d1_arm_control import (
 from d1_motion import (
     ARM_JOINTS,
     MotionConfig,
+    read_angles,
     robot_has,
     smooth_move,
     steady_gripper,
@@ -96,6 +105,11 @@ PATH_TOLERANCE_DEG = 20.0  # behind the setpoint: something is blocking the arm
 GOAL_TOLERANCE_DEG = 2.0
 TELEMETRY_TIMEOUT_S = 1.0
 T_POWER, T_ENABLE = 1.5, 1.0  # s, as d1_arm_calibration.py
+STOW_RAD = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # "stow" in d1_go2.srdf, MoveIt angles
+FOLD_TOLERANCE_DEG = 8.0  # counts as resting on the fold
+STOW_TOLERANCE_DEG = 5.0  # already there, nothing to do
+STOW_MAX_MOVE_DEG = 65.0  # fold to stow is 57 at most: more means a wrong sign
+STOW_VEL_DEG_S, STOW_ACC_DEG_S2 = 15.0, 30.0
 
 
 def parse_signs(text):
@@ -162,33 +176,20 @@ def check_points(points, dt, limits=JOINT_LIMITS):
 class MoveItD1Bridge(Node):
     """The physical D1 arm as a FollowJointTrajectory controller."""
 
-    def __init__(self, signs, arm=None):
+    def __init__(self, signs, arm=None, start_stow=False):
         super().__init__("moveit_d1_bridge")
         self.signs = np.array(signs, dtype=float)
-        self.arm = arm or D1Arm(
-            iface=os.environ.get("ARM_IFACE"), robot=os.environ.get("ARM_ROBOT")
-        )
-        if not self.arm.ok:
-            raise RuntimeError(
-                "the D1 arm did not answer (powered? ARM_ROBOT / ARM_IFACE?)"
-            )
         self.arm_lock = (
             threading.Lock()
         )  # telemetry is drained on read: one reader at a time
         self.measured = None  # firmware degrees, joints 0-5
         self.measured_at = 0.0
         self.busy = False
-
-        self.bring_up()
-        self.gripper = steady_gripper(self.arm)
-        self.settle_cfg = MotionConfig(
-            max_vel=REAL_MAX_VEL_DEG_S,
-            max_acc=REAL_MAX_ACC_DEG_S2,
-            min_duration=0.5,
-            tolerance=GOAL_TOLERANCE_DEG,
-            settle_time=0.3,
-            settle_timeout=2.0,
-        )
+        try:
+            self.connect(arm, start_stow)
+        except RuntimeError:
+            self.destroy_node()  # left half-built it crashes Python on exit
+            raise
 
         group = ReentrantCallbackGroup()
         self.js_pub = self.create_publisher(JointState, "/joint_states", 10)
@@ -206,6 +207,28 @@ class MoveItD1Bridge(Node):
             f"Bridge ready: {STREAM_RATE:.0f} Hz, on the robot: {robot_has(self.arm, 'traj_points')}, "
             f"signs {[int(s) for s in signs]}, gripper held at {self.gripper:.1f} deg"
         )
+
+    def connect(self, arm, start_stow):
+        """Reach the arm, power and enable it, and move it to stow if asked."""
+        self.arm = arm or D1Arm(
+            iface=os.environ.get("ARM_IFACE"), robot=os.environ.get("ARM_ROBOT")
+        )
+        if not self.arm.ok:
+            raise RuntimeError(
+                "the D1 arm did not answer (powered? ARM_ROBOT / ARM_IFACE?)"
+            )
+        self.bring_up()
+        self.gripper = steady_gripper(self.arm)
+        self.settle_cfg = MotionConfig(
+            max_vel=REAL_MAX_VEL_DEG_S,
+            max_acc=REAL_MAX_ACC_DEG_S2,
+            min_duration=0.5,
+            tolerance=GOAL_TOLERANCE_DEG,
+            settle_time=0.3,
+            settle_timeout=2.0,
+        )
+        if start_stow:
+            self.fold_to_stow()
 
     def bring_up(self):
         """Power and enable, each only if needed: enable-all on an enabled arm
@@ -226,6 +249,43 @@ class MoveItD1Bridge(Node):
         time.sleep(T_ENABLE)
         if (self.arm.state() or {}).get("data", {}).get("enable_status") != 1:
             raise RuntimeError("the motors did not enable")
+
+    def fold_to_stow(self):
+        """From the fold, glide to stow. Any other pose: leave the arm alone."""
+        now = read_angles(self.arm, timeout=2.0)
+        if now is None:
+            raise RuntimeError("no joint angles from the arm")
+        now = np.array(now[:ARM_JOINTS])
+        stow = np.array(STOW_RAD) * RAD2DEG * self.signs
+        if np.abs(now - stow).max() <= STOW_TOLERANCE_DEG:
+            self.get_logger().info("Already at stow")
+            return
+        fold = np.array(FOLDED_ANGLES[:ARM_JOINTS])
+        if np.abs(now - fold).max() > FOLD_TOLERANCE_DEG:
+            self.get_logger().warn(
+                "Not on the fold: staying here (MoveIt plans from this pose)"
+            )
+            return
+        if np.abs(stow - now).max() > STOW_MAX_MOVE_DEG:
+            raise RuntimeError("stow is too far from the fold: check ARM_JOINT_SIGNS")
+        self.get_logger().info(
+            f"Moving from the fold to stow at {STOW_VEL_DEG_S:.0f} deg/s"
+        )
+        cfg = replace(
+            self.settle_cfg,
+            max_vel=STOW_VEL_DEG_S,
+            max_acc=STOW_ACC_DEG_S2,
+            settle_timeout=4.0,
+        )
+        done = smooth_move(
+            self.arm,
+            list(stow),
+            gripper=self.gripper,
+            cfg=cfg,
+            limits={j: JOINT_LIMITS[j] + LIMIT_MARGIN_DEG for j in range(ARM_JOINTS)},
+        )
+        if not done.reached:
+            raise RuntimeError(f"stow not reached (off by {done.final_error:.1f} deg)")
 
     # ------------------------------------------------------------------ state
     def poll_angles(self):
@@ -427,7 +487,7 @@ def main():
         sys.exit(f"[bridge] {e}")
     rclpy.init()
     try:
-        node = MoveItD1Bridge(signs)
+        node = MoveItD1Bridge(signs, start_stow=os.environ.get("ARM_START_STOW") == "1")
     except RuntimeError as e:
         rclpy.shutdown()
         sys.exit(f"[bridge] {e}")

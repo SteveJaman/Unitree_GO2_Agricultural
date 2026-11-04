@@ -10,6 +10,7 @@
 #   ./scripts/runtime/arm_moveit.sh --inspect    # same, then run the plant inspection
 #   ARM_JOINT_SIGNS="1 1 1 1 1 1" ./scripts/runtime/arm_moveit.sh --real
 #                                                # the inspection on the REAL arm: MOVES IT
+#                                                # (a folded arm first goes to stow)
 #   ... --real --robot 192.168.1.7               # arm plugged into the Go2 (or ARM_ROBOT)
 #   ... --real --camera                          # camera on the wrist flange, not the gripper
 #   ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
@@ -39,7 +40,7 @@ while [ $# -gt 0 ]; do
         --no-rviz) RVIZ="false" ;;
         --camera)  END_EFFECTOR="camera" ;;
         --robot)   export ARM_ROBOT="${2:?--robot needs the Go2 IP}"; shift ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -87,7 +88,8 @@ if [ "${INSPECT}" = "true" ]; then
         VELOCITY_SCALE="0.2"
         LAUNCH_ARGS+=(hardware:=real)
         echo "[real] velocity_scaling=${VELOCITY_SCALE}, signs ${ARM_JOINT_SIGNS}, starting moveit_d1_bridge..."
-        python3 "${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py" &
+        # A folded arm first moves to stow: MoveIt plans nothing from the fold.
+        ARM_START_STOW=1 python3 "${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py" &
         BRIDGE_PID=$!
         # MoveIt starts only once the bridge reports the real arm's joints.
         for _ in $(seq 1 30); do
