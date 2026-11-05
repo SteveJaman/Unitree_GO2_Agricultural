@@ -61,7 +61,7 @@ launches, pointed at this machine instead of the robot.
 `sim/build_model.py` combines them (run automatically at start):
 
 - Go2 legs become fixed joints at a standing pose (trunk at ~0.29 m).
-- The D1 is mounted on the trunk top (`SIM_D1_MOUNT`, default `0 0 0.057 0 0 0`).
+- The D1 is mounted on the trunk top (`SIM_D1_MOUNT`, default `0 0 0.057 0 0 3.14159`: facing the tail, as on the real dog).
 - **The D1 URDF ships `effort=0 velocity=0` on every joint** (the controllers would
   apply no force); real limits are patched in.
 - A virtual lidar is placed using the **same lidar mount the laptop uses**
@@ -114,7 +114,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 | `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the old 4-core VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
 | `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only. `lab_office`: the furnished indoor lab ([lab_office.md](lab_office.md)). `hydroponic_station`: CropKing NFT 8-4 hydroponic rack in a greenhouse bay ([hydroponic_trial.md](hydroponic_trial.md)) |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
-| `SIM_D1_MOUNT` | `0 0 0.057 0 0 0` | D1 pose on the trunk, `x y z roll pitch yaw` |
+| `SIM_D1_MOUNT` | `0 0 0.057 0 0 3.14159` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
 | `SIM_TIMEOUT` | `240` | Seconds to wait for the first lidar frame |
 | `GO2_HOST_IP` | auto (the Wi-Fi interface, else the default-route interface, else `127.0.0.1`) | DDS address shared with `go2-lidar3d` |

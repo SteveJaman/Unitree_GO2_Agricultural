@@ -61,7 +61,7 @@ of anything left to fix (exit 1).
 
 | Script | What it does |
 |---|---|
-| [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py) | `ros2 run d1_active_perception orbit_scanner`: camera sweep around a plant through MoveIt, with a placeholder at each capture point. Reaches about ±45° of the 180° arc ([details](../hardware/d1arm.md#orbit-sweep-d1_active_perception)) |
+| [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py) | `ros2 run d1_active_perception orbit_scanner`: camera sweep around a plant through MoveIt, with a placeholder at each capture point. Full 180° for a low plant beside the dog (13/13 in Gazebo, no contacts), 120° at rack height ([details](../hardware/d1arm.md#orbit-sweep-d1_active_perception)) |
 
 ## Tools ([`scripts/tools/`](../../scripts/tools/))
 

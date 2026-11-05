@@ -769,10 +769,9 @@ in Gazebo.
 ### Orbit sweep (`d1_active_perception`)
 
 [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py)
-moves the camera through 13 poses on a horizontal arc around a plant, −90° to
-+90° from the side facing the arm, aimed at the plant centre. After each one it
-settles and prints a placeholder where the camera capture will go. A pose that
-cannot be planned is logged and skipped.
+moves the camera through 13 viewpoints on a 180° arc around a plant, every 15°
+from −90° to +90°, and aims at the plant centre from each. The arm stops at each
+one, settles, and prints a placeholder where the camera capture will go.
 
 ```bash
 colcon build --symlink-install --packages-select d1_active_perception
@@ -780,28 +779,61 @@ source install/setup.bash
 export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1
 
 ros2 launch d1_moveit_config demo.launch.py end_effector:=camera   # terminal 1
-ros2 run d1_active_perception orbit_scanner --ros-args -p planning_frame:=world -p radius:=0.25   # terminal 2
+ros2 run d1_active_perception orbit_scanner                        # terminal 2
 ```
 
-**The arm cannot complete 180°.** Planned on the mock arm with no rack in the
-scene (2026-11-05):
+All 13 waypoints are solved **before** anything moves, as one chain of IK
+solutions each seeded from the last, and then run as joint goals. Separate pose
+goals land on unrelated arm configurations.
 
-| Target (`-0.45, 0`), radius | Reached of 13 | Covers |
-|---|---|---|
-| Defaults: `base_link`, z 0.85, r 0.35 | 0 | Nothing: `base_link` is turned 180°, so this is ahead of the dog and 0.96 m from the arm base |
-| `world`, z 0.85, r 0.35 or 0.30 | 5 | ±30° |
-| `world`, z 0.85, r 0.25 | 7 (6 when executed) | ±45° |
-| `world`, z 0.75, r 0.25 | 7 | ±45° |
-| `world`, z 0.60, r 0.20 | 7 | ±45° |
+**The full 180° needs the camera above the plant, looking down.** The default is
+a low plant beside the dog: 0.40 m to its left, centre 0.15 m above the ground,
+camera 0.25 m away and 60° above it. Mirrored to the right (`target:="[0.0,-0.40,0.15]"`)
+it solves 13/13 too.
 
-Near the edge of reach the count varies from run to run.
+**Gazebo (2026-11-05): 13/13 waypoints, 0 contacts, plant in view at every stop.**
+`python3 tests/orbit_trial.py` runs the sweep on the arm in Gazebo through
+`gz_ros2_control`, with a physical plant spawned at the target, and saves the wrist
+camera's frame at each stop. The plant stays centred in all 13 frames. Recorded joints
+give −88.2° to +91.3°, 0.246–0.254 m from the plant, aim within 2.6°. As a check that
+contacts are detected, a 0.30 m plant unknown to MoveIt
+(`--plant-radius 0 --gazebo-plant-radius 0.30`) logged 61,473 contacts, while the
+arm still reported 13/13: waypoint counts alone do not show a safe sweep.
 
-- `ee_link` defaults to `camera_optical_frame` (z forward). `camera_link` has x
-  forward, so the look-at orientation would aim the wrong axis.
-- `camera_link` and `camera_optical_frame` exist only with `end_effector:=camera`.
-- It adds no rack or plant to the planning scene and has not been run on the
-  real arm or in Gazebo. Do not run it near a real rack.
-- `--real` does not start it: it runs `inspect_plant.py`.
+A plant at rack height does not get 180° from a parked dog. Solved on the mock arm
+with collisions against the dog, no rack in the scene (2026-11-05):
+
+| Plant beside the dog | Radius, camera height | Solved | Covers |
+|---|---|---|---|
+| z 0.15 (default) | 0.25 m, 60° above | 13/13 | **180°** |
+| z 0.40 | 0.25 m, 45° above | 9/13 | 120° |
+| z 0.60 | 0.20 m, 30° above | 5/13 | 60° |
+| z 0.85 (rack) | 0.15 m, 15° below | 9/13 | 120° |
+| z 0.95 (the trial's lettuce) | 0.15 m, 30° below | 9/13 | 120° |
+
+```bash
+# Rack height, plant beside the dog
+ros2 run d1_active_perception orbit_scanner --ros-args -p target:="[0.0,0.40,0.85]" -p radius:=0.15 -p elevation_deg:=-15.0
+```
+
+A sampled reachability map of the arm agrees: with the camera level with the
+plant, the best arc is about 120–130° anywhere. To cover 180° at a rack, the dog
+would have to move between two arcs.
+
+- Twice, between waypoints 5–6 and 11–12, the wrist rolls about 160° (`Joint4`,
+  `Joint6`): near its ±135° limit it has to swap sides. Captures happen at the
+  stops, so this only costs time: 76 s for the sweep at 15 % speed on the mock arm.
+- `free_roll` (default on) lets the camera turn about its view axis, so images can
+  come out rotated between viewpoints. The joint states give the exact pose of each.
+- `camera_link` exists only with `end_effector:=camera`. That model has **no
+  gripper**: on an arm that still has one, the fingers are not collision-checked.
+- It adds the plant to the planning scene (`plant_radius`, a sphere on a stem) but
+  **not the rack**, and has not been run on the real arm. Do not run it near a real
+  rack. `--real` does not start it.
+- In the Gazebo frames the lower half of the image is a flat band that cuts the plant
+  off in a straight line. Its cause is not known, so do not judge image quality from them.
+
+`python3 -m pytest tests/test_orbit_geometry.py` tests the waypoints and view poses.
 
 ### From plan to the real arm
 

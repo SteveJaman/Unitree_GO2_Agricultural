@@ -2,9 +2,18 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-10-30
+Last updated: 2026-11-05
 
 ---
+
+## 2026-11-05: 180° orbit sweep
+
+| Change | State |
+|---|---|
+| `orbit_scanner.py` 180° sweep, 13 stops | **Gazebo: 13/13, 0 contacts, plant in every frame** (low plant beside the dog, `tests/orbit_trial.py`). Not run on the real arm |
+| Rack-height plant | 120° from a parked dog: 180° needs the dog to move between arcs |
+| Gazebo arm mount | Fixed: `run_sim.sh` kept the old forward mount while MoveIt faced backward. Trials before this ran on a mismatched arm |
+| Real arm against RViz | **Open**: mount direction confirmed; J1 and J6 signs still unmeasured |
 
 ## 2026-10-30: nav reliability
 
