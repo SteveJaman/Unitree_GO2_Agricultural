@@ -13,6 +13,11 @@
 #                                                # (a folded arm first goes to stow)
 #   ... --real --robot 192.168.1.7               # arm plugged into the Go2 (or ARM_ROBOT)
 #   ... --real --camera                          # camera on the wrist flange, not the gripper
+#   ./scripts/runtime/arm_moveit.sh --orbit --plan-only   # 180 degree sweep, planned on the mock arm
+#   ./scripts/runtime/arm_moveit.sh --orbit      # the same, moving the mock arm
+#   ... --real --orbit-test                      # REAL arm: 3 stops around the centre, a first test
+#   ... --real --orbit                           # REAL arm: the whole 13-stop sweep
+#   ORBIT_ARGS="-p target:=[0.0,0.45,0.20]" ...  # more orbit_scanner parameters
 #   ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
 #   ./scripts/runtime/arm_moveit.sh --no-rviz    # headless
 #
@@ -22,7 +27,7 @@
 # Safety: ROS_DOMAIN_ID 78 + localhost-only DDS, so ROS traffic never reaches the
 # robot. Without --real nothing touches the arm. --real needs ARM_JOINT_SIGNS,
 # from the joint sign test in docs/hardware/d1arm.md, and stops if the bridge
-# to the arm dies: there is no mock arm behind it.
+# to the arm dies: there is no mock arm behind it. --plan-only never uses the real arm.
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -32,6 +37,7 @@ D1_ARM_DIR="${D1_ARM_DIR:-$HOME/files/unitree-D1-550-Robot-ARM}"
 ARM_ROS_DOMAIN_ID="${ARM_ROS_DOMAIN_ID:-78}"
 
 BUILD="auto"; INSPECT="false"; REAL="false"; RVIZ="true"; END_EFFECTOR="gripper"
+ORBIT="false"; ORBIT_TEST="false"; PLAN_ONLY="false"
 while [ $# -gt 0 ]; do
     case "$1" in
         --build)   BUILD="always" ;;
@@ -39,14 +45,21 @@ while [ $# -gt 0 ]; do
         --real)    REAL="true"; INSPECT="true" ;;
         --no-rviz) RVIZ="false" ;;
         --camera)  END_EFFECTOR="camera" ;;
+        --orbit)   ORBIT="true"; INSPECT="true"; END_EFFECTOR="camera" ;;
+        --orbit-test) ORBIT="true"; ORBIT_TEST="true"; INSPECT="true"; END_EFFECTOR="camera" ;;
+        --plan-only) PLAN_ONLY="true" ;;
         --robot)   export ARM_ROBOT="${2:?--robot needs the Go2 IP}"; shift ;;
-        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
 done
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
+
+[ "${PLAN_ONLY}" = "false" ] || [ "${ORBIT}" = "true" ] || fail "--plan-only goes with --orbit"
+[ "${PLAN_ONLY}" = "false" ] || [ "${REAL}" = "false" ] || \
+    fail "--plan-only runs on the mock arm: leave out --real"
 
 [ -f /opt/ros/humble/setup.bash ] || fail "ROS 2 Humble not found"
 for pkg in moveit_ros_move_group moveit_configs_utils controller_manager joint_trajectory_controller; do
@@ -68,13 +81,13 @@ export ROS_DOMAIN_ID="${ARM_ROS_DOMAIN_ID}" ROS_LOCALHOST_ONLY=1
 source /opt/ros/humble/setup.bash
 
 cd "${REPO_ROOT}"
-if [ "${BUILD}" = "always" ] || [ ! -d install/d1_550_description ] ||
-   [ ! -e install/d1_moveit_config/share/d1_moveit_config/config/moveit_controllers_real.yaml ]; then
-    echo "[build] d1_550_description (from ${D1_ARM_DIR}) + d1_moveit_config"
-    colcon build --symlink-install \
-        --base-paths src/d1_moveit_config "${D1_ARM_DIR}/d1_550_description" \
-        --packages-select d1_550_description d1_moveit_config
-fi
+# Every time: inspect_plant.py and orbit_scanner.py are installed as copies, so a
+# run would otherwise use old code. Incremental, a few seconds.
+[ "${BUILD}" = "always" ] && CLEAN=(--cmake-clean-cache) || CLEAN=()
+echo "[build] d1_550_description (from ${D1_ARM_DIR}) + d1_moveit_config + d1_active_perception"
+colcon build --symlink-install "${CLEAN[@]}" \
+    --base-paths src/d1_moveit_config src/d1_active_perception "${D1_ARM_DIR}/d1_550_description" \
+    --packages-select d1_550_description d1_moveit_config d1_active_perception
 # shellcheck disable=SC1091
 source install/setup.bash
 
@@ -88,16 +101,22 @@ if [ "${INSPECT}" = "true" ]; then
         VELOCITY_SCALE="0.2"
         LAUNCH_ARGS+=(hardware:=real)
         echo "[real] velocity_scaling=${VELOCITY_SCALE}, signs ${ARM_JOINT_SIGNS}, starting moveit_d1_bridge..."
+        [ "${ORBIT}" = "false" ] || echo "[real] the camera model has no gripper: fingers still on the arm are not collision-checked"
         # A folded arm first moves to stow: MoveIt plans nothing from the fold.
-        ARM_START_STOW=1 python3 "${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py" &
+        # ARM_BRIDGE_CMD: another bridge, tests/test_moveit_bridge.py --serve in a test.
+        read -ra BRIDGE_CMD <<< "${ARM_BRIDGE_CMD:-python3 ${REPO_ROOT}/scripts/nodes/moveit_d1_bridge.py}"
+        READY_FILE="$(mktemp -u /tmp/arm_bridge_ready.XXXXXX)"
+        ARM_START_STOW=1 ARM_BRIDGE_READY="${READY_FILE}" "${BRIDGE_CMD[@]}" &
         BRIDGE_PID=$!
-        # MoveIt starts only once the bridge reports the real arm's joints, which
-        # is after any move to stow. The type makes echo wait for a publisher.
+        # MoveIt starts only once the bridge is up, which is after any move to
+        # stow. A file, not ros2 topic echo: that hangs on a broken ros2 daemon.
         DEADLINE=$((SECONDS + 90))
-        until timeout 3 ros2 topic echo --once /joint_states sensor_msgs/msg/JointState >/dev/null 2>&1; do
+        until [ -e "${READY_FILE}" ]; do
             kill -0 "${BRIDGE_PID}" 2>/dev/null || fail "moveit_d1_bridge stopped: see its message above"
-            [ "${SECONDS}" -lt "${DEADLINE}" ] || fail "no joint states from moveit_d1_bridge in 90 s"
+            [ "${SECONDS}" -lt "${DEADLINE}" ] || fail "moveit_d1_bridge not ready in 90 s"
+            sleep 0.5
         done
+        rm -f "${READY_FILE}"
     fi
 
     ros2 launch d1_moveit_config demo.launch.py "${LAUNCH_ARGS[@]}" &
@@ -105,9 +124,17 @@ if [ "${INSPECT}" = "true" ]; then
     echo "[inspect] waiting for MoveIt..."
     sleep 8
 
-    INSPECT_ARGS=(--ros-args -p velocity_scaling:="${VELOCITY_SCALE}")
-    [ "${END_EFFECTOR}" = "camera" ] && INSPECT_ARGS+=(-p tool_link:=camera_link)
-    ros2 run d1_moveit_config inspect_plant.py "${INSPECT_ARGS[@]}"
+    if [ "${ORBIT}" = "true" ]; then
+        read -ra EXTRA <<< "${ORBIT_ARGS:-}"
+        ORBIT_PARAMS=(--ros-args)
+        [ "${PLAN_ONLY}" = "true" ] && ORBIT_PARAMS+=(-p plan_only:=true)
+        [ "${ORBIT_TEST}" = "true" ] && ORBIT_PARAMS+=(-p start_deg:=-15.0 -p end_deg:=15.0 -p waypoints:=3)
+        ros2 run d1_active_perception orbit_scanner "${ORBIT_PARAMS[@]}" "${EXTRA[@]}"
+    else
+        INSPECT_ARGS=(--ros-args -p velocity_scaling:="${VELOCITY_SCALE}")
+        [ "${END_EFFECTOR}" = "camera" ] && INSPECT_ARGS+=(-p tool_link:=camera_link)
+        ros2 run d1_moveit_config inspect_plant.py "${INSPECT_ARGS[@]}"
+    fi
 
     [ "${REAL}" = "true" ] && echo "[real] the arm stays enabled and holding; fold it with start_arm.sh fold"
     echo "[inspect] done. Ctrl+C to close RViz."

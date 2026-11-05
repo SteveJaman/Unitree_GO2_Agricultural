@@ -6,7 +6,9 @@
 
 python3 tests/test_moveit_bridge.py --serve runs the bridge on the simulated arm
 until Ctrl+C, in place of the real one, for a whole-stack check with
-demo.launch.py hardware:=real. --signs "..." sets the joint signs.
+demo.launch.py hardware:=real, or for arm_moveit.sh with ARM_BRIDGE_CMD.
+--signs "..." sets the joint signs, --start fold rests the arm on its fold, and
+ARM_START_STOW=1 is read as by the real bridge.
 """
 
 import argparse
@@ -408,13 +410,19 @@ def test_second_goal_is_refused_while_moving():
 def serve():
     ap = argparse.ArgumentParser()
     ap.add_argument("--serve", action="store_true")
-    ap.add_argument("--signs", default="1 1 1 1 1 1")
+    ap.add_argument("--signs", default=os.environ.get("ARM_JOINT_SIGNS", "1 1 1 1 1 1"))
+    ap.add_argument("--start", choices=["stow", "fold"], default="stow")
     args = ap.parse_args()
     rclpy.init()
     # Start at the sim's stow pose, in firmware degrees.
     signs = bridge.parse_signs(args.signs)
     stow = [math.degrees(a) * s for a, s in zip((0, -1.396, 0.785, 0, 1.396, 0), signs)]
-    node = bridge.MoveItD1Bridge(signs, arm=FakeArm(angles=stow))
+    start = FOLD if args.start == "fold" else stow
+    node = bridge.MoveItD1Bridge(
+        signs,
+        arm=FakeArm(angles=start, enabled=False),
+        start_stow=os.environ.get("ARM_START_STOW") == "1",
+    )
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:

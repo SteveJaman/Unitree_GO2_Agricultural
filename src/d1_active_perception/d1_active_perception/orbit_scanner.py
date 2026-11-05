@@ -51,6 +51,7 @@ ARM_JOINTS = ["Joint1", "Joint2", "Joint3", "Joint4", "Joint5", "Joint6"]
 # camera_link -> camera_optical_frame in d1_go2.urdf.xacro
 LINK_TO_OPTICAL = Rotation.from_euler("xyz", [-np.pi / 2, 0.0, -np.pi / 2])
 ROLL_STEP_DEG = 30
+STOW = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # "stow" in d1_go2.srdf: folded for walking
 
 
 def look_at(eye, target):
@@ -105,6 +106,7 @@ class OrbitScanner(Node):
         d("settle_s", 1.0)
         d("dwell_s", 0.0)  # hold after the capture message
         d("plan_only", False)
+        d("return_stow", True)  # fold back after the sweep
         self.p = lambda name: self.get_parameter(name).value
         self.client = ActionClient(self, MoveGroup, "move_action")
         self.ik = self.create_client(GetPositionIK, "compute_ik")
@@ -256,6 +258,14 @@ class OrbitScanner(Node):
                 self.get_logger().warn(f"Waypoint {i + 1}/{len(points)}: no solution, skipping")
                 continue
             code = self.move_to(joints)
+            if code == MoveItErrorCodes.CONTROL_FAILED:
+                # The plan was fine and the arm did not follow it: blocked, or the
+                # link dropped. Do not push on: the arm holds where it stopped.
+                self.get_logger().error(
+                    f"Waypoint {i + 1}/{len(points)}: the arm did not follow the plan, "
+                    "stopping the sweep. It holds where it is"
+                )
+                return 3
             if code != MoveItErrorCodes.SUCCESS:
                 self.get_logger().warn(
                     f"Waypoint {i + 1}/{len(points)} failed (MoveIt code {code}): skipping"
@@ -266,6 +276,12 @@ class OrbitScanner(Node):
             print(f">>> [PLACEHOLDER] CAMERA CAPTURE TRIGGERED AT WAYPOINT {i + 1} <<<", flush=True)
             time.sleep(float(self.p("dwell_s")))
         self.get_logger().info(f"Sweep done: {reached}/{len(points)} waypoints reached")
+        if self.p("return_stow") and not self.p("plan_only"):
+            code = self.move_to(STOW)
+            if code != MoveItErrorCodes.SUCCESS:
+                self.get_logger().error(f"Could not return to stow (MoveIt code {code})")
+                return 3
+            self.get_logger().info("Back at stow")
         return 0 if reached else 2
 
 

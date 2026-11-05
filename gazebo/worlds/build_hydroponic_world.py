@@ -196,7 +196,8 @@ def dock():
 def main():
     tx, ty, tz = head_center(TARGET_CHANNEL, TARGET_SITE)
     front_edge = RACK_X - STAND_W / 2
-    waypoint = (front_edge - STANDOFF, ty, 0.0)
+    # Tail to the rack: the D1 is mounted facing backward, as on the real dog.
+    waypoint = (front_edge - STANDOFF, ty, math.pi)
     eye_side = (waypoint[0] + 0.15, ty - 1.75, 1.30)
     eye_front = (waypoint[0] - 0.35, ty + 1.15, 1.25)
     eye_over = (X0 + 0.4, Y0 + 0.4, 2.45)
@@ -264,7 +265,7 @@ def main():
         json.dump(meta, f, indent=1)
         f.write("\n")
     print(f"target plant ({tx:.3f}, {ty:.3f}, {tz:.3f}); waypoint ({waypoint[0]:.3f}, {waypoint[1]:.3f}); "
-          f"plant {tx - waypoint[0]:.3f} m ahead of the dog")
+          f"plant {tx - waypoint[0]:.3f} m behind the dog, in front of the arm")
 
 
 if __name__ == "__main__":

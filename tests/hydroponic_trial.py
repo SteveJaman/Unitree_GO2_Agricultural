@@ -62,6 +62,7 @@ def main():
     ap.add_argument('--standoff', type=float, default=None,
                     help="dog base distance from the stand's front edge (default: the world's 0.6 m waypoint)")
     ap.add_argument('--look-up-deg', type=float, default=30.0)
+    ap.add_argument('--orbit-deg', type=float, default=90.0, help='whole orbit, centred on the plant')
     ap.add_argument('--out', default=None)
     a = ap.parse_args()
     out = os.path.abspath(a.out or os.path.join(NAV2_WIFI_DIR, 'ws', 'log', 'hydroponic_trial', a.name))
@@ -94,7 +95,7 @@ def main():
         log(f'contact monitor on {len(topics)} links')
 
         mission_out = f'/tmp/hydroponic_trial_{a.name}'
-        args = f'--out {mission_out} --look-up-deg {a.look_up_deg}' + (f' --standoff {a.standoff}' if a.standoff is not None else '')
+        args = f'--out {mission_out} --look-up-deg {a.look_up_deg} --orbit-deg {a.orbit_deg}' + (f' --standoff {a.standoff}' if a.standoff is not None else '')
         log(f'mission: {args}')
         r = run(['docker', 'exec', SIM, 'bash', '-c',
                  'source /opt/ros/humble/setup.bash; source /tmp/moveit_ws/install/setup.bash; '

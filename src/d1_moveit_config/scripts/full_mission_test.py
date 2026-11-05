@@ -226,12 +226,13 @@ class GzSide:
     def grab(self, topic, path, timeout=20.0):
         """Save the next frame of a camera topic (subscribing only for that frame: rendering costs sim speed)."""
         got = {}
+        t0 = time.monotonic()
 
         def cb(msg):
-            if 'img' not in got:
-                got['img'] = msg
+            # The first frames after subscribing can be old: the sensor renders on demand.
+            if time.monotonic() - t0 > 1.5:
+                got.setdefault('img', msg)
         self.node.subscribe(self.Image, topic, cb)
-        t0 = time.monotonic()
         while 'img' not in got and time.monotonic() - t0 < timeout:
             time.sleep(0.05)
         self.node.unsubscribe(topic)
@@ -338,30 +339,34 @@ class Mission:
 
     # -------------------------------------------------------------- phases
     def navigate(self):
+        """Walk nose-first to a stage clear of the rack, turn there, reverse in: the arm
+        faces backward, and turning at the rack would swing the dog's nose into it."""
         wx, wy, wyaw = self.world['waypoint']
         if self.a.standoff is not None:
             wx = self.world['rack']['front_edge_x'] - self.a.standoff
+        tail_first = abs(math.sin(wyaw)) < 0.5 and math.cos(wyaw) < 0
+        gx = wx - self.a.stage if tail_first else wx
         g = PoseStamped()
         g.header.frame_id = 'lidar3d_map'
-        g.pose.position.x, g.pose.position.y = wx, wy
-        g.pose.orientation.z, g.pose.orientation.w = math.sin(wyaw / 2), math.cos(wyaw / 2)
+        g.pose.position.x, g.pose.position.y = gx, wy
+        g.pose.orientation.w = 1.0
         t0 = time.monotonic()
         while self.goal_pub.get_subscription_count() == 0 and time.monotonic() - t0 < 30:
             time.sleep(0.2)
         g.header.stamp = self.nav.get_clock().now().to_msg()
         self.goal_pub.publish(g)
-        print(f'[mission] Nav2 goal ({wx:.3f}, {wy:.3f}), {self.goal_pub.get_subscription_count()} subscriber(s)', flush=True)
+        print(f'[mission] Nav2 goal ({gx:.3f}, {wy:.3f}), {self.goal_pub.get_subscription_count()} subscriber(s)', flush=True)
         arrived, still_since, last = False, None, None
         while time.monotonic() - t0 < self.a.nav_timeout:
             time.sleep(0.2)
             d = self.gz.dog
             if d is None:
                 continue
-            err = math.hypot(d[0] - wx, d[1] - wy)
+            err = math.hypot(d[0] - gx, d[1] - wy)
             moving = last is not None and math.hypot(d[0] - last[0], d[1] - last[1]) > 0.004
             last = d
             # Nav2 stops within its 0.25 m goal tolerance (or a little outside it):
-            # standing still near the waypoint is "arrived"; the precision approach does the rest
+            # standing still near the goal is "arrived"; the precision approach does the rest
             if err < 0.45 and not moving:
                 still_since = still_since or time.monotonic()
                 if time.monotonic() - still_since > 3.0:
@@ -369,8 +374,8 @@ class Mission:
                     break
             else:
                 still_since = None
-        nav_err = math.hypot(self.gz.dog[0] - wx, self.gz.dog[1] - wy) if self.gz.dog else float('nan')
-        print(f'[mission] Nav2 {"arrived" if arrived else "did not arrive"}, {nav_err:.3f} m from the waypoint '
+        nav_err = math.hypot(self.gz.dog[0] - gx, self.gz.dog[1] - wy) if self.gz.dog else float('nan')
+        print(f'[mission] Nav2 {"arrived" if arrived else "did not arrive"}, {nav_err:.3f} m from its goal '
               f'after {time.monotonic() - t0:.0f} s', flush=True)
         # precision approach on ground truth. Commands below ~0.05 m/s do not move
         # the dog (the cmd_vel path has a deadband), so each axis gets at least that
@@ -379,30 +384,37 @@ class Mission:
             if abs(err) < tol:
                 return 0.0
             return math.copysign(min(hi, max(lo, gain * abs(err))), err)
-        t1 = time.monotonic()
-        while time.monotonic() - t1 < 60:
-            d = self.gz.dog
-            c, s = math.cos(d[3]), math.sin(d[3])
-            ex, ey = c * (wx - d[0]) + s * (wy - d[1]), -s * (wx - d[0]) + c * (wy - d[1])
-            eyaw = math.atan2(math.sin(wyaw - d[3]), math.cos(wyaw - d[3]))
-            if abs(ex) < 0.008 and abs(ey) < 0.008 and abs(eyaw) < 0.015:
-                break
-            cmd = Twist()
-            cmd.linear.x = axis(ex, 0.008, 0.8, 0.05, 0.12)
-            cmd.linear.y = axis(ey, 0.008, 0.8, 0.05, 0.10)
-            cmd.angular.z = axis(eyaw, 0.015, 1.5, 0.08, 0.3)
-            self.cmd_pub.publish(cmd)
-            time.sleep(0.05)
+
+        def drive_to(x, y, yaw):
+            t1 = time.monotonic()
+            while time.monotonic() - t1 < 60:
+                d = self.gz.dog
+                c, s = math.cos(d[3]), math.sin(d[3])
+                ex, ey = c * (x - d[0]) + s * (y - d[1]), -s * (x - d[0]) + c * (y - d[1])
+                eyaw = math.atan2(math.sin(yaw - d[3]), math.cos(yaw - d[3]))
+                if abs(ex) < 0.008 and abs(ey) < 0.008 and abs(eyaw) < 0.015:
+                    break
+                cmd = Twist()
+                cmd.linear.x = axis(ex, 0.008, 0.8, 0.05, 0.12)
+                cmd.linear.y = axis(ey, 0.008, 0.8, 0.05, 0.10)
+                cmd.angular.z = axis(eyaw, 0.015, 1.5, 0.08, 0.3)
+                self.cmd_pub.publish(cmd)
+                time.sleep(0.05)
+
+        if tail_first:
+            drive_to(gx, wy, wyaw)   # turn around, clear of the rack
+        drive_to(wx, wy, wyaw)
         for _ in range(10):
             self.cmd_pub.publish(Twist())
             time.sleep(0.05)
         time.sleep(1.0)
         d = self.gz.dog
         final = math.hypot(d[0] - wx, d[1] - wy)
-        ok = final < 0.03
+        off = math.degrees(math.atan2(math.sin(wyaw - d[3]), math.cos(wyaw - d[3])))
+        ok = final < 0.03 and abs(off) < 3.0
         return ok, dict(exec_time_s=time.monotonic() - t0, notes=f'Nav2 {"arrived" if arrived else "timed out"} '
                         f'{nav_err:.3f} m off; precision approach to {final * 1000:.0f} mm, '
-                        f'yaw {math.degrees(d[3] - wyaw):+.1f} deg'), (wx, wy)
+                        f'yaw off by {off:+.1f} deg'), (wx, wy)
 
     def add_scene(self, dog):
         objs = []
@@ -588,7 +600,7 @@ class Mission:
         az0 = math.atan2(plant[1], plant[0])
         el = math.radians(a.look_up_deg)
         print(f"[mission] dog at ({dog[0]:.3f}, {dog[1]:.3f}, yaw {math.degrees(dog[3]):+.1f}); plant in the dog frame "
-              f"({plant[0]:.3f}, {plant[1]:.3f}, {plant[2]:.3f}), {math.hypot(plant[0], plant[1]):.3f} m ahead", flush=True)
+              f"({plant[0]:.3f}, {plant[1]:.3f}, {plant[2]:.3f}), {math.hypot(plant[0], plant[1]):.3f} m away", flush=True)
 
         def cam(d, az_off):
             v = view_dir(az0 + az_off, el)
@@ -759,6 +771,8 @@ def main():
     ap.add_argument('--standoff', type=float, default=None,
                     help='dog base distance from the stand front edge (default: the world\'s waypoint, 0.6 m)')
     ap.add_argument('--nav-timeout', type=float, default=240.0)
+    ap.add_argument('--stage', type=float, default=0.45,
+                    help='tail-first waypoint: stop this far short of it to turn around (m)')
     ap.add_argument('--pregrasp', type=float, default=0.30)
     ap.add_argument('--radius', type=float, default=0.15)
     ap.add_argument('--orbit-deg', type=float, default=90.0)

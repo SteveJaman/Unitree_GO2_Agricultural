@@ -46,6 +46,7 @@ Environment:
     ARM_ROBOT       Go2 Wi-Fi IP, for an arm plugged into the Go2
     BRIDGE_RATE     Trajectory rate in Hz (default: 50)
     ARM_START_STOW  1: on start-up move from the fold to stow. MOVES THE ARM
+    ARM_BRIDGE_READY  file written once the arm is up (arm_moveit.sh waits for it)
 
 Joint mapping: MoveIt Joint1..Joint6 (radians) <-> D1 joint 0..5 (degrees).
 """
@@ -213,6 +214,10 @@ class MoveItD1Bridge(Node):
             f"Bridge ready: {STREAM_RATE:.0f} Hz, on the robot: {robot_has(self.arm, 'traj_points')}, "
             f"signs {[int(s) for s in signs]}, gripper held at {self.gripper:.1f} deg"
         )
+        ready = os.environ.get("ARM_BRIDGE_READY")
+        if ready:  # arm_moveit.sh starts MoveIt on this, after any move to stow
+            with open(ready, "w") as f:
+                f.write("ready\n")
 
     def connect(self, arm, start_stow):
         """Reach the arm, power and enable it, and move it to stow if asked."""

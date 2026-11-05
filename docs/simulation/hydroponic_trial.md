@@ -29,10 +29,31 @@ python3 src/d1_moveit_config/scripts/hydroponic_report.py \
     --out docs/images/hydroponic_trial
 ```
 
-> **These scores predate the mount change.** Trials A and B ran with the arm
-> facing forward. `01f5e8b` and `bc32285` then turned it 180° to match the real
-> dog, so the arm faces away from the rack here and, by an IK estimate, the pre-grasp
-> is out of reach until the dog approaches tail-first. The trials have not been re-run since.
+## Current trial: arm facing backward, as on the real dog (2026-11-05)
+
+```bash
+python3 tests/hydroponic_trial.py --name tail_40_50 --standoff 0.40 --look-up-deg 25 --orbit-deg 50
+```
+
+The dog walks nose-first to a stage 0.45 m short of the waypoint, turns around
+there, and reverses in, so it parks with its **tail** to the rack. Turning at the
+rack would swing its nose into it.
+
+| Standoff | Orbit | Result |
+|---|---|---|
+| 0.333 m | 90° | **Fails**: the rear legs press on the low rail (55,929 contacts), the dog stops 38 mm short, the orbit reaches 80 % of its lead-in |
+| 0.40 m | 60° | Parks to 5 mm, 0 contacts, orbit stops at 92 % of −30°: the arm's reach |
+| 0.40 m | 40° | Complete, 0 contacts |
+| 0.40 m | **50° (±25°)** | **Complete, 0 contacts, Mission Score 100, plant centred in all 5 wrist frames** |
+
+Parked tail-first, the rear legs reach about 0.37 m behind the dog's centre, so the
+plant is 0.53 m from the arm, not 0.465 m. That is why the orbit is ±25° here, against
+the forward-facing trials below. Trials A and B below ran with the arm facing forward
+and no longer match the dog.
+
+In some wrist frames the lower half is a flat band; others in the same run are
+complete. Wrist frames taken right after subscribing can be old, so
+`full_mission_test.py` waits 1.5 s for a fresh one.
 
 ---
 

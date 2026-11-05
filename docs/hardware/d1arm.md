@@ -724,7 +724,9 @@ performs a **discrete 3-point scan** of a plant. Its defaults are the
 [hydroponic trial's](../simulation/hydroponic_trial.md) rack and lettuce (rack
 0.864 m high, plant centre at 0.954 m, camera 0.15 m from it), placed **behind**
 the dog, where the arm faces (mount yaw 180°). The dog parks with its **tail**
-0.333 m from the rack's front edge.
+0.333 m from the rack's front edge. In Gazebo that distance puts the rear legs on the
+rack's low rail: the hydroponic trial parks at 0.40 m
+([results](../simulation/hydroponic_trial.md)), which moves the plant to `plant_x:=-0.527`.
 
 **Flow (7 steps):**
 

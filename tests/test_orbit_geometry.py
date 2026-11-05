@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""orbit_scanner.py's waypoints and view poses: maths only, no ROS graph, no arm.
+"""orbit_scanner.py's waypoints, view poses and sweep logic: no MoveIt, no arm.
 
   source /opt/ros/humble/setup.bash
   python3 -m pytest tests/test_orbit_geometry.py
@@ -10,6 +10,9 @@ import sys
 
 import numpy as np
 import pytest
+import rclpy
+import rclpy.parameter
+from moveit_msgs.msg import MoveItErrorCodes
 from scipy.spatial.transform import Rotation
 
 sys.path.insert(
@@ -17,6 +20,8 @@ sys.path.insert(
 )
 from d1_active_perception.orbit_scanner import (  # noqa: E402
     LINK_TO_OPTICAL,
+    STOW,
+    OrbitScanner,
     look_at,
     orbit_waypoints,
 )
@@ -68,3 +73,54 @@ def test_optical_to_camera_link_keeps_the_view_axis():
     view = Rotation.from_quat(look_at(np.array([0.2, 0.3, 0.4]), TARGET))
     link = view * LINK_TO_OPTICAL.inv()
     assert np.allclose(link.as_matrix()[:, 0], view.as_matrix()[:, 2])
+
+
+SUCCESS, PLAN_FAILED = MoveItErrorCodes.SUCCESS, MoveItErrorCodes.PLANNING_FAILED
+CONTROL_FAILED = MoveItErrorCodes.CONTROL_FAILED
+
+
+@pytest.fixture
+def scanner(monkeypatch):
+    """OrbitScanner with MoveIt replaced: three solved waypoints, moves recorded."""
+    rclpy.init()
+    node = OrbitScanner()
+    node.moves, node.codes = [], {}
+    joints = [np.full(6, float(i)) for i in range(3)]
+    monkeypatch.setattr(node.client, "wait_for_server", lambda timeout_sec: True)
+    monkeypatch.setattr(node.ik, "wait_for_service", lambda timeout_sec: True)
+    monkeypatch.setattr(node.scene, "wait_for_service", lambda timeout_sec: True)
+    monkeypatch.setattr(node, "add_plant", lambda target: True)
+    monkeypatch.setattr(node, "plan_sweep", lambda views: joints)
+
+    def move(q):
+        node.moves.append(list(q))
+        return node.codes.get(len(node.moves), SUCCESS)
+
+    monkeypatch.setattr(node, "move_to", move)
+    node.set_parameters([rclpy.parameter.Parameter("settle_s", value=0.0)])
+    yield node
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+def test_the_sweep_ends_back_at_stow(scanner):
+    assert scanner.run() == 0
+    assert scanner.moves[-1] == STOW and len(scanner.moves) == 4
+
+
+def test_a_waypoint_that_cannot_be_planned_is_skipped(scanner):
+    scanner.codes[1] = PLAN_FAILED
+    assert scanner.run() == 0
+    assert len(scanner.moves) == 4
+
+
+def test_an_arm_that_does_not_follow_stops_the_sweep_where_it_is(scanner):
+    scanner.codes[2] = CONTROL_FAILED
+    assert scanner.run() == 3
+    assert len(scanner.moves) == 2 and scanner.moves[-1] != STOW
+
+
+def test_plan_only_does_not_go_to_stow(scanner):
+    scanner.set_parameters([rclpy.parameter.Parameter("plan_only", value=True)])
+    scanner.run()
+    assert STOW not in scanner.moves
