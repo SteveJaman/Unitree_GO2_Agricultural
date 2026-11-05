@@ -57,6 +57,12 @@ of anything left to fix (exit 1).
 | [`d1_arm_calibration.py`](../../scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
 | [`direct_test_movement.py`](../../scripts/nodes/direct_test_movement.py) | Small, safe movement test for the arm (uses `d1_arm_control.py`) |
 
+## Arm sweeps
+
+| Script | What it does |
+|---|---|
+| [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py) | `ros2 run d1_active_perception orbit_scanner`: camera sweep around a plant through MoveIt, with a placeholder at each capture point. Reaches about ±45° of the 180° arc ([details](../hardware/d1arm.md#orbit-sweep-d1_active_perception)) |
+
 ## Tools ([`scripts/tools/`](../../scripts/tools/))
 
 | Script | Purpose |

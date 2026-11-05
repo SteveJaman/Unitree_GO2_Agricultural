@@ -766,6 +766,43 @@ Gazebo's detailed rack, not this solid box. The arc itself (`compute_cartesian_p
 [`full_mission_test.py`](../../src/d1_moveit_config/scripts/full_mission_test.py),
 in Gazebo.
 
+### Orbit sweep (`d1_active_perception`)
+
+[`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py)
+moves the camera through 13 poses on a horizontal arc around a plant, −90° to
++90° from the side facing the arm, aimed at the plant centre. After each one it
+settles and prints a placeholder where the camera capture will go. A pose that
+cannot be planned is logged and skipped.
+
+```bash
+colcon build --symlink-install --packages-select d1_active_perception
+source install/setup.bash
+export ROS_DOMAIN_ID=78 ROS_LOCALHOST_ONLY=1
+
+ros2 launch d1_moveit_config demo.launch.py end_effector:=camera   # terminal 1
+ros2 run d1_active_perception orbit_scanner --ros-args -p planning_frame:=world -p radius:=0.25   # terminal 2
+```
+
+**The arm cannot complete 180°.** Planned on the mock arm with no rack in the
+scene (2026-11-05):
+
+| Target (`-0.45, 0`), radius | Reached of 13 | Covers |
+|---|---|---|
+| Defaults: `base_link`, z 0.85, r 0.35 | 0 | Nothing: `base_link` is turned 180°, so this is ahead of the dog and 0.96 m from the arm base |
+| `world`, z 0.85, r 0.35 or 0.30 | 5 | ±30° |
+| `world`, z 0.85, r 0.25 | 7 (6 when executed) | ±45° |
+| `world`, z 0.75, r 0.25 | 7 | ±45° |
+| `world`, z 0.60, r 0.20 | 7 | ±45° |
+
+Near the edge of reach the count varies from run to run.
+
+- `ee_link` defaults to `camera_optical_frame` (z forward). `camera_link` has x
+  forward, so the look-at orientation would aim the wrong axis.
+- `camera_link` and `camera_optical_frame` exist only with `end_effector:=camera`.
+- It adds no rack or plant to the planning scene and has not been run on the
+  real arm or in Gazebo. Do not run it near a real rack.
+- `--real` does not start it: it runs `inspect_plant.py`.
+
 ### From plan to the real arm
 
 **Implemented; tested on a simulated arm, pending a physical test.**
