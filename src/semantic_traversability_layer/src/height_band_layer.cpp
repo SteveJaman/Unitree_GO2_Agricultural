@@ -24,6 +24,7 @@ HeightBandLayer::HeightBandLayer()
   ground_tolerance_(0.02),
   step_over_height_max_(0.15),
   lethal_height_min_(0.25),
+  min_range_(0.0),
   max_range_(5.0),
   step_over_cost_(40),
   caution_cost_(200),
@@ -45,6 +46,7 @@ void HeightBandLayer::onInitialize()
   declareParameter("ground_tolerance", rclcpp::ParameterValue(0.02));
   declareParameter("step_over_height_max", rclcpp::ParameterValue(0.15));
   declareParameter("lethal_height_min", rclcpp::ParameterValue(0.25));
+  declareParameter("min_range", rclcpp::ParameterValue(0.0));
   declareParameter("max_range", rclcpp::ParameterValue(5.0));
   declareParameter("step_over_cost", rclcpp::ParameterValue(40));
   declareParameter("caution_cost", rclcpp::ParameterValue(200));
@@ -55,6 +57,7 @@ void HeightBandLayer::onInitialize()
   node->get_parameter(name_ + ".ground_tolerance", ground_tolerance_);
   node->get_parameter(name_ + ".step_over_height_max", step_over_height_max_);
   node->get_parameter(name_ + ".lethal_height_min", lethal_height_min_);
+  node->get_parameter(name_ + ".min_range", min_range_);
   node->get_parameter(name_ + ".max_range", max_range_);
 
   int soc, cc;
@@ -73,8 +76,8 @@ void HeightBandLayer::onInitialize()
       topic_, rclcpp::SensorDataQoS(),
       std::bind(&HeightBandLayer::pointCloudCallback, this, std::placeholders::_1));
     RCLCPP_INFO(node->get_logger(),
-      "HeightBandLayer: topic=%s step_over<%.2f lethal>=%.2f",
-      topic_.c_str(), step_over_height_max_, lethal_height_min_);
+      "HeightBandLayer: topic=%s min_range=%.2f step_over<%.2f lethal>=%.2f",
+      topic_.c_str(), min_range_, step_over_height_max_, lethal_height_min_);
   } else {
     RCLCPP_INFO(node->get_logger(), "HeightBandLayer: disabled");
   }
@@ -123,7 +126,9 @@ void HeightBandLayer::pointCloudCallback(
     if (has_robot_pose_) {
       const double dx = px - robot_x_;
       const double dy = py - robot_y_;
-      if (dx * dx + dy * dy > max_range_ * max_range_) {
+      const double dist_sq = dx * dx + dy * dy;
+      if (dist_sq > max_range_ * max_range_ ||
+          dist_sq < min_range_ * min_range_) {
         continue;
       }
     }

@@ -16,6 +16,7 @@
   <depend>tf2_ros</depend>
   <depend>tf2_sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>go2_semantic_msgs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

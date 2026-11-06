@@ -53,6 +53,7 @@ private:
   double ground_tolerance_;
   double step_over_height_max_;
   double lethal_height_min_;
+  double min_range_;
   double max_range_;
   unsigned char step_over_cost_;
   unsigned char caution_cost_;

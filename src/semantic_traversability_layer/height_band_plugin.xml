@@ -8,3 +8,13 @@
     </description>
   </class>
 </library>
+<library path="semantic_costmap_layer">
+  <class name="semantic_traversability_layer/SemanticCostmapLayer"
+         type="semantic_traversability_layer::SemanticCostmapLayer"
+         base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Reads SemanticObstacleArray messages from the vlm_heuristic_node and
+      writes per-class traversability costs with radius-based footprints.
+    </description>
+  </class>
+</library>

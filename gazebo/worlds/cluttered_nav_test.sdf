@@ -1,0 +1,280 @@
+<?xml version="1.0" ?>
+<!--
+  cluttered_nav_test.sdf: Cluttered environment for traversability navigation trials.
+
+  Layout: 12m x 8m arena with obstacles at various heights and sizes.
+  Robot spawns at (0, 0) facing +x. Goal is at (10, 0).
+
+  Obstacle categories:
+    STEP_OVER (0.02-0.15m): low pipes, cables, garden hoses, small debris
+    CAUTION   (0.15-0.25m): tool boxes, low planters, cable trays
+    LETHAL    (>0.25m):     barrels, crates, posts, equipment
+
+  Three corridors:
+    Direct path (y≈0): blocked by a mix of step_over and caution obstacles
+    North route (y≈+2): has some lethal obstacles requiring detour
+    South route (y≈-2): clear path but longer
+
+  @RENDER_ENGINE@ is substituted by start_inside.sh.
+-->
+<sdf version="1.9">
+  <world name="cluttered_nav_test">
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>@RENDER_ENGINE@</render_engine>
+    </plugin>
+    <scene>
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.8 0.82 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.88 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -1.0</direction>
+    </light>
+
+    <!-- Ground -->
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>40 40</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>40 40</size></plane></geometry>
+          <material><ambient>0.55 0.55 0.50 1</ambient><diffuse>0.55 0.55 0.50 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Arena walls (lethal, 0.5m tall) -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>5 4.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>14 0.1 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>14 0.1 0.5</size></box></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wall_south">
+      <static>true</static>
+      <pose>5 -4.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>14 0.1 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>14 0.1 0.5</size></box></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-2 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.1 9 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.1 9 0.5</size></box></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wall_east">
+      <static>true</static>
+      <pose>12 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.1 9 0.5</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.1 9 0.5</size></box></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.4 0.4 0.4 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ========== DIRECT PATH OBSTACLES (y ≈ -0.5 to 0.5) ========== -->
+
+    <!-- Power cable across path: 0.05m tall, 2m long, thin -->
+    <model name="cable_1">
+      <static>true</static>
+      <pose>2.5 0.0 0.025 0 0 0.3</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.0 0.04 0.05</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>2.0 0.04 0.05</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Garden hose: 0.06m tall, curved across path -->
+    <model name="hose_1">
+      <static>true</static>
+      <pose>3.5 0.3 0.03 0 0 -0.4</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.5 0.06 0.06</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.5 0.06 0.06</size></box></geometry>
+          <material><ambient>0.1 0.5 0.1 1</ambient><diffuse>0.15 0.55 0.15 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Low pipe: 0.08m tall -->
+    <model name="pipe_low">
+      <static>true</static>
+      <pose>4.5 -0.2 0.04 0 0 0.1</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.04</radius><length>1.8</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.04</radius><length>1.8</length></cylinder></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Small debris pile: 0.10m tall -->
+    <model name="debris_1">
+      <static>true</static>
+      <pose>5.5 0.1 0.05 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.6 0.4 0.10</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.6 0.4 0.10</size></box></geometry>
+          <material><ambient>0.5 0.4 0.3 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Tool box: 0.18m tall (CAUTION) -->
+    <model name="toolbox_1">
+      <static>true</static>
+      <pose>6.5 -0.3 0.09 0 0 0.2</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.5 0.3 0.18</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.5 0.3 0.18</size></box></geometry>
+          <material><ambient>0.8 0.2 0.1 1</ambient><diffuse>0.85 0.25 0.15 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Cable tray: 0.20m tall (CAUTION) -->
+    <model name="cable_tray">
+      <static>true</static>
+      <pose>7.5 0.2 0.10 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.2 0.3 0.20</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.2 0.3 0.20</size></box></geometry>
+          <material><ambient>0.7 0.7 0.2 1</ambient><diffuse>0.75 0.75 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Another cable: 0.05m -->
+    <model name="cable_2">
+      <static>true</static>
+      <pose>8.5 0.0 0.025 0 0 -0.5</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.8 0.03 0.05</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.8 0.03 0.05</size></box></geometry>
+          <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ========== NORTH ROUTE OBSTACLES (y ≈ 1.5 to 3.0) ========== -->
+
+    <!-- Barrel: 0.40m tall (LETHAL) — blocks north shortcut -->
+    <model name="barrel_1">
+      <static>true</static>
+      <pose>4.0 2.0 0.20 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.25</radius><length>0.40</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.25</radius><length>0.40</length></cylinder></geometry>
+          <material><ambient>0.3 0.3 0.7 1</ambient><diffuse>0.35 0.35 0.75 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Equipment crate: 0.35m tall (LETHAL) -->
+    <model name="crate_1">
+      <static>true</static>
+      <pose>6.0 2.5 0.175 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.6 0.6 0.35</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.6 0.6 0.35</size></box></geometry>
+          <material><ambient>0.6 0.5 0.3 1</ambient><diffuse>0.65 0.55 0.35 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Post: 0.50m tall (LETHAL) -->
+    <model name="post_1">
+      <static>true</static>
+      <pose>8.0 1.8 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.08</radius><length>0.50</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.08</radius><length>0.50</length></cylinder></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Low planter: 0.22m tall (CAUTION) — north route has some traversable parts -->
+    <model name="planter_1">
+      <static>true</static>
+      <pose>5.0 3.0 0.11 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.8 0.4 0.22</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.8 0.4 0.22</size></box></geometry>
+          <material><ambient>0.4 0.6 0.3 1</ambient><diffuse>0.45 0.65 0.35 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ========== SOUTH ROUTE (y ≈ -1.5 to -3.0): mostly clear ========== -->
+
+    <!-- Small debris on south route: 0.06m (STEP_OVER, easy) -->
+    <model name="debris_south">
+      <static>true</static>
+      <pose>5.0 -2.5 0.03 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.4 0.3 0.06</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.4 0.3 0.06</size></box></geometry>
+          <material><ambient>0.5 0.4 0.3 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Thin cable on south route: 0.04m -->
+    <model name="cable_south">
+      <static>true</static>
+      <pose>8.0 -3.0 0.02 0 0 0.6</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.0 0.03 0.04</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>1.0 0.03 0.04</size></box></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- ========== CENTRAL BARRIER: forces route choice ========== -->
+
+    <!-- Partial wall creating a bottleneck at x=3 -->
+    <model name="barrier_center">
+      <static>true</static>
+      <pose>3.0 0.0 0.20 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.15 1.2 0.40</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>0.15 1.2 0.40</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.55 0.55 0.55 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Gap markers: small cones at barrier gaps -->
+    <model name="cone_north_gap">
+      <static>true</static>
+      <pose>3.0 1.2 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.06</radius><length>0.15</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.06</radius><length>0.15</length></cylinder></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="cone_south_gap">
+      <static>true</static>
+      <pose>3.0 -1.2 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><cylinder><radius>0.06</radius><length>0.15</length></cylinder></geometry></collision>
+        <visual name="v"><geometry><cylinder><radius>0.06</radius><length>0.15</length></cylinder></geometry>
+          <material><ambient>0.9 0.5 0.1 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material></visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
