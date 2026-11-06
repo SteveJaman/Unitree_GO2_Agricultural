@@ -62,7 +62,8 @@ usb_report() {
 cmd_build() {
     [ -f "${DIR}/Dockerfile" ] || die "no Dockerfile next to this script"
     command -v df >/dev/null && df -h /var/lib/docker 2>/dev/null | tail -1 | awk '{print "[rs] free space for Docker: " $4}'
-    dk build --build-arg BUILD_JOBS="${RS_BUILD_JOBS:-4}" -t "${IMAGE}" "${DIR}"
+    # --network host: Docker's build network has no DNS on the Go2.
+    dk build --network host --build-arg BUILD_JOBS="${RS_BUILD_JOBS:-4}" -t "${IMAGE}" "${DIR}"
 }
 
 cmd_start() {

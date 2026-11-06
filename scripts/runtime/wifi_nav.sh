@@ -608,6 +608,25 @@ ensure_container_opencv() {
     echo "[camera] container OpenCV $(docker exec "${CONTAINER_NAME}" python3 -c 'import cv2; print(cv2.__version__)' 2>/dev/null) ....... installed"
 }
 
+# RealSense D435i on the robot (realsense/boot: a boot service, domain 64).
+# It finds this machine by MAC; pushing the current IP as well covers a MAC it
+# cannot see yet. go2-lidar3d gets the image transport plugins it lacks, so
+# RViz/rqt and nodes can read /camera/*/compressed(Depth). Never fatal.
+REALSENSE="${REALSENSE:-auto}"   # auto | off
+realsense_session_hook() {
+    [ "${REALSENSE}" = off ] && return 0
+    robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        "test -x /opt/go2-realsense/go2_realsense_boot.sh && echo ${GO2_HOST_IP} > /tmp/go2-realsense-peer" \
+        >/dev/null 2>&1 || return 0
+    local state
+    state="$(robot_ssh -T -o ConnectTimeout=5 "${GO2_ROBOT_USER}@${GO2_ROBOT_IP}" \
+        'systemctl is-active go2-realsense 2>/dev/null' 2>/dev/null || true)"
+    echo "[realsense] robot camera service ${state:-unknown}; told it this machine is ${GO2_HOST_IP}"
+    GO2_HOST_IP="${GO2_HOST_IP}" GO2_ROBOT_IP="${GO2_ROBOT_IP}" GO2_IFACE="${GO2_IFACE}" \
+        CONTAINER_NAME="${CONTAINER_NAME}" GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" \
+        bash "${SCRIPT_DIR}/../tools/realsense_host.sh" plugins || true
+}
+
 check_dds_bind() {
     local bind xml
     bind="$(container_dds_bind)"
@@ -930,6 +949,7 @@ fi
 pin_container_numpy
 [ "${CAMERA}" = "true" ] && ensure_container_opencv
 check_dds_bind || exit 1
+[ "${SIM}" != "true" ] && realsense_session_hook
 echo
 
 if [ "${SIM}" = "true" ]; then

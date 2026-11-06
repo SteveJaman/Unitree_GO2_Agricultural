@@ -23,12 +23,27 @@
 #   GO2_IFACE=<auto>          Wi-Fi interface that reaches the Go2
 #   ARM_IFACE=<auto>          D1 arm interface — always ignored here
 #   GO2_MAC_PREFIX=02:00:00   MAC prefix of the Go2 Jetson Wi-Fi
+#   GO2_ROBOT_MAC=<unset>     the Jetson's exact Wi-Fi MAC: looked up first, and
+#                             replaces the prefix in the scan. Saved by
+#                             `realsense_host.sh macs` in GO2_NET_CONF.
+#   GO2_NET_CONF=~/.config/go2_wifi_nav/network.env   sourced first (GO2_ROBOT_MAC=...)
 #   GO2_ROBOT_HOSTNAME=ubuntu    the Jetson's hostname: ubuntu.local (Avahi/mDNS)
 #   GO2_ROBOT_USER=unitree
 #   GO2_IP_CACHE=~/.cache/go2_wifi_nav/robot_ip
 # ---------------------------------------------------------------------------
 
 ARM_SUBNET_PREFIX="${ARM_SUBNET_PREFIX:-192.168.123}"
+
+# Per-machine settings (the robot's MAC), kept out of the repo. Values already
+# in the environment win.
+GO2_NET_CONF="${GO2_NET_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/go2_wifi_nav/network.env}"
+if [ -r "${GO2_NET_CONF}" ]; then
+    while IFS='=' read -r _k _v; do
+        case "${_k}" in GO2_ROBOT_MAC|GO2_MAC_PREFIX|GO2_IFACE|GO2_ROBOT_HOSTNAME) ;; *) continue ;; esac
+        [ -n "${!_k:-}" ] || printf -v "${_k}" '%s' "$(tr -d '"' <<< "${_v}")"
+    done < <(grep -E '^[A-Z0-9_]+=' "${GO2_NET_CONF}")
+    unset _k _v
+fi
 
 # First wireless interface with an IPv4 address (else the first wireless one).
 go2_default_wifi_iface() {
@@ -61,6 +76,10 @@ go2_default_arm_iface() {
 GO2_IFACE="${GO2_IFACE:-$(go2_default_wifi_iface)}"
 ARM_IFACE="${ARM_IFACE:-$(go2_default_arm_iface)}"
 GO2_MAC_PREFIX="${GO2_MAC_PREFIX:-02:00:00}"
+GO2_ROBOT_MAC="$(tr '[:upper:]-' '[:lower:]:' <<< "${GO2_ROBOT_MAC:-}")"
+# An exact MAC is the longest possible prefix: every MAC match below then
+# matches only this robot.
+[ -n "${GO2_ROBOT_MAC}" ] && GO2_MAC_PREFIX="${GO2_ROBOT_MAC}"
 GO2_ROBOT_HOSTNAME="${GO2_ROBOT_HOSTNAME:-ubuntu}"
 GO2_ROBOT_USER="${GO2_ROBOT_USER:-unitree}"
 GO2_IP_CACHE="${GO2_IP_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/go2_wifi_nav/robot_ip}"
@@ -241,12 +260,39 @@ go2_robot_by_name() {
 go2_known_robot_ip() {
     if [ -n "${GO2_ROBOT_IP:-}" ]; then echo "${GO2_ROBOT_IP}"; return 0; fi
     [ -n "${GO2_HOST_IP:-}" ] || go2_detect_host_ip 2>/dev/null || true
+    go2_robot_by_mac 2>/dev/null && return 0
     go2_robot_by_name 2>/dev/null && return 0
     head -n1 "${GO2_IP_CACHE}" 2>/dev/null
 }
 
+# The robot by its exact MAC (GO2_ROBOT_MAC) in the neighbour table; one
+# ping sweep of the /24 when it is not there yet. Prints the IP.
+go2_robot_by_mac() {
+    local ip
+    [ -n "${GO2_ROBOT_MAC}" ] || return 1
+    _go2_neigh_ip() {
+        ip neigh show dev "${GO2_IFACE}" 2>/dev/null | awk -v m="${GO2_ROBOT_MAC}" '
+            $0 ~ /FAILED|INCOMPLETE/ {next}
+            {for (i = 1; i < NF; i++) if ($i == "lladdr" && tolower($(i + 1)) == m) {print $1; exit}}'
+    }
+    ip="$(_go2_neigh_ip)"
+    if [ -z "${ip}" ] || ! go2_ping "${ip}"; then
+        go2_log "[net] Looking for the robot's MAC ${GO2_ROBOT_MAC} on ${GO2_IFACE}..."
+        _go2_populate_neighbors "$(go2_iface_cidr "${GO2_IFACE}")"
+        ip="$(_go2_neigh_ip)"
+    fi
+    [ -n "${ip}" ] && go2_on_wifi_segment "${ip}" || return 1
+    go2_log "[net] Robot found by MAC ${GO2_ROBOT_MAC} -> ${ip}"
+    echo "${ip}"
+}
+
 find_go2_ip() {
     local ip cidr prefix cands=() neigh
+
+    # 0. By exact MAC, when it is known (GO2_ROBOT_MAC)
+    if ip="$(go2_robot_by_mac)"; then
+        echo "${ip}"; return 0
+    fi
 
     # 1. By name (ubuntu.local)
     if ip="$(go2_robot_by_name)"; then

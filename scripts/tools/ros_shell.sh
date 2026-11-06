@@ -40,6 +40,9 @@ if [ -n "$RUNNING_ENV" ]; then
 elif docker exec "$CONTAINER" test -f "$XML"; then
   ENV+=(-e CYCLONEDDS_URI="file://$XML")
 fi
+# The nav stack and the robot camera use domain 64 (GO2_RELAY_DOMAIN_ID): without
+# it a shell started before any ROS process lands on domain 0 and sees nothing.
+grep -q '^ROS_DOMAIN_ID=' <<<"$RUNNING_ENV" || ENV+=(-e ROS_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}")
 
 # Source ROS and the workspace, and restart the ros2 daemon so it does not
 # serve a topic list cached under other DDS settings.
