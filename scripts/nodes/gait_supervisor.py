@@ -62,13 +62,15 @@ LETHAL_MIN = 100
 
 GAITS = {
     "NORMAL":    {"foot_height": 0.04, "speed_scale": 1.0},
-    "HIGH_STEP": {"foot_height": 0.10, "speed_scale": 0.7},
-    "CAREFUL":   {"foot_height": 0.08, "speed_scale": 0.4},
+    "HIGH_STEP": {"foot_height": 0.12, "speed_scale": 0.7},
+    "CAREFUL":   {"foot_height": 0.12, "speed_scale": 0.4},
     "STOP":      {"foot_height": 0.04, "speed_scale": 0.0},
 }
 
 
 def gait_for_height(height, foot_height, margin, lethal_height):
+    if height is None:      # seen, but not measured: never treat it as low
+        return "CAREFUL"
     if height + margin <= foot_height:
         return "HIGH_STEP"
     return "CAREFUL" if height < lethal_height else "STOP"
@@ -195,9 +197,10 @@ class GaitSupervisor(Node):
                                  self.scan_dist, self.scan_width)
             desired = "NORMAL"
             if hits:
-                tallest = max(b["height"] for b in hits)
-                desired = gait_for_height(tallest, GAITS["HIGH_STEP"]["foot_height"],
-                                          self.foot_margin, self.lethal_height)
+                gaits = [gait_for_height(b["height"] if b["traverse"] != "unknown" else None,
+                                         GAITS["HIGH_STEP"]["foot_height"],
+                                         self.foot_margin, self.lethal_height) for b in hits]
+                desired = max(gaits, key=("NORMAL", "HIGH_STEP", "CAREFUL", "STOP").index)
 
         if desired != self.current_gait:
             self.current_gait = desired

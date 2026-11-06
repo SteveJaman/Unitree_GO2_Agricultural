@@ -75,6 +75,8 @@ def draw(frame):
         cv2.rectangle(img, (x1, y1), (x2, y2), (235, 235, 235), 1, cv2.LINE_AA)
     drawn = 0
     for b in frame["boxes"]:
+        if b["traverse"] == "unknown":
+            continue
         px = pixels(box_corners(b), R, t)
         if px is None or px[:, 0].max() < 0 or px[:, 0].min() > img.shape[1]:
             continue
@@ -115,7 +117,7 @@ def main():
     model = YOLO("/opt/yolo/yolo11s.pt")
     rows, classes, examples = [], collections.Counter(), []
     for p, f in frames:
-        res = model.predict(f["img"], conf=0.25, verbose=False, imgsz=640)[0]
+        res = model.predict(f["img"], conf=0.4, verbose=False, imgsz=640)[0]
         found = [(model.names[int(c)], float(s)) for c, s in zip(res.boxes.cls, res.boxes.conf)]
         for name, score in found:
             classes[name] += 1

@@ -26,7 +26,9 @@ CLASS_PREFIXES = ("cable_tray", "cable", "hose", "pipe", "debris", "toolbox", "b
 
 
 def load_objects(sdf_path):
-    """Non-wall, non-ground models: name, class, pose, half sizes (world axes hx, hy, hz)."""
+    """Objects from a world's JSON truth file, or parsed from a hand-written SDF."""
+    if sdf_path.endswith(".json"):
+        return json.load(open(sdf_path))["objects"]
     text = re.sub(r"@\w+@", "ogre2", open(sdf_path).read())
     objects = []
     for model in ET.fromstring(text).iter("model"):
@@ -120,9 +122,12 @@ def main():
             p("camera_frame", "front_camera")
             p("max_range", 6.0)
             p("noise_px", 3.0)
+            p("only_classes", "")   # comma list, empty = all: with real YOLO, the classes it lacks
             p("dry_run", False)
             gp = lambda k: self.get_parameter(k).value  # noqa: E731
+            only = {c for c in str(gp("only_classes")).split(",") if c}
             self.objects = load_objects(gp("world"))
+            self.report = {o["name"] for o in self.objects if not only or o["class"] in only}
             self.map_frame, self.cam_frame = gp("map_frame"), gp("camera_frame")
             self.max_range, self.noise = float(gp("max_range")), float(gp("noise_px"))
             self.dry_run = bool(gp("dry_run"))
@@ -144,6 +149,7 @@ def main():
             cam_pos = -rot.T @ trans
             dets = detect(self.objects, rot, trans, cam_pos, (468.0, 468.0, 320.0, 180.0),
                           max_range=self.max_range, noise_px=self.noise)
+            dets = [d for d in dets if d["truth"] in self.report]
             if self.dry_run:
                 self.get_logger().info(f"dry_run detections: {len(dets)}", throttle_duration_sec=5.0)
             else:

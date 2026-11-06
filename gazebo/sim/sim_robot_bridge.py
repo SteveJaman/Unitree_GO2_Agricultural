@@ -38,6 +38,10 @@ import time
 
 import numpy as np
 
+FOOT_RADIUS = 0.022
+FOOT_MARGIN = 0.08   # m a landing keeps from an object, so the next lift-off clears it too
+LIFT = {"NORMAL": 0.04, "HIGH_STEP": 0.12, "CAREFUL": 0.12, "STOP": 0.12}   # swing height, m
+PERIOD = {"NORMAL": 0.6, "HIGH_STEP": 1.0, "CAREFUL": 1.0, "STOP": 1.0}      # s, a longer stride over objects
 VEL = struct.Struct("!fff")   # same wire format as go2_cmd_vel_tcp.py
 
 
@@ -304,6 +308,21 @@ def run_node(params, args):
             self.tcp.start()
             self.create_timer(1.0 / 20, self.publish_cmd)
             self.create_timer(1.0 / 30, self.publish_joints)
+            self.leg_q = dict(zip(params["leg_joint_names"], params["leg_joint_positions"]))
+            self.true_twist = (0.0, 0.0, 0.0)
+            if params.get("gait_legs"):
+                from leg_gait import Trot
+                from std_msgs.msg import Float64, String
+                self.Float64, self.String = Float64, String
+                self.trot, self.lift, self.gait = Trot(), LIFT["NORMAL"], "NORMAL"
+                self.leg_pubs = {n: self.create_publisher(Float64, f"/sim/leg/{n}/cmd_pos", 10)
+                                 for n in params["leg_joint_names"]}
+                self.feet_pub = self.create_publisher(String, "/sim/feet", 10)
+                self.create_subscription(String, "/gait/command", self.on_gait, 10)
+                self.create_subscription(String, "/objects/boxes_json", self.on_boxes, 10)
+                self.boxes = []
+                self.last_leg_t = time.monotonic()
+                self.create_timer(1.0 / 50, self.step_legs)
             self.create_timer(1.0, self.publish_path)
             self.create_timer(5.0, self.report)
             self.frames_reported = 0
@@ -316,6 +335,8 @@ def run_node(params, args):
             else:
                 self.base = drift_step(self.base, self.true_base, true, *self.drift)
             self.true_base = true
+            t = msg.twist.twist
+            self.true_twist = (t.linear.x, t.linear.y, t.angular.z)
             sp, sq = compose(self.base, t_base_sensor_virtual)
             out = Odometry()
             out.header.stamp = self.get_clock().now().to_msg()
@@ -376,11 +397,49 @@ def run_node(params, args):
                 t.linear.x, t.linear.y, t.angular.z = float(vx), float(vy), float(vyaw)
             self.cmd_pub.publish(t)
 
+        def on_gait(self, msg):
+            self.gait, self.lift = msg.data, LIFT.get(msg.data, LIFT["NORMAL"])
+            self.trot.period = PERIOD.get(msg.data, PERIOD["NORMAL"])
+
+        def on_boxes(self, msg):
+            self.boxes = json.loads(msg.data)["boxes"]
+
+        def foot_blocked(self, _leg, x, y):
+            """Would this landing point, in body axes, be on a perceived object?"""
+            (bx, by, _), q = self.true_base
+            yaw = math.atan2(2 * (q[3] * q[2] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2]))
+            wx, wy = bx + math.cos(yaw) * x - math.sin(yaw) * y, by + math.sin(yaw) * x + math.cos(yaw) * y
+            for b in self.boxes:
+                c, s = math.cos(b["yaw"]), math.sin(b["yaw"])
+                dx, dy = wx - b["x"], wy - b["y"]
+                # An object seen but not measured has no size yet: keep a wider distance from it.
+                if abs(c * dx + s * dy) < max(b["sx"] / 2, 0.06) + FOOT_MARGIN and \
+                        abs(-s * dx + c * dy) < max(b["sy"] / 2, 0.06) + FOOT_MARGIN:
+                    return True
+            return False
+
+        def step_legs(self):
+            now = time.monotonic()
+            dt, self.last_leg_t = now - self.last_leg_t, now
+            avoid = self.foot_blocked if self.boxes and self.true_base is not None else None
+            joints, feet = self.trot.step(dt, *self.true_twist, self.lift, avoid)
+            self.leg_q = joints
+            for name, q in joints.items():
+                self.leg_pubs[name].publish(self.Float64(data=float(q)))
+            if self.true_base is not None:
+                (bx, by, bz), q = self.true_base
+                yaw = math.atan2(2 * (q[3] * q[2] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2]))
+                c, s = math.cos(yaw), math.sin(yaw)
+                world = {leg: [round(bx + c * x - s * y, 4), round(by + s * x + c * y, 4),
+                               round(bz + z - FOOT_RADIUS, 4)] for leg, (x, y, z) in feet.items()}
+                self.feet_pub.publish(self.String(data=json.dumps(
+                    {"t": time.time(), "gait": self.gait, "lift": self.lift, "feet": world})))
+
         def publish_joints(self):
             js = JointState()
             js.header.stamp = self.get_clock().now().to_msg()
             js.name = list(params["leg_joint_names"])
-            js.position = [float(v) for v in params["leg_joint_positions"]]
+            js.position = [float(self.leg_q[n]) for n in params["leg_joint_names"]]
             self.joint_pub.publish(js)
 
         def publish_path(self):

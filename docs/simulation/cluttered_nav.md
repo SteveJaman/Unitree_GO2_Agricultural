@@ -2,6 +2,9 @@
 
 [← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [Indoor lab world](lab_office.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md) · [Status](../STATUS.md)
 
+> **Newer:** [cluttered_items.md](cluttered_items.md) has the same concept with real objects, moving
+> legs, real YOLO and a fixed fusion. This page records the first version, and its unsafe labels were fixed there.
+
 A Gazebo arena of low and tall clutter, and the results of running Nav2 through
 it with and without the traversability stack: the height costmap layer, the
 camera + LiDAR 3D boxes, and the gait supervisor in `dry_run`

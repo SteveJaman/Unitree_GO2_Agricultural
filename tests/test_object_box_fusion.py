@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts", "nodes"))
 from object_box_fusion import (  # noqa: E402
-    Tracks, classify_height, fuse_detection, oriented_box, project)
+    Tracks, classify_height, fuse_detection, ground_point, oriented_box, project)
 
 K = (468.0, 468.0, 320.0, 180.0)
 
@@ -72,6 +72,56 @@ def test_tracks_merge_one_object_and_keep_two_apart():
     t.update("hose", 0.8, dict(b, x=4.0), 2.0)
     assert len(t.items) == 2
     assert t.items[0]["n_obs"] == 2
+    assert len(t.publishable()) == 1    # a one-off track is held back
+
+
+def test_tracks_keep_the_high_reading_from_a_partial_view():
+    t = Tracks()
+    b = {"x": 1.0, "y": 0.0, "z": 0.05, "sx": 0.4, "sy": 0.1, "sz": 0.1, "yaw": 0.0, "height": 0.10, "n_points": 9}
+    for h in (0.10, 0.11, 0.42, 0.41, 0.42):
+        t.update("barrel", 0.8, dict(b, height=h), 0.0)
+    assert t.items[0]["traverse"] == "blocked"
+
+
+def test_a_small_object_in_front_never_reads_as_the_detected_object():
+    """The cone-in-front-of-the-barrel case: only the cone has points in the box."""
+    rng = np.random.default_rng(2)
+    cone = np.column_stack([rng.uniform(1.9, 2.0, 30), rng.uniform(-0.04, 0.04, 30), rng.uniform(0.04, 0.09, 30)])
+    cam = cone - np.array([0.0, 0.0, 0.33])
+    u, v = project(np.array([[3.0, -0.3, -0.33], [3.0, 0.3, 0.07]]), *K)
+    box = fuse_detection(cone, cam, K, [u.min(), v.min(), u.max(), v.max()], 0.0)
+    assert box["traverse"] == "unknown" and "height" not in box
+
+
+def test_only_the_bottom_of_an_object_gives_unknown_height():
+    rng = np.random.default_rng(3)
+    low = np.column_stack([rng.uniform(1.95, 2.05, 40), rng.uniform(-0.3, 0.3, 40), rng.uniform(0.03, 0.08, 40)])
+    cam = low - np.array([0.0, 0.0, 0.33])
+    u, v = project(cam, *K)
+    top = 180.0 - 468.0 * (0.50 - 0.33) / 2.0
+    assert fuse_detection(low, cam, K, [u.min(), top, u.max(), v.max()], 0.0)["reason"] == "top_not_seen"
+
+
+def test_points_at_the_wrong_range_never_measure_the_object():
+    """A far object's box catches a near low object: the floor ray says it is further."""
+    pts, cam, obj = scene()
+    box = fuse_detection(pts, cam, K, bbox_of(obj), 0.0, floor_range=4.0)
+    assert box["reason"] == "wrong_range"
+    assert "height" in fuse_detection(pts, cam, K, bbox_of(obj), 0.0, floor_range=2.1)
+
+
+def test_duplicates_of_a_long_object_merge():
+    t = Tracks()
+    b = {"x": 1.0, "y": 0.0, "z": 0.05, "sx": 2.0, "sy": 0.1, "sz": 0.1, "yaw": 0.0, "height": 0.1, "n_points": 9}
+    t.update("cable", 0.8, b, 0.0)
+    t.update("cable", 0.8, dict(b, x=2.2, sx=0.4), 1.0)
+    assert len(t.items) == 1
+
+
+def test_ground_point_of_a_box_bottom():
+    rot, trans = np.eye(3), np.array([0.0, 0.0, -0.33])
+    p = ground_point([300, 100, 340, 180 + 468 * 0.33 / 2.0], K, rot, trans, 0.0)
+    assert abs(p[0] - 2.0) < 0.01 and abs(p[2]) < 1e-6
 
 
 def gait_rule():
@@ -85,6 +135,7 @@ def gait_rule():
 
 def test_high_step_only_when_the_foot_clears_the_object():
     rule = gait_rule()
+    assert rule(None, 0.10, 0.02, 0.25) == "CAREFUL"
     assert rule(0.05, 0.10, 0.02, 0.25) == "HIGH_STEP"
     assert rule(0.08, 0.10, 0.02, 0.25) == "HIGH_STEP"
     assert rule(0.12, 0.10, 0.02, 0.25) == "CAREFUL"

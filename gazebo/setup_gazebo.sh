@@ -17,6 +17,7 @@
 #   ./gazebo/setup_gazebo.sh --models     # downloads only
 #   ./gazebo/setup_gazebo.sh --image      # image build + validation only
 #   ./gazebo/setup_gazebo.sh --furniture  # the lab_office furniture only
+#   ./gazebo/setup_gazebo.sh --items      # the cluttered_items objects from Gazebo Fuel (needs the furniture too)
 #   ./gazebo/setup_gazebo.sh --moveit     # go2-sim-moveit:local (MoveIt 2 + gz_ros2_control; needs go2-sim:local)
 #   ./gazebo/setup_gazebo.sh --force      # re-download models
 # ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ for a in "$@"; do
     case "$a" in
         --models) DO_IMAGE=0 ;;
         --furniture) DO_MODELS=0; DO_IMAGE=0 ;;
+        --items) python3 "$GZ_DIR/worlds/build_items_world.py" --download; exit 0 ;;
         --moveit) DO_MODELS=0; DO_IMAGE=0; DO_FURNITURE=0; DO_MOVEIT=1 ;;
         --image)  DO_MODELS=0 ;;
         --force)  FORCE=1 ;;

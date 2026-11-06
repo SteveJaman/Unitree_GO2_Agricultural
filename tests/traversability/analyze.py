@@ -25,7 +25,7 @@ from scipy import ndimage, stats  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "nodes"))
-from sim_box_detector import corners, load_objects  # noqa: E402
+from sim_box_detector import load_objects  # noqa: E402
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"
 INK, INK2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
@@ -35,7 +35,7 @@ GAIT_ORDER = ["NORMAL", "HIGH_STEP", "CAREFUL", "STOP"]
 GAIT_COLOR = {"NORMAL": "#c3c2b7", "HIGH_STEP": "#1baf7a", "CAREFUL": "#eda100", "STOP": "#6250d6"}
 MODES = ["baseline", "traversability"]
 MODE_COLOR = {"baseline": BLUE, "traversability": ORANGE}
-FOOT_HIGH, MARGIN, LETHAL = 0.10, 0.02, 0.25
+FOOT_HIGH, MARGIN, LETHAL = 0.12, 0.02, 0.25
 BODY = (0.70, 0.31)
 SCAN_D, SCAN_W = 1.5, 0.3
 XLIM, YLIM = (-2.3, 12.3), (-4.8, 4.8)
@@ -62,14 +62,7 @@ def gait_for_height(h):
 
 
 def load_walls(path):
-    text = re.sub(r"@\w+@", "ogre2", open(path).read())
-    walls = []
-    for m in ET.fromstring(text).iter("model"):
-        if m.get("name", "").startswith("wall_"):
-            x, y, *_ = (float(v) for v in m.find("pose").text.split())
-            sx, sy, _ = (float(v) for v in m.find("link/collision/geometry/box/size").text.split())
-            walls.append({"name": m.get("name"), "x": x, "y": y, "sx": sx, "sy": sy})
-    return walls
+    return json.load(open(path))["walls"]
 
 
 def footprint(o):
@@ -142,8 +135,21 @@ class Raster:
         return math.hypot(goal[0] - start[0], goal[1] - start[1])
 
 
+def load_feet(path):
+    out = []
+    f = os.path.join(path, "feet.jsonl")
+    if os.path.exists(f):
+        for line in open(f):
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
 def load_trial(path):
     t = {"name": os.path.basename(path), "mode": re.sub(r"\d+$", "", os.path.basename(path))}
+    t["feet"] = load_feet(path)
     rows = list(csv.DictReader(open(os.path.join(path, "trajectory.csv"))))
     t["traj"] = np.array([[float(r[k]) for k in ("t", "x", "y", "yaw")] for r in rows])
     t["legs"] = json.load(open(os.path.join(path, "legs.json")))
@@ -164,21 +170,46 @@ def pose_at(traj, time):
     return traj[i, 1:]
 
 
-def contact_episodes(trial, gap=2.0):
-    """One episode per object per continuous touch: {object, t0, t1, n}."""
+def contact_episodes(trial, gap=0.5):
+    """One episode per object and leg per continuous touch."""
     per = defaultdict(list)
     for c in trial["contacts"]:
-        per[c["other"].split("::")[0]].append(c["t_rel"])
+        per[(c["other"].split("::")[0], c["link"])].append(c["t_rel"])
     eps = []
-    for name, ts in per.items():
+    for (name, link), ts in per.items():
         ts.sort()
         start = prev = ts[0]
         for x in ts[1:] + [1e18]:
             if x - prev > gap:
-                eps.append({"object": name, "t0": start, "t1": prev})
+                eps.append({"object": name, "link": link, "t0": start, "t1": prev,
+                            "foot": link.endswith("_calf")})
                 start = x
             prev = x
     return sorted(eps, key=lambda e: e["t0"])
+
+
+def foot_passes(trial, objects):
+    """Each time a foot's path crosses an object's footprint: its lowest clearance over the top."""
+    rows = []
+    for o in objects:
+        c, s = math.cos(o["yaw"]), math.sin(o["yaw"])
+        for leg in ("FL", "FR", "RL", "RR"):
+            inside, low, t0, gaits = False, 9.0, 0.0, []
+            for f in trial["feet"]:
+                x, y, z = f["feet"][leg]
+                dx, dy = x - o["x"], y - o["y"]
+                now = abs(c * dx + s * dy) <= o["sx"] / 2 and abs(-s * dx + c * dy) <= o["sy"] / 2
+                if now:
+                    low = min(low, z - o["height"])
+                    gaits.append(f["gait"])
+                    t0 = t0 or f["t"]
+                elif inside:
+                    rows.append({"trial": trial["name"], "mode": trial["mode"], "object": o["name"],
+                                 "height": o["height"], "leg": leg, "clearance_m": round(low, 3),
+                                 "gait": Counter(gaits).most_common(1)[0][0], "cleared": low > 0.0})
+                    low, t0, gaits = 9.0, 0.0, []
+                inside = now
+    return rows
 
 
 def path_len(traj, a, b):
@@ -233,6 +264,7 @@ def trial_metrics(t, objects, tall, low_all):
     samples = traj[::4]
     clear_tall = [tall.clearance(*p[1:]) for p in samples]
     eps = contact_episodes(t)
+    low_h = {o["name"]: o["height"] <= 0.15 for o in objects}
     msgs = Counter(e["msg"] for e in t["events"] if e["kind"] == "nav2")
     aborts = sum(v for k, v in msgs.items() if "collision ahead" in k)
     plan_fail = sum(v for k, v in msgs.items() if "Starting point in lethal" in k)
@@ -240,7 +272,9 @@ def trial_metrics(t, objects, tall, low_all):
             "reached": sum(1 for l in legs if l["result"] == "reached"),
             "time_s": round(sum(l["time_s"] for l in legs), 1),
             "walked_m": round(walked, 2), "spl": round(float(np.mean(spl)), 3),
-            "contact_episodes": len(eps),
+            "foot_strikes": sum(e["foot"] for e in eps),
+            "foot_strikes_low": sum(e["foot"] and low_h.get(e["object"], False) for e in eps),
+            "body_hits": sum(not e["foot"] for e in eps),
             "objects_hit": len({e["object"] for e in eps}),
             "collision_aborts": aborts, "start_in_lethal": plan_fail,
             "resends": sum(l["resends"] for l in legs),
@@ -260,7 +294,7 @@ def contact_rows(t, objects):
         if o is None or ep["object"] in seen:
             continue
         seen.add(ep["object"])
-        row = {"trial": t["name"], "mode": t["mode"], "object": o["name"], "true_h": round(o["height"], 3),
+        row = {"trial": t["name"], "mode": t["mode"], "object": o["name"], "link": ep["link"], "true_h": round(o["height"], 3),
                "band": band(o["height"]), "t_contact": round(ep["t0"], 1),
                "right_gait": gait_for_height(o["height"]), "gait": "", "costmap_gait": "",
                "known": False, "lead_s": "", "lead_m": "", "est_h": ""}
@@ -277,7 +311,7 @@ def contact_rows(t, objects):
                     p = pose_at(t["traj"], ts)
                     row.update(known=True, lead_s=round(ep["t0"] - ts, 1),
                                lead_m=round(math.hypot(p[0] - o["x"], p[1] - o["y"]), 2))
-                row["est_h"] = b["height"]
+                row["est_h"] = "" if b["height"] is None else b["height"]
         rows.append(row)
     return rows
 
@@ -291,28 +325,33 @@ def box_rows(trials, objects):
             b, d = match_box(o, last)
             rows.append({"trial": t["name"], "object": o["name"], "class": o["class"],
                          "true_h": round(o["height"], 3), "true_band": band(o["height"]),
-                         "seen": b is not None,
-                         "est_h": b["height"] if b else "", "err_h": round(b["height"] - o["height"], 3) if b else "",
+                         "seen": b is not None and b["height"] is not None,
+                         "unknown": b is not None and b["height"] is None,
+                         "est_h": b["height"] if b and b["height"] is not None else "",
+                         "err_h": round(b["height"] - o["height"], 3) if b and b["height"] is not None else "",
                          "err_xy": round(d, 3) if b else "", "est_band": b["traverse"] if b else "",
                          "n_points": b["n_points"] if b else "", "n_obs": b["n_obs"] if b else ""})
     return rows
 
 
 def track_audit(trials, objects):
-    """Every final track, including duplicates: is its band right for the nearest object of its class?"""
+    """Every final track: a real class near that object, or a false label? Is its band safe?"""
     rows = []
+    rank = {"step_over": 0, "caution": 1, "blocked": 2}
     for t in trials:
         snaps = box_snapshots(t)
         for b in (snaps[-1][1] if snaps else []):
             same = [o for o in objects if o["class"] == b["class"]]
-            o = min(same, key=lambda s: math.hypot(s["x"] - b["x"], s["y"] - b["y"]))
-            true_band = band(o["height"])
-            rank = {"step_over": 0, "caution": 1, "blocked": 2}
-            rows.append({"trial": t["name"], "track_class": b["class"], "object": o["name"],
-                         "true_h": round(o["height"], 3), "est_h": b["height"], "true_band": true_band,
-                         "est_band": b["traverse"], "dist_m": round(math.hypot(o["x"] - b["x"], o["y"] - b["y"]), 2),
-                         "n_obs": b["n_obs"], "n_points": b["n_points"],
-                         "unsafe": rank[b["traverse"]] < rank[true_band]})
+            near = min(objects, key=lambda s: math.hypot(s["x"] - b["x"], s["y"] - b["y"]))
+            o = min(same, key=lambda s: math.hypot(s["x"] - b["x"], s["y"] - b["y"])) if same else near
+            dist = math.hypot(o["x"] - b["x"], o["y"] - b["y"])
+            true_band = band(near["height"])
+            measured = b["traverse"] in rank
+            rows.append({"trial": t["name"], "track_class": b["class"], "nearest_object": near["name"],
+                         "true_h": round(near["height"], 3), "est_h": b["height"] if b["height"] is not None else "",
+                         "true_band": true_band, "est_band": b["traverse"], "class_dist_m": round(dist, 2),
+                         "false_label": not same, "n_obs": b["n_obs"], "n_points": b["n_points"],
+                         "unsafe": measured and rank[b["traverse"]] < rank[true_band]})
     return rows
 
 
@@ -350,8 +389,9 @@ def draw_world(ax, objects, walls, labels=False):
     for o in objects:
         ax.add_patch(Polygon(footprint(o), fc=BAND[band(o["height"])], ec=SURFACE, lw=0.6, alpha=0.9))
         if labels:
-            off = {"cable_1": (-40, -46), "barrier_center": (-46, 4), "hose_1": (12, 30),
-                   "pipe_low": (8, -40), "toolbox_1": (6, -22), "cable_2": (34, 14)}.get(o["name"], (0, 9))
+            off = {"shelf_1": (0, -30), "shoe_1": (34, 8), "pot_1": (-34, 2), "plastic_cup_1": (24, -24), "keyboard_1": (-42, -6),
+                   "mug_white_1": (-14, 12), "power_strip_2": (38, -4), "mug_blue_1": (0, -26), "cable_coil_1": (0, 11),
+                   "saucer_1": (42, -6), "bottle_1": (0, -26)}.get(o["name"], (0, 9))
             ax.annotate(f"{o['name']}\n{o['height']:.2f} m", (o["x"], o["y"]), xytext=off,
                         textcoords="offset points", ha="center", fontsize=6.5, color=INK2)
     ax.set_xlim(*XLIM)
@@ -372,8 +412,6 @@ def fig_floorplan(out, objects, walls, goals):
     for i, (x, y, n) in enumerate(goals):
         ax.plot(x, y, "o", ms=9, mfc=BLUE, mec=SURFACE, mew=1.5, zorder=5)
         ax.annotate(n, (x, y), xytext=(6, -13), textcoords="offset points", fontsize=8, color=INK)
-    ax.plot(-4.5, 0, marker=None)
-    ax.annotate("The old spawn (−4.5, 0) was west of this wall, outside the arena", (-1.8, -4.2), fontsize=8, color=INK2)
     band_legend(ax, loc="upper center", bbox_to_anchor=(0.5, 1.09), ncol=3, fontsize=8)
     fig.savefig(os.path.join(out, "floorplan.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -515,9 +553,39 @@ def fig_gait_timeline(out, trial, objects):
     plt.close(fig)
 
 
+def fig_foot_passes(out, passes, ms):
+    if not passes:
+        return
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
+    ax = axes[0]
+    data = [[r["clearance_m"] * 100 for r in passes if r["mode"] == m] for m in MODES]
+    bins = np.arange(-16, 15, 2)
+    for m, d in zip(MODES, data):
+        ax.hist(d, bins=bins, color=MODE_COLOR[m], alpha=0.75, label=f"{m} (n = {len(d)})", edgecolor=SURFACE)
+    ax.axvline(0, color=INK2, lw=1)
+    ax.annotate("cleared the top", (0.6, ax.get_ylim()[1] * 0.92), fontsize=8, color=INK2)
+    ax.set_xlabel("lowest foot height above the item (cm)")
+    ax.set_ylabel("foot passes")
+    ax.legend(loc="upper left", fontsize=8)
+    ax = axes[1]
+    for k, m in enumerate(MODES):
+        y = [x["foot_strikes_low"] for x in ms if x["mode"] == m]
+        ax.bar(k, np.mean(y), 0.55, color=MODE_COLOR[m], label=m)
+        ax.plot([k] * len(y), y, "o", ms=8, mfc=SURFACE, mec=INK2, zorder=4)
+        ax.annotate(f"{np.mean(y):.1f}", (k, np.mean(y)), xytext=(26, 2), textcoords="offset points", fontsize=9, color=INK2)
+    ax.set_xticks([0, 1], MODES)
+    ax.set_ylabel("foot strikes on step-over items\nper trial (dots: each trial)")
+    ax.grid(axis="y")
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out, "foot_clearance.png"), dpi=150)
+    plt.close(fig)
+
+
 def summary_stats(ms):
     keys = [("reached", "Goals reached (of 3)"), ("time_s", "Total time (s)"), ("walked_m", "Distance walked (m)"),
-            ("spl", "SPL"), ("contact_episodes", "Contact episodes"), ("objects_hit", "Objects touched"),
+            ("spl", "SPL"), ("foot_strikes_low", "Foot strikes on step-over items"), ("foot_strikes", "Foot strikes, all objects"),
+            ("body_hits", "Trunk hits"), ("objects_hit", "Objects touched"),
             ("collision_aborts", "Nav2 collision aborts"), ("start_in_lethal", "Plans refused: start in lethal space"),
             ("resends", "Goals re-sent"), ("min_clear_tall_m", "Closest to a tall object or wall (m)"), ("rtf", "Sim real-time factor")]
     a = [m for m in ms if m["mode"] == MODES[0]]
@@ -553,9 +621,11 @@ def main():
     audit = track_audit(trav, objects)
     write_csv(os.path.join(out, "data", "tracks.csv"), audit)
     print(json.dumps({"tracks": len(audit), "per_trial": round(len(audit) / max(len(trav), 1), 1),
-                      "band_wrong": sum(r["true_band"] != r["est_band"] for r in audit),
+                      "band_wrong": sum(r["true_band"] != r["est_band"] and r["est_band"] != "unknown" for r in audit),
                       "unsafe_too_low": sum(r["unsafe"] for r in audit),
-                      "unsafe_by_object": Counter(r["object"] for r in audit if r["unsafe"]).most_common()}))
+                      "unknown": sum(r["est_band"] == "unknown" for r in audit),
+                      "false_label": sum(r["false_label"] for r in audit),
+                      "unsafe_by_object": Counter(r["nearest_object"] for r in audit if r["unsafe"]).most_common()}))
 
     per = defaultdict(list)
     for r in boxes:
@@ -612,6 +682,9 @@ def main():
         f.write("\n### Fused boxes per object (box_accuracy.png)\n\n" + md_table(obj_rows))
 
     goals = [(5, 0, "goal 1"), (10, 0, "goal 2"), (0, 0, "start / goal 3")]
+    passes = [r for t in trials for r in foot_passes(t, [o for o in objects if o["height"] <= 0.15])]
+    write_csv(os.path.join(out, "data", "foot_passes.csv"), passes)
+    fig_foot_passes(out, passes, ms)
     fig_floorplan(out, objects, walls, goals)
     fig_trajectories(out, trials, objects, walls)
     fig_legs(out, legs)

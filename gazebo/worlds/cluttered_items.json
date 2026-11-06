@@ -1,0 +1,285 @@
+{
+ "world": "cluttered_items",
+ "spawn": [
+  0.0,
+  0.0,
+  0.0
+ ],
+ "goals": [
+  [
+   "goal_1_mid",
+   5.0,
+   0.0
+  ],
+  [
+   "goal_2_end",
+   10.0,
+   0.0
+  ],
+  [
+   "goal_3_return",
+   0.0,
+   0.0
+  ]
+ ],
+ "objects": [
+  {
+   "name": "power_strip_1",
+   "class": "power_strip",
+   "x": 1.9,
+   "y": 0.75,
+   "z": 0.02,
+   "yaw": 1.5708,
+   "sx": 0.3,
+   "sy": 0.055,
+   "sz": 0.04,
+   "height": 0.04
+  },
+  {
+   "name": "keyboard_1",
+   "class": "keyboard",
+   "x": 1.9,
+   "y": -0.75,
+   "z": 0.012,
+   "yaw": 1.5708,
+   "sx": 0.442,
+   "sy": 0.124,
+   "sz": 0.024,
+   "height": 0.024
+  },
+  {
+   "name": "book_1",
+   "class": "book",
+   "x": 4.1,
+   "y": 0.65,
+   "z": 0.0255,
+   "yaw": 1.3963,
+   "sx": 0.141,
+   "sy": 0.21,
+   "sz": 0.051,
+   "height": 0.051
+  },
+  {
+   "name": "saucer_1",
+   "class": "plant_saucer",
+   "x": 4.2,
+   "y": -0.7,
+   "z": 0.023,
+   "yaw": 0.0,
+   "sx": 0.311,
+   "sy": 0.31,
+   "sz": 0.046,
+   "height": 0.046
+  },
+  {
+   "name": "cable_coil_1",
+   "class": "cable",
+   "x": 5.7,
+   "y": 0.15,
+   "z": 0.0305,
+   "yaw": 0.0,
+   "sx": 0.175,
+   "sy": 0.175,
+   "sz": 0.061,
+   "height": 0.061
+  },
+  {
+   "name": "pot_1",
+   "class": "plant_pot",
+   "x": 7.6,
+   "y": -0.4,
+   "z": 0.036,
+   "yaw": 0.0,
+   "sx": 0.101,
+   "sy": 0.101,
+   "sz": 0.072,
+   "height": 0.072
+  },
+  {
+   "name": "mug_blue_1",
+   "class": "cup",
+   "x": 6.3,
+   "y": -0.2,
+   "z": 0.0475,
+   "yaw": 0.5236,
+   "sx": 0.166,
+   "sy": 0.126,
+   "sz": 0.095,
+   "height": 0.095
+  },
+  {
+   "name": "power_strip_2",
+   "class": "power_strip",
+   "x": 7.0,
+   "y": 0.55,
+   "z": 0.02,
+   "yaw": 1.3963,
+   "sx": 0.3,
+   "sy": 0.055,
+   "sz": 0.04,
+   "height": 0.04
+  },
+  {
+   "name": "mug_white_1",
+   "class": "cup",
+   "x": 6.6,
+   "y": 0.95,
+   "z": 0.0575,
+   "yaw": 3.4907,
+   "sx": 0.131,
+   "sy": 0.097,
+   "sz": 0.115,
+   "height": 0.115
+  },
+  {
+   "name": "shoe_1",
+   "class": "shoe",
+   "x": 8.4,
+   "y": 0.1,
+   "z": 0.062,
+   "yaw": 1.0472,
+   "sx": 0.106,
+   "sy": 0.281,
+   "sz": 0.124,
+   "height": 0.124
+  },
+  {
+   "name": "plastic_cup_1",
+   "class": "cup",
+   "x": 8.0,
+   "y": -0.9,
+   "z": 0.065,
+   "yaw": 0.0,
+   "sx": 0.075,
+   "sy": 0.075,
+   "sz": 0.13,
+   "height": 0.13
+  },
+  {
+   "name": "bottle_1",
+   "class": "bottle",
+   "x": 5.0,
+   "y": -1.6,
+   "z": 0.104,
+   "yaw": 0.0,
+   "sx": 0.087,
+   "sy": 0.087,
+   "sz": 0.208,
+   "height": 0.208
+  },
+  {
+   "name": "shelf_1",
+   "class": "bookshelf",
+   "x": 3.0,
+   "y": 0.0,
+   "z": 0.92,
+   "yaw": 0.0,
+   "sx": 1.66,
+   "sy": 0.42,
+   "sz": 1.84,
+   "height": 1.84
+  },
+  {
+   "name": "chair_1",
+   "class": "chair",
+   "x": 4.2,
+   "y": 2.3,
+   "z": 0.435,
+   "yaw": -1.5708,
+   "sx": 0.38,
+   "sy": 0.52,
+   "sz": 0.87,
+   "height": 0.87
+  },
+  {
+   "name": "cabinet_1",
+   "class": "file_cabinet",
+   "x": 6.0,
+   "y": 2.6,
+   "z": 0.325,
+   "yaw": 0.0,
+   "sx": 0.61,
+   "sy": 0.75,
+   "sz": 0.65,
+   "height": 0.65
+  },
+  {
+   "name": "trash_bin_1",
+   "class": "trash_bin",
+   "x": 8.2,
+   "y": 1.8,
+   "z": 0.15,
+   "yaw": 0.0,
+   "sx": 0.24,
+   "sy": 0.24,
+   "sz": 0.3,
+   "height": 0.3
+  },
+  {
+   "name": "backpack_1",
+   "class": "backpack",
+   "x": 5.6,
+   "y": 1.5,
+   "z": 0.22,
+   "yaw": 2.0944,
+   "sx": 0.358,
+   "sy": 0.369,
+   "sz": 0.44,
+   "height": 0.44
+  },
+  {
+   "name": "toolbox_1",
+   "class": "toolbox",
+   "x": 6.8,
+   "y": -1.7,
+   "z": 0.1495,
+   "yaw": 0.3491,
+   "sx": 0.51,
+   "sy": 0.218,
+   "sz": 0.299,
+   "height": 0.299
+  },
+  {
+   "name": "side_table_1",
+   "class": "side_table",
+   "x": 9.0,
+   "y": -2.6,
+   "z": 0.32,
+   "yaw": 0.0,
+   "sx": 0.45,
+   "sy": 0.45,
+   "sz": 0.64,
+   "height": 0.64
+  }
+ ],
+ "walls": [
+  {
+   "name": "wall_north",
+   "x": 5.0,
+   "y": 4.5,
+   "sx": 14.0,
+   "sy": 0.1
+  },
+  {
+   "name": "wall_south",
+   "x": 5.0,
+   "y": -4.5,
+   "sx": 14.0,
+   "sy": 0.1
+  },
+  {
+   "name": "wall_west",
+   "x": -2.0,
+   "y": 0.0,
+   "sx": 0.1,
+   "sy": 9.0
+  },
+  {
+   "name": "wall_east",
+   "x": 12.0,
+   "y": 0.0,
+   "sx": 0.1,
+   "sy": 9.0
+  }
+ ]
+}

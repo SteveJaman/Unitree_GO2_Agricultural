@@ -28,3 +28,75 @@
   ros_type_name: "geometry_msgs/msg/Twist"
   gz_type_name: "gz.msgs.Twist"
   direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FR_hip_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FR_hip_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FR_thigh_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FR_thigh_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FR_calf_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FR_calf_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FL_hip_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FL_hip_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FL_thigh_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FL_thigh_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/FL_calf_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/FL_calf_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RR_hip_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RR_hip_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RR_thigh_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RR_thigh_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RR_calf_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RR_calf_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RL_hip_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RL_hip_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RL_thigh_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RL_thigh_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/sim/leg/RL_calf_joint/cmd_pos"
+  gz_topic_name: "/sim/leg/RL_calf_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ

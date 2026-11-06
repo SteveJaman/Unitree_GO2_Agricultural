@@ -67,7 +67,7 @@ render() {
     # a gz-transport partition of its own so a running simulation is not touched.
     docker run --rm --network host --ipc host "${dev_args[@]}" -e GZ_PARTITION="render$$$1" -e GZ_IP=127.0.0.1 \
         -e DISPLAY="${DISPLAY:-:0}" -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-        -e GZ_SIM_RESOURCE_PATH=/sim/models/furniture -e HOME=/tmp \
+        -e GZ_SIM_RESOURCE_PATH=/sim/models/furniture:/sim/models/items -e HOME=/tmp \
         -v "${GZ_DIR}:/sim:ro" -v "${dir}:/w" -v "${dir}:/out" --user "$(id -u):$(id -g)" \
         -e RENDER_TIMEOUT="${RENDER_TIMEOUT:-300}" -e FRAMES="${FRAMES:-30}" "${IMAGE}" bash -c '
             gz sim -s -r --render-engine ogre2 /w/world.sdf > /w/gz.log 2>&1 &

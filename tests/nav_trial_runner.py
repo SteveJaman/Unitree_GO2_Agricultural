@@ -77,6 +77,8 @@ class TrialRunner(Node):
                        durability=DurabilityPolicy.VOLATILE))
         self.create_subscription(String, "/gait/status", self.on_string("gait"), 10)
         self.create_subscription(String, "/objects/boxes_json", self.on_string("boxes"), 10)
+        self.feet = open(os.path.join(out_dir, "feet.jsonl"), "w", buffering=1)
+        self.create_subscription(String, "/sim/feet", self.on_feet, 50)
 
     def now(self):
         return time.time() - self.t0
@@ -94,6 +96,9 @@ class TrialRunner(Node):
             self.events.write(json.dumps(
                 {"t": round(self.now(), 2), "kind": "nav2", "node": msg.name,
                  "level": msg.level, "msg": msg.msg}) + "\n")
+
+    def on_feet(self, msg):
+        self.feet.write(msg.data + "\n")
 
     def on_string(self, kind):
         def cb(msg):
@@ -175,6 +180,7 @@ class TrialRunner(Node):
             json.dump(legs, f, indent=1)
         self.traj.close()
         self.events.close()
+        self.feet.close()
         return legs
 
 

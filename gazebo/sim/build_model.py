@@ -159,6 +159,31 @@ def fix_leg_joints(robot, stand):
     return fixed
 
 
+def free_leg_joints(robot):
+    """SIM_GAIT=1: leg joints stay revolute and the legs lose their collisions,
+    except the feet, so the trunk moves as commanded and only feet touch objects."""
+    joints = {}
+    for j in robot.findall("joint"):
+        m = LEG_JOINT.match(j.get("name", ""))
+        if not m:
+            continue
+        lim = j.find("limit")
+        if lim is not None:
+            lim.set("effort", "100")
+            lim.set("velocity", "40")
+        for el in list(j.findall("dynamics")):
+            j.remove(el)
+        joints[j.get("name")] = STAND[m.group(2)]
+        ET.SubElement(j, "dynamics", damping="0.0", friction="0.0")
+    if len(joints) != 12:
+        raise SystemExit(f"expected 12 Go2 leg joints, found {len(joints)}: {sorted(joints)}")
+    for link in robot.findall("link"):
+        if re.match(r"^(FL|FR|RL|RR)_(hip|thigh|calf|calflower|calflower1|thigh_rotor|calf_rotor|hip_rotor)", link.get("name", "")):
+            for col in list(link.findall("collision")):
+                link.remove(col)
+    return joints
+
+
 def link_pose_chain(robot, root):
     """World (root-relative) pose of every link through the (now fixed) joints."""
     children = {}
@@ -317,13 +342,21 @@ def load_sensor_from_base(path):
 
 
 def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=SENSOR_FROM_BASE,
-          camera=True, lidar_hz=5.0, arm_urdf=None, arm_package="d1_550_description", arm_mesh_root=None):
+          camera=True, lidar_hz=5.0, arm_urdf=None, arm_package="d1_550_description", arm_mesh_root=None,
+          gait_legs=False):
     go2_urdf = os.path.join(go2_root, "urdf", "go2_description.urdf")
     robot = ET.parse(go2_urdf).getroot()
     robot.set("name", MODEL_NAME)
     strip_ros1_extensions(robot)
     rewrite_meshes(robot, "go2_description", mesh_root)
-    stand_angles = fix_leg_joints(robot, stand)
+    if gait_legs:
+        # Spawn height is taken from the standing pose, so measure it with fixed legs.
+        fixed_copy = ET.fromstring(ET.tostring(robot))
+        fix_leg_joints(fixed_copy, stand)
+        gait_spawn_z = -lowest_point(fixed_copy, link_pose_chain(fixed_copy, "base")) + CLEARANCE_M
+        stand_angles = free_leg_joints(robot)
+    else:
+        stand_angles = fix_leg_joints(robot, stand)
     # Frictionless Go2 contacts. The legs rest on the ground (VelocityControl
     # ignores linear z, gravity holds the feet down), and per 4 ms step
     # friction cancelled ~0.04 m/s of foot motion: a 0.1 rad/s turn did not
@@ -338,7 +371,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
         raise SystemExit(f"expected Go2 root link 'base', found {roots}")
 
     poses = link_pose_chain(robot, "base")
-    spawn_z = -lowest_point(robot, poses) + CLEARANCE_M
+    spawn_z = gait_spawn_z if gait_legs else -lowest_point(robot, poses) + CLEARANCE_M
 
     # Virtual lidar at the measured sensor position, level, wide vertical FOV.
     t, q = sensor_from_base[:3], sensor_from_base[3:]
@@ -379,6 +412,17 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
   <clip><near>0.05</near><far>40</far></clip></camera>
 </sensor></gazebo>""")
 
+    if os.environ.get("SIM_CHASE", "0") == "1":
+        # A camera that travels beside the robot, for videos of the legs. Frames go to /tmp/chase.
+        add_link(robot, "sim_chase")
+        add_fixed(robot, "sim_chase_joint", "base", "sim_chase",
+                  [0.0, -1.5, 0.12], [0.0, 0.0, math.pi / 2])
+        gz(robot, """<gazebo reference="sim_chase"><sensor name="chase_camera" type="camera">
+  <topic>/chase/image</topic><update_rate>12</update_rate><always_on>1</always_on>
+  <camera><horizontal_fov>1.05</horizontal_fov><image><width>960</width><height>540</height><format>R8G8B8</format></image>
+  <clip><near>0.05</near><far>40</far></clip><save enabled="true"><path>/tmp/chase</path></save></camera>
+</sensor></gazebo>""")
+
     plugins = [
         f"""<plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
   <topic>/model/{MODEL_NAME}/cmd_vel</topic></plugin>""",
@@ -395,6 +439,12 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
   <joint_name>{n}</joint_name><topic>/sim/d1/{n}/cmd_pos</topic>
   <use_velocity_commands>true</use_velocity_commands><p_gain>{20 if prismatic else 8}</p_gain>
   <cmd_max>{0.2 if prismatic else 3.0}</cmd_max><cmd_min>{-0.2 if prismatic else -3.0}</cmd_min></plugin>""")
+    if gait_legs:
+        for n in LEG_ORDER:
+            plugins.append(f"""<plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+  <joint_name>{n}</joint_name><topic>/sim/leg/{n}/cmd_pos</topic>
+  <use_velocity_commands>true</use_velocity_commands><p_gain>40</p_gain>
+  <cmd_max>25</cmd_max><cmd_min>-25</cmd_min><initial_position>{stand_angles[n]}</initial_position></plugin>""")
     gz(robot, "<gazebo>" + "".join(plugins) + "</gazebo>")
 
     # Warn (don't fail) about meshes missing on this machine: --mesh-root may
@@ -419,6 +469,7 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
         "camera_offset_xyz": cam_xyz,
         "leg_joint_names": LEG_ORDER,
         "leg_joint_positions": [stand_angles[n] for n in LEG_ORDER],
+        "gait_legs": bool(gait_legs),
         "d1_joints": d1_joints,
         "d1_limits_rad": d1_limits,          # keys already carry the d1_ prefix
         "gripper_open_deg": GRIPPER_OPEN_DEG,
@@ -478,7 +529,7 @@ def main():
         sys.exit(f"sensor_from_base: quaternion is not unit length: {sensor_from_base[3:]}")
     urdf, params = build(a.go2, a.d1, mesh_root, a.out, mount, STAND, sensor_from_base,
                          camera=a.camera == "1", lidar_hz=a.lidar_hz, arm_urdf=a.arm_urdf,
-                         arm_mesh_root=a.arm_mesh_root)
+                         arm_mesh_root=a.arm_mesh_root, gait_legs=os.environ.get("SIM_GAIT", "0") == "1")
     print(f"wrote {urdf}")
     print(f"sensor_from_base from {source}")
     print(f"spawn_z={params['spawn_z']} m  lidar at {params['lidar_offset_xyz']}  "

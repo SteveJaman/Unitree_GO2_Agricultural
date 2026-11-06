@@ -43,7 +43,7 @@ export HOME="${HOME:-/tmp/simhome}"
 # including the arm emulator (which runs with a cleaned environment).
 export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
 # model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
-export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
 ARM_ARGS=()
 if [ "${SIM_MOVEIT:-0}" = 1 ]; then
@@ -80,7 +80,7 @@ sed "s/@RENDER_ENGINE@/${SIM_RENDER_ENGINE}/" "$SIM/worlds/${WORLD}.sdf" > "$GEN
 SPAWN_Z="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_z"])' "$GEN/sim_params.json")"
 ROBOT_IN_WORLD=0
 
-if [ "${SIM_CONTACTS:-0}" = 1 ]; then
+if [ "${SIM_CONTACTS:-0}" = 1 ] || [ "${SIM_GAIT:-0}" = 1 ]; then
     # The URDF's fixed leg links are lumped into "base" on conversion, so the
     # contact sensors go into the converted SDF, naming each lumped collision.
     # Gazebo publishes each on its scoped name (a <topic> is ignored); the
@@ -90,12 +90,23 @@ if [ "${SIM_CONTACTS:-0}" = 1 ]; then
     echo "[sim] contact sensors on every robot link ($GEN/contact_topics.txt)"
     gz sdf -p "$GEN/go2_d1.urdf" > "$GEN/go2_d1_raw.sdf" 2>/dev/null
     python3 - "$GEN/go2_d1_raw.sdf" "$GEN/go2_d1.sdf" "$GEN/contact_topics.txt" "$WORLD" <<'PY'
+import os
 import sys
 import xml.etree.ElementTree as ET
 src, dst, topics_out, world = sys.argv[1:]
+gait = os.environ.get("SIM_GAIT", "0") == "1"
 tree = ET.parse(src)
 links = []
 for link in tree.getroot().find("model").findall("link"):
+    if gait:
+        # The body is carried by VelocityControl, not by the feet. Feet use bitmask 2,
+        # so they touch objects and pass through the floor (bitmask 1).
+        ET.SubElement(link, "gravity").text = "0"
+        for col in link.findall("collision"):
+            if "foot" in col.get("name"):
+                surface = col.find("surface") if col.find("surface") is not None else ET.SubElement(col, "surface")
+                contact = surface.find("contact") if surface.find("contact") is not None else ET.SubElement(surface, "contact")
+                ET.SubElement(contact, "collide_bitmask").text = "0x02"
     cols = [c.get("name") for c in link.findall("collision")]
     if not cols:
         continue

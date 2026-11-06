@@ -1,0 +1,11 @@
+trial,mode,reached,time_s,walked_m,spl,foot_strikes,foot_strikes_low,body_hits,objects_hit,collision_aborts,start_in_lethal,resends,min_clear_tall_m,rtf
+baseline1,baseline,3,119.2,20.16,0.991,25,25,2,6,1,0,1,0.2,0.622
+baseline2,baseline,3,121.5,19.9,1.0,8,8,0,4,1,0,1,0.2,0.616
+baseline3,baseline,0,156.4,3.6,0.0,2,2,0,1,1,14,12,0.16,0.558
+baseline4,baseline,0,157.6,3.76,0.0,1,1,0,1,1,14,12,0.12,0.557
+baseline5,baseline,3,122.6,20.14,0.992,15,15,0,6,1,0,1,0.2,0.617
+traversability1,traversability,3,130.4,19.81,1.0,7,7,0,4,2,0,2,0.2,0.602
+traversability2,traversability,3,119.2,20.81,0.993,8,8,0,4,0,0,0,0.215,0.598
+traversability3,traversability,3,128.0,19.91,1.0,15,15,0,8,1,0,1,0.22,0.597
+traversability4,traversability,3,143.7,20.21,0.993,15,15,0,5,3,0,3,0.22,0.604
+traversability5,traversability,0,156.3,3.13,0.0,4,4,0,1,1,14,12,0.18,0.538
