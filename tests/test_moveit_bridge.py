@@ -8,7 +8,8 @@ python3 tests/test_moveit_bridge.py --serve runs the bridge on the simulated arm
 until Ctrl+C, in place of the real one, for a whole-stack check with
 demo.launch.py hardware:=real, or for arm_moveit.sh with ARM_BRIDGE_CMD.
 --signs "..." sets the joint signs, --start fold rests the arm on its fold, and
-ARM_START_STOW=1 is read as by the real bridge.
+ARM_START_STOW=1 is read as by the real bridge. --glitch S sends one bad
+telemetry frame every S seconds.
 """
 
 import argparse
@@ -72,6 +73,8 @@ class FakeArm:
         self.history = []
         self.playback = None
         self.next_telemetry = 0.0
+        self.bad_frames, self.bad_at = 0, 0.0  # that many frames, from then, read wrong
+        self.glitch_every = 0.0  # s between single bad frames
         self.link = FakeLink(self) if robot else None
 
     def _write(self, text):
@@ -110,7 +113,14 @@ class FakeArm:
         if self.silent or now < self.next_telemetry:
             return []
         self.next_telemetry = now + 0.05
-        return [json.dumps(self._telemetry())]
+        frame = self._telemetry()
+        if self.glitch_every and now >= self.bad_at and not self.bad_frames:
+            self.bad_frames = 1
+        if self.bad_frames and now >= self.bad_at:
+            self.bad_frames -= 1
+            frame["data"]["angle1"] -= 76.6
+            self.bad_at = now + self.glitch_every
+        return [json.dumps(frame)]
 
     def angles(self, timeout=2.0):
         return None if self.silent else self._telemetry()
@@ -291,6 +301,57 @@ def test_blocked_arm_aborts():
     node.destroy_node()
 
 
+def test_one_bad_frame_at_the_end_of_a_move_does_not_stop_it():
+    # The real failure: 2.6 s, 18 deg, one frame 76.6 deg off right at the goal.
+    node, arm = make(robot=True)
+    published = []
+    node.js_pub.publish = lambda msg: published.append(list(msg.position))
+    arm.bad_frames, arm.bad_at = 1, time.monotonic() + 2.3
+    goal = FakeGoal(trajectory([0] * 6, [18] * 6, 2.6))
+    node.run_goal(goal)
+    assert goal.state == "succeeded"
+    assert arm.bad_frames == 0  # it was really sent
+    assert max(abs(math.degrees(p[1])) for p in published) < 25  # and never reached MoveIt
+    node.destroy_node()
+
+
+def test_bad_frame_before_a_goal_does_not_refuse_it():
+    node, arm = make(angles=(10, 10, 10, 10, 10, 10))
+    time.sleep(0.06)
+    node.poll_angles()
+    arm.bad_frames, arm.bad_at = 1, 0.0
+    time.sleep(0.06)
+    goal = FakeGoal(trajectory([10] * 6, [11] * 6, 0.5))
+    node.run_goal(goal)
+    assert goal.state == "succeeded"
+    node.destroy_node()
+
+
+def test_a_jump_that_stays_is_believed():
+    # Someone pushed the arm: three frames in a row, and the path check gets it.
+    node, arm = make()
+    time.sleep(0.06)
+    node.poll_angles()
+    arm.pos = [60.0] * 6
+    arm.command = list(arm.pos)
+    arm.history.clear()
+    for frames in (1, 2, 3):
+        time.sleep(0.06)
+        node.poll_angles()
+        assert (node.measured[0] == 60.0) == (frames == bridge.SPIKE_CONFIRM)
+    node.destroy_node()
+
+
+def test_a_real_block_is_reported_with_its_joint():
+    node, arm = make()
+    arm.blocked = True
+    goal = FakeGoal(trajectory([0] * 6, [0, 45, 0, 0, 0, 0], 3.0))
+    result = node.run_goal(goal)
+    assert goal.state == "aborted"
+    assert "Joint2" in result.error_string and "measured 0.0" in result.error_string
+    node.destroy_node()
+
+
 def test_arm_a_second_late_is_not_blocked():
     # Seen on the real arm over Wi-Fi at wrist speed.
     node, arm = make()
@@ -412,15 +473,18 @@ def serve():
     ap.add_argument("--serve", action="store_true")
     ap.add_argument("--signs", default=os.environ.get("ARM_JOINT_SIGNS", "1 1 1 1 1 1"))
     ap.add_argument("--start", choices=["stow", "fold"], default="stow")
+    ap.add_argument("--glitch", type=float, default=0.0)
     args = ap.parse_args()
     rclpy.init()
     # Start at the sim's stow pose, in firmware degrees.
     signs = bridge.parse_signs(args.signs)
     stow = [math.degrees(a) * s for a, s in zip((0, -1.396, 0.785, 0, 1.396, 0), signs)]
     start = FOLD if args.start == "fold" else stow
+    arm = FakeArm(angles=start, enabled=False)
+    arm.glitch_every = args.glitch
     node = bridge.MoveItD1Bridge(
         signs,
-        arm=FakeArm(angles=start, enabled=False),
+        arm=arm,
         start_stow=os.environ.get("ARM_START_STOW") == "1",
     )
     executor = MultiThreadedExecutor(num_threads=4)

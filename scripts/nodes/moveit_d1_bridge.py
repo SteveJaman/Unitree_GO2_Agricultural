@@ -108,7 +108,15 @@ PATH_TOLERANCE_DEG = 20.0  # behind the setpoint: something is blocking the arm
 PATH_LAG_S = 1.0  # measured against the setpoint this long ago: Wi-Fi and the
 # firmware delay telemetry, at wrist speed 1 s reads as 20 deg (real arm, 2026-11-03)
 GOAL_TOLERANCE_DEG = 2.0
-TELEMETRY_TIMEOUT_S = 1.0
+TELEMETRY_TIMEOUT_S = (
+    2.0  # 9 Hz over Wi-Fi with pauses of 0.5 s idle, 0.9 s moving (2026-11-05)
+)
+# A frame further from the last one than the arm can move is not believed until
+# SPIKE_CONFIRM in a row say so. One such frame stopped a sweep at its goal
+# (76.6 deg, on a path of 18 deg, 2026-11-05). 45 deg/s: above the 30 of the arm.
+SPIKE_MIN_DEG = 10.0
+SPIKE_RATE_DEG_S = 45.0
+SPIKE_CONFIRM = 3
 T_POWER, T_ENABLE = 1.5, 1.0  # s, as d1_arm_calibration.py
 STOW_RAD = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]  # "stow" in d1_go2.srdf, MoveIt angles
 # Counts as resting on the fold: shoulder, elbow and wrist pitch decide that; the
@@ -191,6 +199,8 @@ class MoveItD1Bridge(Node):
         )  # telemetry is drained on read: one reader at a time
         self.measured = None  # firmware degrees, joints 0-5
         self.measured_at = 0.0
+        self.frame_at = 0.0  # when self.measured arrived; play() resets measured_at
+        self.suspect_frames = 0  # in a row, see accept_frame
         self.busy = False
         try:
             self.connect(arm, start_stow)
@@ -321,10 +331,29 @@ class MoveItD1Bridge(Node):
                 data = m.get("data", {})
                 angles = [data.get(f"angle{j}") for j in range(ARM_JOINTS)]
                 if None not in angles:
-                    self.measured, self.measured_at = (
-                        [float(a) for a in angles],
-                        time.monotonic(),
-                    )
+                    self.accept_frame([float(a) for a in angles])
+
+    def accept_frame(self, angles):
+        """Take one telemetry frame as the arm's position, unless it jumps further
+        than the arm can move (see SPIKE_CONFIRM). A blocked arm reads smoothly,
+        so the path check still sees it; a real jump is believed three frames on."""
+        now = time.monotonic()
+        if self.measured is not None:
+            allowed = SPIKE_MIN_DEG + SPIKE_RATE_DEG_S * (now - self.frame_at)
+            jump = np.abs(np.array(angles) - np.array(self.measured))
+            j = int(jump.argmax())
+            if jump[j] > allowed:
+                self.suspect_frames += 1
+                self.get_logger().warn(
+                    f"Telemetry: Joint{j + 1} jumped {self.measured[j]:.1f} -> {angles[j]:.1f} deg "
+                    f"(frame {np.round(angles, 1).tolist()}, "
+                    f"{self.suspect_frames}/{SPIKE_CONFIRM} before it is believed)"
+                )
+                if self.suspect_frames < SPIKE_CONFIRM:
+                    return
+        self.suspect_frames = 0
+        self.measured = angles
+        self.measured_at = self.frame_at = now
 
     def publish_joint_states(self):
         if self.measured is None:
@@ -390,10 +419,13 @@ class MoveItD1Bridge(Node):
             if now - self.measured_at > TELEMETRY_TIMEOUT_S:
                 return "no telemetry from the arm"
             reference = points[max(0, i - int(PATH_LAG_S / dt))]
-            behind = float(np.abs(reference - np.array(self.measured)).max())
-            if behind > PATH_TOLERANCE_DEG:
+            behind = np.abs(reference - np.array(self.measured))
+            j = int(behind.argmax())
+            if behind[j] > PATH_TOLERANCE_DEG:
                 return (
-                    f"{behind:.1f} deg behind the path: is something blocking the arm?"
+                    f"Joint{j + 1} {behind[j]:.1f} deg behind the path (planned "
+                    f"{reference[j]:.1f}, measured {self.measured[j]:.1f}, firmware degrees): "
+                    "is something blocking the arm?"
                 )
             if now - last_publish >= 0.1:
                 last_publish = now

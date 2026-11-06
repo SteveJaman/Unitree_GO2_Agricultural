@@ -96,7 +96,22 @@ if [ "${INSPECT}" = "true" ]; then
     # --real: velocity scaled to 20 % and the MoveIt→D1 bridge replaces mock hardware
     VELOCITY_SCALE="0.3"
     LAUNCH_PID=""; BRIDGE_PID=""
-    trap '[ -n "${LAUNCH_PID}" ] && kill -INT ${LAUNCH_PID} 2>/dev/null; [ -n "${BRIDGE_PID}" ] && kill -INT ${BRIDGE_PID} 2>/dev/null; wait 2>/dev/null' EXIT INT TERM
+    # The launch has its own process group, so all of it stops: it ignores the
+    # SIGINT of a background job, and its nodes outlive it otherwise.
+    stop_all() {
+        trap - EXIT INT TERM
+        [ -z "${BRIDGE_PID}" ] || kill -INT "${BRIDGE_PID}" 2>/dev/null
+        if [ -n "${LAUNCH_PID}" ]; then
+            kill -TERM -- "-${LAUNCH_PID}" 2>/dev/null
+            for _ in 1 2 3 4 5 6 7 8; do
+                kill -0 -- "-${LAUNCH_PID}" 2>/dev/null || break
+                sleep 0.5
+            done
+            kill -KILL -- "-${LAUNCH_PID}" 2>/dev/null
+        fi
+        wait 2>/dev/null
+    }
+    trap 'stop_all; exit' EXIT INT TERM
     if [ "${REAL}" = "true" ]; then
         VELOCITY_SCALE="0.2"
         LAUNCH_ARGS+=(hardware:=real)
@@ -119,7 +134,7 @@ if [ "${INSPECT}" = "true" ]; then
         rm -f "${READY_FILE}"
     fi
 
-    ros2 launch d1_moveit_config demo.launch.py "${LAUNCH_ARGS[@]}" &
+    setsid ros2 launch d1_moveit_config demo.launch.py "${LAUNCH_ARGS[@]}" &
     LAUNCH_PID=$!
     echo "[inspect] waiting for MoveIt..."
     sleep 8
