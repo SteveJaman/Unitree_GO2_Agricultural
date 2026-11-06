@@ -146,6 +146,7 @@ troubleshooting cover every area and sit at its top level.
 | Hardware | [D1-T arm](docs/hardware/d1arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and **new:** MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
 | Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms and lab worlds |
 | | [Indoor lab world](docs/simulation/lab_office.md) | **New:** a furnished 7-room lab in Gazebo (3DGEMS desks, chairs, tables, shelves) and the hybrid vs omni mapping and navigation results, with statistics and graphs |
+| | [Cluttered world](docs/simulation/cluttered_nav.md) | **New:** traversability vs baseline navigation among low and tall clutter, and camera + LiDAR 3D boxes for choosing a gait, with statistics and graphs |
 | | [Hydroponic trial](docs/simulation/hydroponic_trial.md) | **New:** full end-to-end MoveIt 2 + Nav2 mission in a CropKing NFT 8-4 hydroponic station — navigation, arm extend, orbit, retract — Mission Score 99.6/100 |
 | | [Unity sim](docs/simulation/unity.md) | **New:** the explorer + Nav2 in the CMU Unity sim on the host (`sim_explore.sh`, no robot) |
 | Config | [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations, rooms and survey reports |

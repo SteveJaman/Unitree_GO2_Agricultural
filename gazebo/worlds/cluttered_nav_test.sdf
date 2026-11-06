@@ -118,10 +118,10 @@
       </link>
     </model>
 
-    <!-- Low pipe: 0.08m tall -->
+    <!-- Low pipe: 0.08m tall, lying across the path (a cylinder's axis is z until rolled) -->
     <model name="pipe_low">
       <static>true</static>
-      <pose>4.5 -0.2 0.04 0 0 0.1</pose>
+      <pose>4.5 -0.2 0.04 1.5708 0 0.1</pose>
       <link name="link">
         <collision name="c"><geometry><cylinder><radius>0.04</radius><length>1.8</length></cylinder></geometry></collision>
         <visual name="v"><geometry><cylinder><radius>0.04</radius><length>1.8</length></cylinder></geometry>

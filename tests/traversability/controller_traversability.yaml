@@ -1,0 +1,102 @@
+# Local control, traversability: the baseline plus HeightBandLayer, local costmap only.
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    odom_topic: /lidar3d/body_odom
+    controller_frequency: 10.0
+    transform_tolerance: 0.3
+    failure_tolerance: 0.0
+    min_x_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.01
+    min_theta_velocity_threshold: 0.02
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.08
+      movement_time_allowance: 35.0
+    general_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 3.14
+      stateful: false
+    FollowPath:
+      plugin: nav2_rotation_shim_controller::RotationShimController
+      primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+      angular_dist_threshold: 0.8
+      angular_disengage_threshold: 0.2
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.6
+      max_angular_accel: 1.0
+      simulate_ahead_time: 1.0
+      rotate_to_goal_heading: false
+      closed_loop: false
+      desired_linear_vel: 0.30
+      lookahead_dist: 0.6
+      min_lookahead_dist: 0.4
+      max_lookahead_dist: 0.9
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: false
+      transform_tolerance: 0.3
+      min_approach_linear_velocity: 0.08
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.6
+      regulated_linear_scaling_min_speed: 0.12
+      use_rotate_to_heading: false
+      allow_reversing: false
+      max_robot_pose_search_dist: 3.0
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: lidar3d_map
+      robot_base_frame: base_link
+      transform_tolerance: 0.3
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      track_unknown_space: false
+      footprint: "[[0.360,0.200],[0.360,-0.200],[-0.450,-0.200],[-0.450,0.200]]"
+      footprint_padding: 0.03
+      plugins: [obstacle_layer, height_band_layer, inflation_layer]
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        observation_sources: lidar
+        lidar:
+          topic: /lidar3d/obstacle_points
+          sensor_frame: lidar3d_sensor
+          data_type: PointCloud2
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.15
+          max_obstacle_height: 1.6
+          obstacle_min_range: 0.35
+          obstacle_max_range: 12.0
+          raytrace_min_range: 0.35
+          raytrace_max_range: 12.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.8
+      height_band_layer:
+        plugin: semantic_traversability_layer/HeightBandLayer
+        enabled: true
+        topic: /lidar3d/obstacle_points
+        ground_z: 0.0
+        ground_tolerance: 0.02
+        step_over_height_max: 0.15
+        lethal_height_min: 0.25
+        max_range: 5.0
+        step_over_cost: 40
+        caution_cost: 200
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        inflation_radius: 0.55
+        cost_scaling_factor: 5.0
+      always_send_full_costmap: true

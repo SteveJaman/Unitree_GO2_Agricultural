@@ -1,0 +1,17 @@
+object,class,true_h,true_band,seen_in_trials,mean_est_h,mean_err_xy,band_correct,mean_points
+cable_1,cable,0.05,step_over,5/5,0.102,0.484,5/5,39.2
+hose_1,hose,0.06,step_over,4/5,0.101,0.263,4/4,36.8
+pipe_low,pipe,0.08,step_over,5/5,0.072,0.286,5/5,36.4
+debris_1,debris,0.1,step_over,5/5,0.135,0.227,3/5,17.0
+toolbox_1,toolbox,0.18,caution,5/5,0.169,0.215,4/5,50.0
+cable_tray,cable_tray,0.2,caution,3/5,0.204,0.245,2/3,129.0
+cable_2,cable,0.05,step_over,1/5,0.185,0.413,0/1,33.0
+barrel_1,barrel,0.4,blocked,5/5,0.373,0.208,5/5,97.8
+crate_1,crate,0.35,blocked,5/5,0.319,0.387,5/5,71.4
+post_1,post,0.5,blocked,5/5,0.45,0.082,5/5,84.6
+planter_1,planter,0.22,caution,4/5,0.191,0.384,3/4,46.8
+debris_south,debris,0.06,step_over,5/5,0.056,0.163,5/5,12.0
+cable_south,cable,0.04,step_over,5/5,0.048,0.242,5/5,8.4
+barrier_center,barrier,0.4,blocked,5/5,0.394,0.348,5/5,273.2
+cone_north_gap,cone,0.15,step_over,5/5,0.131,0.062,4/5,14.0
+cone_south_gap,cone,0.15,step_over,5/5,0.111,0.091,4/5,14.0

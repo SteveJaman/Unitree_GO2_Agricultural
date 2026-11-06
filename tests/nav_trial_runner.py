@@ -1,241 +1,192 @@
 #!/usr/bin/env python3
-"""Navigation trial runner: sends goals, records metrics for comparison.
+"""One navigation trial: sends a fixed goal list, records what happened.
 
-Sends a sequence of goal poses and records:
-  - Time to reach each goal
-  - Total path length (from odom)
-  - Minimum clearance to obstacles (from costmap)
-  - Number of high-cost cell crossings (step_over, caution, lethal)
-  - Whether the goal was reached or timed out
+Goals go to /goal_pose once, the path the dashboard and RViz use. A leg ends:
+  reached  body within GOAL_TOLERANCE of the goal
+  timeout  after GOAL_TIMEOUT seconds
+  stuck    less than STUCK_PROGRESS m of progress in STUCK_SECONDS
 
-Usage (inside the go2-lidar3d container with Nav2 running):
-    python3 nav_trial_runner.py --mode traversability --output /tmp/trial_results.json
-    python3 nav_trial_runner.py --mode baseline --output /tmp/baseline_results.json
+The active follow_path is cancelled when a leg ends, so a late leg cannot run
+into the next goal's time. A leg that stops early (Nav2 abort) is re-sent after
+RESEND_STILL seconds without motion; the leg's clock keeps running.
+
+Writes to --out:
+  trajectory.csv  t, x, y, yaw of base_link at 20 Hz
+  legs.json       one entry per leg
+  events.jsonl    Nav2 errors and warnings from /rosout, gait commands, 3D boxes
+
+Scoring is done afterwards by tests/traversability/analyze.py against the
+world's true geometry.
 """
+import argparse
+import csv
 import json
 import math
-import sys
+import os
 import time
 
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import (
-    QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy,
-)
-from rclpy.action import ActionClient
+from action_msgs.msg import GoalInfo
+from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from rcl_interfaces.msg import Log
 from std_msgs.msg import String
 
-COSTMAP_QOS = QoSProfile(
-    depth=5,
-    reliability=ReliabilityPolicy.RELIABLE,
-    history=HistoryPolicy.KEEP_LAST,
-    durability=DurabilityPolicy.TRANSIENT_LOCAL,
-)
-
-SENSOR_QOS = QoSProfile(
-    depth=5,
-    reliability=ReliabilityPolicy.BEST_EFFORT,
-    history=HistoryPolicy.KEEP_LAST,
-)
-
 GOALS = [
-    {"name": "goal_1_near", "x": -2.0, "y": 0.0, "yaw": 0.0},
-    {"name": "goal_2_mid", "x": 1.0, "y": 0.0, "yaw": 0.0},
-    {"name": "goal_3_return", "x": -4.5, "y": 0.0, "yaw": 3.14},
+    {"name": "goal_1_mid", "x": 5.0, "y": 0.0, "yaw": 0.0},
+    {"name": "goal_2_end", "x": 10.0, "y": 0.0, "yaw": 0.0},
+    {"name": "goal_3_return", "x": 0.0, "y": 0.0, "yaw": 3.14},
 ]
 
-GOAL_TOLERANCE = 0.75
-GOAL_TIMEOUT = 90.0
+GOAL_TOLERANCE = 0.5
+GOAL_TIMEOUT = 120.0
+STUCK_SECONDS = 45.0
+STUCK_PROGRESS = 0.15
+RESEND_STILL = 8.0
+STILL_SPEED = 0.02
+LOG_NODES = {"controller_server", "planner_server", "go2_goal_pose_nav"}
 
-STEP_OVER_MIN = 10
-CAUTION_MIN = 60
-LETHAL_MIN = 100
+
+def odom_yaw(q):
+    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
 class TrialRunner(Node):
-    def __init__(self, mode):
+    def __init__(self, out_dir):
         super().__init__("nav_trial_runner")
-        self.mode = mode
-        self.odom = None
-        self.costmap = None
-        self.path_length = 0.0
-        self.prev_x = None
-        self.prev_y = None
-        self.step_over_crossings = 0
-        self.caution_crossings = 0
-        self.lethal_crossings = 0
-        self.min_clearance = float("inf")
+        self.out_dir = out_dir
+        self.pose = None
+        self.last_write = 0.0
+        self.traj = open(os.path.join(out_dir, "trajectory.csv"), "w", newline="")
+        self.traj_csv = csv.writer(self.traj)
+        self.traj_csv.writerow(["t", "x", "y", "yaw"])
+        self.events = open(os.path.join(out_dir, "events.jsonl"), "w", buffering=1)
+        self.t0 = time.time()
 
-        self.goal_pub = self.create_publisher(
-            PoseStamped, "/goal_pose", 10)
+        self.goal_pub = self.create_publisher(PoseStamped, "/goal_pose", 10)
+        self.cancel = self.create_client(CancelGoal, "/follow_path/_action/cancel_goal")
+        sensor = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT,
+                            history=HistoryPolicy.KEEP_LAST)
+        self.create_subscription(Odometry, "/lidar3d/body_odom", self.on_odom, sensor)
         self.create_subscription(
-            Odometry, "/lidar3d/odom", self._odom_cb, SENSOR_QOS)
-        self.create_subscription(
-            OccupancyGrid, "/local_costmap/costmap", self._cm_cb, COSTMAP_QOS)
+            Log, "/rosout", self.on_log,
+            QoSProfile(depth=200, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.VOLATILE))
+        self.create_subscription(String, "/gait/status", self.on_string("gait"), 10)
+        self.create_subscription(String, "/objects/boxes_json", self.on_string("boxes"), 10)
 
-    def _odom_cb(self, msg):
-        self.odom = msg
-        x = msg.pose.pose.position.x
-        y = msg.pose.pose.position.y
-        if self.prev_x is not None:
-            dx = x - self.prev_x
-            dy = y - self.prev_y
-            self.path_length += math.sqrt(dx * dx + dy * dy)
-        self.prev_x = x
-        self.prev_y = y
+    def now(self):
+        return time.time() - self.t0
 
-        if self.costmap is not None:
-            self._record_terrain(x, y)
+    def on_odom(self, msg):
+        p = msg.pose.pose.position
+        self.pose = (p.x, p.y, odom_yaw(msg.pose.pose.orientation))
+        t = self.now()
+        if t - self.last_write >= 0.05:
+            self.last_write = t
+            self.traj_csv.writerow([round(t, 3), round(p.x, 4), round(p.y, 4), round(self.pose[2], 4)])
 
-    def _cm_cb(self, msg):
-        self.costmap = msg
+    def on_log(self, msg):
+        if msg.name in LOG_NODES and msg.level >= 30:
+            self.events.write(json.dumps(
+                {"t": round(self.now(), 2), "kind": "nav2", "node": msg.name,
+                 "level": msg.level, "msg": msg.msg}) + "\n")
 
-    def _record_terrain(self, rx, ry):
-        if self.costmap is None:
-            return
-        info = self.costmap.info
-        mx = int((rx - info.origin.position.x) / info.resolution)
-        my = int((ry - info.origin.position.y) / info.resolution)
-        if 0 <= mx < info.width and 0 <= my < info.height:
-            c = self.costmap.data[my * info.width + mx]
-            if c >= LETHAL_MIN:
-                self.lethal_crossings += 1
-            elif c >= CAUTION_MIN:
-                self.caution_crossings += 1
-            elif c >= STEP_OVER_MIN:
-                self.step_over_crossings += 1
+    def on_string(self, kind):
+        def cb(msg):
+            self.events.write(json.dumps(
+                {"t": round(self.now(), 2), "kind": kind, "data": msg.data}) + "\n")
+        return cb
 
-        min_d = float("inf")
-        search_r = 20
-        for dx in range(-search_r, search_r + 1):
-            for dy in range(-search_r, search_r + 1):
-                ix, iy = mx + dx, my + dy
-                if 0 <= ix < info.width and 0 <= iy < info.height:
-                    c = self.costmap.data[iy * info.width + ix]
-                    if c >= LETHAL_MIN:
-                        d = math.sqrt(dx * dx + dy * dy) * info.resolution
-                        if d < min_d:
-                            min_d = d
-        if min_d < self.min_clearance:
-            self.min_clearance = min_d
-
-    def send_goal(self, x, y, yaw):
+    def send_goal(self, g):
         msg = PoseStamped()
         msg.header.frame_id = "lidar3d_map"
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pose.position.x = x
-        msg.pose.position.y = y
-        msg.pose.orientation.z = math.sin(yaw / 2.0)
-        msg.pose.orientation.w = math.cos(yaw / 2.0)
+        msg.pose.position.x = g["x"]
+        msg.pose.position.y = g["y"]
+        msg.pose.orientation.z = math.sin(g["yaw"] / 2.0)
+        msg.pose.orientation.w = math.cos(g["yaw"] / 2.0)
         self.goal_pub.publish(msg)
 
-    def wait_for_goal(self, gx, gy, timeout):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            rclpy.spin_once(self, timeout_sec=0.5)
-            if self.odom is None:
-                continue
-            rx = self.odom.pose.pose.position.x
-            ry = self.odom.pose.pose.position.y
-            dist = math.sqrt((rx - gx) ** 2 + (ry - gy) ** 2)
-            if dist < GOAL_TOLERANCE:
-                return True, time.time() - t0
-        return False, timeout
+    def cancel_all(self):
+        if not self.cancel.service_is_ready():
+            return
+        req = CancelGoal.Request()
+        req.goal_info = GoalInfo()
+        self.cancel.call_async(req)
+        self.spin_for(1.5)
 
-    def run_trials(self):
-        self.get_logger().info("Waiting for odom...")
-        t0 = time.time()
-        while self.odom is None and time.time() - t0 < 30:
-            rclpy.spin_once(self, timeout_sec=1.0)
-        if self.odom is None:
-            self.get_logger().error("No odom!")
-            return []
+    def spin_for(self, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            rclpy.spin_once(self, timeout_sec=0.02)
 
-        results = []
-        for goal in GOALS:
-            self.get_logger().info(
-                "Sending goal %s: (%.1f, %.1f)" % (goal["name"], goal["x"], goal["y"]))
+    def run_leg(self, g):
+        start = self.pose
+        straight = math.hypot(g["x"] - start[0], g["y"] - start[1])
+        t0 = self.now()
+        self.send_goal(g)
+        best = straight
+        best_t = t0
+        last_xy, last_moved = start[:2], t0
+        resends = 0
+        result = "timeout"
+        while self.now() - t0 < GOAL_TIMEOUT:
+            rclpy.spin_once(self, timeout_sec=0.02)
+            x, y, _ = self.pose
+            d = math.hypot(g["x"] - x, g["y"] - y)
+            if d < GOAL_TOLERANCE:
+                result = "reached"
+                break
+            if d < best - STUCK_PROGRESS:
+                best, best_t = d, self.now()
+            if self.now() - best_t > STUCK_SECONDS:
+                result = "stuck"
+                break
+            if math.hypot(x - last_xy[0], y - last_xy[1]) > STILL_SPEED:
+                last_xy, last_moved = (x, y), self.now()
+            elif self.now() - last_moved > RESEND_STILL:
+                self.cancel_all()
+                self.send_goal(g)
+                resends += 1
+                last_moved = self.now()
+        t1 = self.now()
+        self.cancel_all()
+        end = self.pose
+        leg = {"goal": g["name"], "goal_x": g["x"], "goal_y": g["y"], "result": result,
+               "t_start": round(t0, 2), "t_end": round(t1, 2), "time_s": round(t1 - t0, 2),
+               "start_x": round(start[0], 3), "start_y": round(start[1], 3),
+               "end_x": round(end[0], 3), "end_y": round(end[1], 3),
+               "resends": resends}
+        self.get_logger().info(json.dumps(leg))
+        return leg
 
-            start_length = self.path_length
-            start_step = self.step_over_crossings
-            start_caution = self.caution_crossings
-            start_lethal = self.lethal_crossings
-            self.min_clearance = float("inf")
-
-            self.send_goal(goal["x"], goal["y"], goal["yaw"])
-            time.sleep(1.0)
-            self.send_goal(goal["x"], goal["y"], goal["yaw"])
-
-            reached, elapsed = self.wait_for_goal(goal["x"], goal["y"], GOAL_TIMEOUT)
-            segment_length = self.path_length - start_length
-
-            result = {
-                "goal": goal["name"],
-                "reached": reached,
-                "time_s": round(elapsed, 2),
-                "path_length_m": round(segment_length, 3),
-                "step_over_crossings": self.step_over_crossings - start_step,
-                "caution_crossings": self.caution_crossings - start_caution,
-                "lethal_crossings": self.lethal_crossings - start_lethal,
-                "min_clearance_m": round(self.min_clearance, 3) if self.min_clearance < 100 else -1,
-            }
-            results.append(result)
-            status = "REACHED" if reached else "TIMEOUT"
-            self.get_logger().info(
-                "  %s: %s in %.1fs, path=%.2fm, clearance=%.2fm"
-                % (goal["name"], status, elapsed, segment_length,
-                   result["min_clearance_m"]))
-
-        return results
+    def run(self):
+        end = time.time() + 30
+        while self.pose is None and time.time() < end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if self.pose is None:
+            raise SystemExit("no /lidar3d/body_odom")
+        legs = [self.run_leg(g) for g in GOALS]
+        with open(os.path.join(self.out_dir, "legs.json"), "w") as f:
+            json.dump(legs, f, indent=1)
+        self.traj.close()
+        self.events.close()
+        return legs
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", default="traversability",
-                        choices=["traversability", "baseline"])
-    parser.add_argument("--output", default="/tmp/trial_results.json")
-    args = parser.parse_args()
-
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
     rclpy.init()
-    node = TrialRunner(args.mode)
-
-    results = node.run_trials()
-
-    summary = {
-        "mode": args.mode,
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "goals": results,
-        "totals": {
-            "goals_reached": sum(1 for r in results if r["reached"]),
-            "goals_total": len(results),
-            "total_time_s": round(sum(r["time_s"] for r in results), 2),
-            "total_path_length_m": round(sum(r["path_length_m"] for r in results), 3),
-            "total_step_over": sum(r["step_over_crossings"] for r in results),
-            "total_caution": sum(r["caution_crossings"] for r in results),
-            "total_lethal": sum(r["lethal_crossings"] for r in results),
-        },
-    }
-
-    with open(args.output, "w") as f:
-        json.dump(summary, f, indent=2)
-
-    print("\n" + "=" * 60)
-    print("Trial Summary: %s mode" % args.mode)
-    print("=" * 60)
-    print("Goals reached: %d / %d" % (
-        summary["totals"]["goals_reached"], summary["totals"]["goals_total"]))
-    print("Total time: %.1fs" % summary["totals"]["total_time_s"])
-    print("Total path length: %.2fm" % summary["totals"]["total_path_length_m"])
-    print("Terrain crossings: step_over=%d caution=%d lethal=%d" % (
-        summary["totals"]["total_step_over"],
-        summary["totals"]["total_caution"],
-        summary["totals"]["total_lethal"]))
-    print("Output: %s" % args.output)
-    print("=" * 60)
-
+    node = TrialRunner(a.out)
+    legs = node.run()
+    print(f"{a.mode}: " + ", ".join(f"{l['goal']}={l['result']} {l['time_s']}s" for l in legs))
     node.destroy_node()
     rclpy.shutdown()
 

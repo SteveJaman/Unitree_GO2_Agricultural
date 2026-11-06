@@ -11,20 +11,28 @@ Gait modes:
   CAREFUL:   slow deliberate gait for caution terrain
   STOP:      halt for lethal obstacles (planner should reroute)
 
+When 3D object boxes are available (object_box_fusion.py) the gait comes from
+the tallest object in the corridor ahead, and HIGH_STEP is chosen only if the
+raised foot clears it. The costmap decision stays in /gait/status for comparison.
+
 Subscribes:
   /local_costmap/costmap   nav_msgs/OccupancyGrid
-  /lidar3d/odom            nav_msgs/Odometry
+  /lidar3d/body_odom       nav_msgs/Odometry
+  /objects/boxes_json      std_msgs/String
 
 Publishes:
   /gait/command            std_msgs/String (gait mode name)
-  /gait/status             std_msgs/String (detailed status)
+  /gait/status             std_msgs/String (detailed status, JSON)
 
 Parameters:
   scan_distance:    how far ahead to scan (default 1.5m)
   scan_width:       lateral scan half-width (default 0.3m)
   check_rate_hz:    evaluation frequency (default 5.0)
+  foot_margin:      clearance the raised foot must keep above an object (default 0.02m)
+  lethal_height:    object height that means STOP (default 0.25m)
   dry_run:          if true, log commands but don't send to sport_client
 """
+import json
 import math
 
 import rclpy
@@ -60,6 +68,26 @@ GAITS = {
 }
 
 
+def gait_for_height(height, foot_height, margin, lethal_height):
+    if height + margin <= foot_height:
+        return "HIGH_STEP"
+    return "CAREFUL" if height < lethal_height else "STOP"
+
+
+def objects_ahead(boxes, x, y, yaw, scan_distance, scan_width):
+    """Boxes whose footprint overlaps the corridor ahead of the body."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    hits = []
+    for b in boxes:
+        dx, dy = b["x"] - x, b["y"] - y
+        forward = c * dx + s * dy
+        lateral = -s * dx + c * dy
+        reach = max(b["sx"], b["sy"]) / 2
+        if -0.45 - reach < forward < scan_distance + reach and abs(lateral) < scan_width + reach:
+            hits.append(b)
+    return hits
+
+
 class GaitSupervisor(Node):
     def __init__(self):
         super().__init__("gait_supervisor")
@@ -67,8 +95,13 @@ class GaitSupervisor(Node):
         self.declare_parameter("scan_distance", 1.5)
         self.declare_parameter("scan_width", 0.3)
         self.declare_parameter("check_rate_hz", 5.0)
+        self.declare_parameter("foot_margin", 0.02)
+        self.declare_parameter("lethal_height", 0.25)
         self.declare_parameter("dry_run", True)
 
+        self.foot_margin = self.get_parameter("foot_margin").value
+        self.lethal_height = self.get_parameter("lethal_height").value
+        self.boxes = []
         self.scan_dist = self.get_parameter("scan_distance").value
         self.scan_width = self.get_parameter("scan_width").value
         self.dry_run = self.get_parameter("dry_run").value
@@ -81,7 +114,8 @@ class GaitSupervisor(Node):
         self.create_subscription(
             OccupancyGrid, "/local_costmap/costmap", self._cm_cb, COSTMAP_QOS)
         self.create_subscription(
-            Odometry, "/lidar3d/odom", self._odom_cb, SENSOR_QOS)
+            Odometry, "/lidar3d/body_odom", self._odom_cb, SENSOR_QOS)
+        self.create_subscription(String, "/objects/boxes_json", self._boxes_cb, 10)
 
         self.cmd_pub = self.create_publisher(String, "/gait/command", 10)
         self.status_pub = self.create_publisher(String, "/gait/status", 10)
@@ -97,6 +131,9 @@ class GaitSupervisor(Node):
 
     def _odom_cb(self, msg):
         self.odom = msg
+
+    def _boxes_cb(self, msg):
+        self.boxes = json.loads(msg.data)["boxes"]
 
     def _get_yaw(self):
         if self.odom is None:
@@ -142,13 +179,25 @@ class GaitSupervisor(Node):
         max_cost = self._scan_ahead()
 
         if max_cost >= LETHAL_MIN:
-            desired = "STOP"
+            costmap_gait = "STOP"
         elif max_cost >= CAUTION_MIN:
-            desired = "CAREFUL"
+            costmap_gait = "CAREFUL"
         elif max_cost >= STEP_OVER_MIN:
-            desired = "HIGH_STEP"
+            costmap_gait = "HIGH_STEP"
         else:
+            costmap_gait = "NORMAL"
+
+        desired = costmap_gait
+        hits = []
+        if self.boxes and self.odom is not None:
+            p = self.odom.pose.pose.position
+            hits = objects_ahead(self.boxes, p.x, p.y, self._get_yaw(),
+                                 self.scan_dist, self.scan_width)
             desired = "NORMAL"
+            if hits:
+                tallest = max(b["height"] for b in hits)
+                desired = gait_for_height(tallest, GAITS["HIGH_STEP"]["foot_height"],
+                                          self.foot_margin, self.lethal_height)
 
         if desired != self.current_gait:
             self.current_gait = desired
@@ -160,11 +209,11 @@ class GaitSupervisor(Node):
                 self._send_gait_command(desired)
 
         self.cmd_pub.publish(String(data=desired))
-        self.status_pub.publish(String(
-            data="gait=%s cost=%d foot=%.2f speed=%.0f%%"
-            % (desired, max_cost,
-               GAITS[desired]["foot_height"],
-               GAITS[desired]["speed_scale"] * 100)))
+        self.status_pub.publish(String(data=json.dumps({
+            "gait": desired, "costmap_gait": costmap_gait, "cost": max_cost,
+            "objects": [b["class"] for b in hits],
+            "foot": GAITS[desired]["foot_height"],
+            "speed_pct": GAITS[desired]["speed_scale"] * 100})))
 
     def _send_gait_command(self, gait_name):
         # Phase 6: sport_client integration
