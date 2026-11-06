@@ -1,0 +1,10 @@
+<library path="height_band_layer">
+  <class name="semantic_traversability_layer/HeightBandLayer"
+         type="semantic_traversability_layer::HeightBandLayer"
+         base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Classifies point cloud points by height into FREE / STEP_OVER / CAUTION / LETHAL
+      bands and writes corresponding costs into the costmap.
+    </description>
+  </class>
+</library>
