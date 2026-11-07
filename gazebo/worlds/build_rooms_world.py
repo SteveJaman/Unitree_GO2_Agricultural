@@ -49,12 +49,27 @@ ROOM23_DOOR_Y = 9.8                   # room 2 <-> room 3
 WALL_RGB = "0.82 0.80 0.76"
 CRATE_RGB = "0.55 0.40 0.22"
 BENCH_RGB = "0.35 0.35 0.40"
+CABLE_RGB = "0.05 0.05 0.05"
+MAT_RGB = "0.15 0.35 0.65"
+FRAGILE_RGB = "0.85 0.10 0.10"
+TOOLBOX_RGB = "0.90 0.75 0.10"
 
 
 def box_link(name, x, y, z, sx, sy, sz, rgb):
     return f"""      <link name="{name}">
         <pose>{x:.3f} {y:.3f} {z:.3f} 0 0 0</pose>
         <collision name="c"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box></geometry></collision>
+        <visual name="v"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box></geometry>
+          <material><ambient>{rgb} 1</ambient><diffuse>{rgb} 1</diffuse></material></visual>
+      </link>
+"""
+
+
+def visual_box_link(name, x, y, z, sx, sy, sz, rgb):
+    """Like box_link but with no collision: the dog drives through it
+    (stand-in for stepping over, since the sim base only glides)."""
+    return f"""      <link name="{name}">
+        <pose>{x:.3f} {y:.3f} {z:.3f} 0 0 0</pose>
         <visual name="v"><geometry><box><size>{sx:.3f} {sy:.3f} {sz:.3f}</size></box></geometry>
           <material><ambient>{rgb} 1</ambient><diffuse>{rgb} 1</diffuse></material></visual>
       </link>
@@ -99,6 +114,13 @@ def building():
         box_link("crate_b", -3.1, 8.0, 0.3, 0.6, 0.6, 0.6, CRATE_RGB),
         box_link("workbench", 0.0, 9.2, 0.4, 1.6, 0.8, 0.8, BENCH_RGB),
         box_link("planter", 2.6, 4.35, 0.25, 0.5, 0.5, 0.5, CRATE_RGB),
+        # --- traversability test objects (begin) ---
+        visual_box_link("cable_1", ROOM_DOORS_X[1], Y_CORR + 1.2, 0.015, 0.9, 0.03, 0.03, CABLE_RGB),
+        visual_box_link("mat_1", ROOM_DOORS_X[1], Y_CORR + 2.4, 0.010, 1.0, 0.8, 0.02, MAT_RGB),
+        box_link("toolbox_1", ROOM_DOORS_X[1] - 0.3, Y_CORR + 3.6, 0.06, 0.5, 0.3, 0.12, TOOLBOX_RGB),
+        box_link("phone_1", ROOM_DOORS_X[1] + 0.5, Y_CORR + 3.6, 0.04, 0.15, 0.08, 0.08, FRAGILE_RGB),
+        box_link("vase_1", ROOM_DOORS_X[1] + 0.8, Y_CORR + 2.0, 0.15, 0.12, 0.12, 0.30, FRAGILE_RGB),
+        # --- traversability test objects (end) ---
     ]
     return ('    <model name="building">\n      <static>true</static>\n'
             + "".join(links) + "    </model>\n")

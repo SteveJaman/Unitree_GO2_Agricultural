@@ -1,0 +1,19 @@
+# Parameters for scripts/nodes/traversability_node.py (node name: traversability)
+traversability:
+  ros__parameters:
+    height_source: auto        # lidar | depth | auto (depth while it publishes, else LiDAR)
+    use_vlm: true              # false = height-only ablation (no semantic check)
+    step_limit: 0.08           # m: at or above this the object is always avoided
+    h_min: 0.012               # m above the floor before a point counts as an object
+    cell: 0.08                 # m, clustering grid
+    base_height: 0.30          # m, base_link above the floor (TF floor guess)
+    max_range: 5.0
+    accum_s: 1.5               # s of LiDAR scans stacked (sparse LiDAR needs a few)
+    rate_hz: 2.0
+    min_seen: 2
+    vlm_model: llava:7b
+    vlm_timeout: 120.0
+    depth_topic: /camera/depth/image_raw
+    depth_info_topic: /camera/depth/camera_info
+    gait_trigger_dist: 0.7
+    max_clearance: 0.15
