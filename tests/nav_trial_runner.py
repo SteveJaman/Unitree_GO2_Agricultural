@@ -23,6 +23,7 @@ import csv
 import json
 import math
 import os
+import sys
 import time
 
 import rclpy
@@ -169,13 +170,13 @@ class TrialRunner(Node):
         self.get_logger().info(json.dumps(leg))
         return leg
 
-    def run(self):
+    def run(self, goals):
         end = time.time() + 30
         while self.pose is None and time.time() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
         if self.pose is None:
             raise SystemExit("no /lidar3d/body_odom")
-        legs = [self.run_leg(g) for g in GOALS]
+        legs = [self.run_leg(g) for g in goals]
         with open(os.path.join(self.out_dir, "legs.json"), "w") as f:
             json.dump(legs, f, indent=1)
         self.traj.close()
@@ -185,13 +186,27 @@ class TrialRunner(Node):
 
 
 def main():
+    global GOAL_TIMEOUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--randomize", action="store_true", help="seeded spawn and goals from --world (route.py)")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--world", default="/tmp/trav/cluttered_items.json")
+    ap.add_argument("--timeout", type=float, default=GOAL_TIMEOUT)
     a = ap.parse_args()
+    GOAL_TIMEOUT = a.timeout
+    if a.randomize:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from route import sample
+        route = sample(json.load(open(a.world)), a.seed)
+    else:
+        route = {"seed": None, "spawn": [0.0, 0.0, 0.0], "goals": GOALS}
+    with open(os.path.join(a.out, "trial.json"), "w") as f:
+        json.dump({"mode": a.mode, "randomize": a.randomize, **route, "goal_timeout_s": GOAL_TIMEOUT}, f, indent=1)
     rclpy.init()
     node = TrialRunner(a.out)
-    legs = node.run()
+    legs = node.run(route["goals"])
     print(f"{a.mode}: " + ", ".join(f"{l['goal']}={l['result']} {l['time_s']}s" for l in legs))
     node.destroy_node()
     rclpy.shutdown()

@@ -49,10 +49,66 @@ plt.rcParams.update({
 })
 
 
+STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.15"))
+LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.25"))
+CELL = 0.05    # m, the local costmap's resolution
+
+
 def band(height):
-    if height <= 0.15:
+    if height <= STEP_OVER_MAX:
         return "step_over"
-    return "caution" if height < 0.25 else "blocked"
+    return "caution" if height < LETHAL_MIN else "blocked"
+
+
+def object_band(o):
+    """The truth file may override an object's band (an item inside the safety margin)."""
+    return o.get("band") or band(o["height"])
+
+
+class BandGrid:
+    """Each costmap-sized cell's true band, from the objects' footprints. Taller wins."""
+    RANK = {"step_over": 1, "caution": 2, "blocked": 3}
+    NAMES = {1: "step_over", 2: "caution", 3: "lethal"}
+
+    def __init__(self, objects):
+        self.x0, self.y0 = XLIM[0], YLIM[0]
+        nx, ny = int((XLIM[1] - XLIM[0]) / CELL), int((YLIM[1] - YLIM[0]) / CELL)
+        yy, xx = np.mgrid[0:ny, 0:nx]
+        wx, wy = self.x0 + (xx + 0.5) * CELL, self.y0 + (yy + 0.5) * CELL
+        self.grid = np.zeros((ny, nx), np.int8)
+        for o in objects:
+            c, s = math.cos(o["yaw"]), math.sin(o["yaw"])
+            dx, dy = wx - o["x"], wy - o["y"]
+            inside = (np.abs(c * dx + s * dy) <= o["sx"] / 2) & (np.abs(-s * dx + c * dy) <= o["sy"] / 2)
+            self.grid[inside] = np.maximum(self.grid[inside], self.RANK[object_band(o)])
+
+    def cell(self, x, y):
+        i, j = int((x - self.x0) / CELL), int((y - self.y0) / CELL)
+        if 0 <= j < self.grid.shape[0] and 0 <= i < self.grid.shape[1]:
+            return (j, i), int(self.grid[j, i])
+        return None, 0
+
+
+def band_metrics(traj, grid, t0=-1e18, t1=1e18):
+    """Robot-centre cells per band: distinct cells entered, time on the band, and
+    the old per-tick count (one per trajectory sample, 20 Hz) for comparison."""
+    out = {}
+    cells = {k: set() for k in BandGrid.NAMES}
+    ticks = {k: 0 for k in BandGrid.NAMES}
+    secs = {k: 0.0 for k in BandGrid.NAMES}
+    seg = traj[(traj[:, 0] >= t0) & (traj[:, 0] <= t1)]
+    for k in range(len(seg)):
+        idx, b = grid.cell(seg[k, 1], seg[k, 2])
+        if b:
+            cells[b].add(idx)
+            ticks[b] += 1
+            if k + 1 < len(seg):
+                secs[b] += seg[k + 1, 0] - seg[k, 0]
+    for k, name in BandGrid.NAMES.items():
+        out[f"{name}_cells_entered"] = len(cells[k])
+        out[f"time_on_{name}_s"] = round(secs[k], 2)
+        out[f"{name}_crossings_per_tick_deprecated"] = ticks[k]
+    return out
 
 
 def gait_for_height(h):
@@ -247,7 +303,7 @@ def match_box(o, boxes):
     return best, dist
 
 
-def trial_metrics(t, objects, tall, low_all):
+def trial_metrics(t, objects, tall, grid):
     legs, traj = t["legs"], t["traj"]
     spl, walked = [], 0.0
     leg_rows = []
@@ -260,7 +316,8 @@ def trial_metrics(t, objects, tall, low_all):
         spl.append(s)
         leg_rows.append({"trial": t["name"], "mode": t["mode"], "goal": leg["goal"], "result": leg["result"],
                          "time_s": leg["time_s"], "path_m": round(d, 2), "shortest_m": round(short, 2),
-                         "spl": round(s, 2), "resends": leg["resends"]})
+                         "spl": round(s, 2), "resends": leg["resends"],
+                         **band_metrics(traj, grid, leg["t_start"], leg["t_end"])})
     samples = traj[::4]
     clear_tall = [tall.clearance(*p[1:]) for p in samples]
     eps = contact_episodes(t)
@@ -279,7 +336,24 @@ def trial_metrics(t, objects, tall, low_all):
             "collision_aborts": aborts, "start_in_lethal": plan_fail,
             "resends": sum(l["resends"] for l in legs),
             "min_clear_tall_m": round(min(clear_tall), 3),
-            "rtf": t["rtf"]}, leg_rows, clear_tall
+            "rtf": t["rtf"], **band_metrics(traj, grid)}, leg_rows, clear_tall
+
+
+BAND_KEYS = [f"{n}_cells_entered" for n in BandGrid.NAMES.values()] + \
+            [f"time_on_{n}_s" for n in BandGrid.NAMES.values()]
+
+
+def band_summary(ms, modes):
+    """Median [IQR] per mode: cell counts are skewed, so not mean ± SD."""
+    rows = []
+    for k in BAND_KEYS:
+        row = {"Metric": k}
+        for m in modes:
+            v = np.array([x[k] for x in ms if x["mode"] == m], float)
+            row[f"`{m}` median [IQR]"] = "" if not len(v) else \
+                f"{np.median(v):.2f} [{np.percentile(v, 25):.2f}–{np.percentile(v, 75):.2f}]"
+        rows.append(row)
+    return rows
 
 
 def contact_rows(t, objects):
@@ -608,9 +682,10 @@ def main():
     names = sorted(d for d in os.listdir(res) if os.path.exists(os.path.join(res, d, "legs.json")))
     trials = [load_trial(os.path.join(res, d)) for d in names]
     tall = Raster(objects, walls, lambda o: o["height"] > 0.15)
+    grid = BandGrid(objects)
     ms, legs, clear = [], [], {}
     for t in trials:
-        m, leg_rows, c = trial_metrics(t, objects, tall, None)
+        m, leg_rows, c = trial_metrics(t, objects, tall, grid)
         ms.append(m)
         legs += leg_rows
         clear[t["name"]] = c
@@ -666,6 +741,9 @@ def main():
     with open(os.path.join(out, "stats.md"), "w") as f:
         f.write("Per mode over trials: mean ± SD [min–max]; p from Welch's t-test.\n\n")
         f.write(md_table(summary_stats(ms)) + "\n")
+        f.write(f"Band metrics, robot centre on {CELL} m cells, bands from the true object footprints "
+                f"(step over ≤ {STEP_OVER_MAX} m, lethal ≥ {LETHAL_MIN} m):\n\n")
+        f.write(md_table(band_summary(ms, MODES)) + "\n")
         for mode in MODES:
             ls = [l for l in legs if l["mode"] == mode]
             f.write(f"`{mode}` legs reached: {sum(l['result'] == 'reached' for l in ls)}/{len(ls)}\n\n")
