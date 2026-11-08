@@ -1,0 +1,7 @@
+trial,mode,reached,time_s,walked_m,spl,foot_strikes,foot_strikes_low,body_hits,objects_hit,collision_aborts,start_in_lethal,resends,min_clear_tall_m,rtf,step_over_cells_entered,time_on_step_over_s,step_over_crossings_per_tick_deprecated,caution_cells_entered,time_on_caution_s,caution_crossings_per_tick_deprecated,lethal_cells_entered,time_on_lethal_s,lethal_crossings_per_tick_deprecated,care_needed_samples,normal_when_tall_ahead_count,normal_when_tall_ahead_rate,normal_costmap_saw,normal_unseen,backstop_raised_samples
+traversability1,traversability,3,132.0,20.16,0.993,15,7,0,5,1,0,1,0.0,0.565,9,2.48,26,8,2.4,28,0,0.0,0,504,3,0.006,0,3,276
+traversability2,traversability,3,121.6,19.95,1.0,18,10,0,5,0,0,0,0.0,0.567,5,1.26,15,9,2.26,27,0,0.0,0,460,7,0.015,0,7,232
+traversability3,traversability,3,129.7,19.68,1.0,15,10,0,5,1,0,1,0.0,0.565,7,2.65,29,9,2.19,27,0,0.0,0,501,4,0.008,0,4,217
+traversability_nobackstop1,traversability_nobackstop,3,121.2,20.0,0.996,20,10,0,6,0,0,0,0.0,0.562,11,2.88,34,10,2.74,33,0,0.0,0,453,86,0.19,77,9,0
+traversability_nobackstop2,traversability_nobackstop,0,171.7,3.92,0.0,3,3,0,2,2,14,13,0.152,0.511,3,0.8,7,0,0.0,0,0,0.0,0,865,0,0.0,0,0,0
+traversability_nobackstop3,traversability_nobackstop,3,129.7,19.75,1.0,15,7,0,5,1,0,1,0.0,0.569,9,2.21,25,8,2.04,26,0,0.0,0,504,143,0.284,140,3,0
