@@ -1,0 +1,16 @@
+Comparison,Metric,Test,p,Effect,95% CI of difference,Significant
+`traversability` vs `baseline`,Goals reached (per leg),two-proportion z (cc),0.704,h = -0.20,-0.24 to +0.10,no
+`traversability` vs `baseline`,Foot clearance ≤ 0.10 m (per pass),two-proportion z (cc),0.008,h = +0.57,+0.09 to +0.46,yes
+`traversability` vs `baseline`,Foot strikes per metre,Mann-Whitney U,0.761,r = 0.08,-0.27 to +0.24,no
+`traversability` vs `baseline`,Path walked (m),Mann-Whitney U,0.821,r = 0.06,-5.48 to +4.52,no
+`traversability` vs `baseline`,Step-over cells entered,Mann-Whitney U,0.290,r = 0.23,-2.50 to +1.50,no
+`traversability_semantic` vs `baseline`,Goals reached (per leg),two-proportion z (cc),0.107,h = -0.52,-0.40 to -0.00,no
+`traversability_semantic` vs `baseline`,Foot clearance ≤ 0.10 m (per pass),two-proportion z (cc),0.202,h = +0.31,-0.05 to +0.34,no
+`traversability_semantic` vs `baseline`,Foot strikes per metre,Mann-Whitney U,0.849,r = 0.05,-0.27 to +0.26,no
+`traversability_semantic` vs `baseline`,Path walked (m),Mann-Whitney U,0.473,r = 0.17,-6.69 to +2.19,no
+`traversability_semantic` vs `baseline`,Step-over cells entered,Mann-Whitney U,0.232,r = 0.26,-2.00 to +0.50,no
+`traversability_semantic` vs `traversability`,Goals reached (per leg),two-proportion z (cc),0.360,h = -0.32,-0.34 to +0.08,no
+`traversability_semantic` vs `traversability`,Foot clearance ≤ 0.10 m (per pass),two-proportion z (cc),0.351,h = -0.25,-0.34 to +0.09,no
+`traversability_semantic` vs `traversability`,Foot strikes per metre,Mann-Whitney U,1.000,r = 0.01,-0.31 to +0.34,no
+`traversability_semantic` vs `traversability`,Path walked (m),Mann-Whitney U,0.623,r = 0.12,-6.39 to +3.41,no
+`traversability_semantic` vs `traversability`,Step-over cells entered,Mann-Whitney U,0.929,r = 0.03,-2.50 to +1.01,no

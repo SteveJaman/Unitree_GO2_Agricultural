@@ -774,7 +774,7 @@ def safety_stats(ms, legs, passes, sem_unsafe):
     row("Foot strikes per metre walked, median [IQR]", lambda m: med(per_m[m]))
     row("Foot strikes on step-over items, median [IQR]", lambda m: med([x["foot_strikes_low"] for x in by[m]]))
     row("Trunk hits, median [IQR]", lambda m: med([x["body_hits"] for x in by[m]]))
-    row("Backstop raised the gait (samples), median [IQR]", lambda m: med([x["backstop_raised_samples"] for x in by[m]]))
+    row("Backstop raised the gait (samples), median [IQR]; not compared (baseline has no supervisor)", lambda m: med([x["backstop_raised_samples"] for x in by[m]]))
     row("Foot clearance on items ≤ 0.10 m (passes cleared)",
         lambda m: f"{sum(r['cleared'] for r in clear[m])}/{len(clear[m])}" if clear[m] else "no passes")
     row("NORMAL gait when care was needed (rate), median [IQR]",
@@ -801,8 +801,8 @@ def safety_stats(ms, legs, passes, sem_unsafe):
                 ("Foot clearance ≤ 0.10 m (per pass)", two_prop(sum(r["cleared"] for r in ca), len(ca),
                                                                 sum(r["cleared"] for r in cb), len(cb)), "h"),
                 ("Foot strikes per metre", mann_whitney(per_m[a], per_m[b]), "r"),
-                ("Backstop samples", mann_whitney([x["backstop_raised_samples"] for x in by[a]],
-                                                  [x["backstop_raised_samples"] for x in by[b]]), "r"),
+                # Backstop samples are not compared: baseline has no gait supervisor, so the
+                # difference is true by construction. They stay in the per-mode table.
                 ("Path walked (m)", mann_whitney([x["walked_m"] for x in by[a]], [x["walked_m"] for x in by[b]]), "r"),
                 ("Step-over cells entered", mann_whitney([x["step_over_cells_entered"] for x in by[a]],
                                                          [x["step_over_cells_entered"] for x in by[b]]), "r")):

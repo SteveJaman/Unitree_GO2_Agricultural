@@ -1,0 +1,10 @@
+{
+ "box_observations": 181,
+ "mean_abs_height_err_m": 0.054,
+ "median_abs_height_err_m": 0.012,
+ "mean_xy_err_m": 0.161,
+ "band_correct": 164,
+ "gait_samples": 14576,
+ "gait_match_boxes": 0.51,
+ "gait_match_costmap": 0.499
+}

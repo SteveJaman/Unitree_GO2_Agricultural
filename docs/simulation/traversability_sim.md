@@ -568,8 +568,17 @@ goals each), 90 s per leg, RPP collision detection on. Full tables:
 | SPL | 0.88 ± 0.15 | 0.57 ± 0.41 | 0.75 ± 0.29 |
 | Nav2 collision aborts | 0.2 ± 0.4 | 5.0 ± 10.6 | 2.6 ± 4.7 |
 | Trunk hits | 0.6 ± 0.9 | 0.2 ± 0.4 | 1.0 ± 2.2 |
-| Foot strikes on step-over items | 3.8 ± 4.2 | 2.6 ± 4.8 | 3.4 ± 4.1 |
+| Foot strikes on step-over items | 3.8 ± 4.2 ⚠ | 2.6 ± 4.8 | 3.4 ± 4.1 |
 | Step-over cells entered by the body centre (median) | 4 | 0 | 0 |
+
+⚠ **Baseline foot numbers in this table are confounded.** The sim bridge kept
+the last `/gait/command` between trials, and baseline (no gait supervisor) ran
+right after `traversability_semantic`: baseline trials 2, 3 and 4 walked the whole
+trial with the `STOP` lift (0.12 m) instead of `NORMAL` (0.04 m). Foot strikes and
+foot clearance for baseline here do not describe the baseline gait. Goals, SPL,
+aborts and paths are unaffected (the legs are kinematic and do not steer).
+Part 1's baseline trials all ran `NORMAL` and are clean. `run_all.sh` now resets
+the gait to `NORMAL` before every trial; Part 3 Phase 4 uses re-run baselines.
 
 ![Goals reached per leg and mode](semantic/trials/goals.png)
 
@@ -818,6 +827,71 @@ not steer), so it adds no costmap-saw samples. An earlier seeded check (seed
 1234, one pair) is not comparable: with the backstop off the path never put an
 object in the corridor, and all 33 `NORMAL` samples with it on were the book
 and keyboard, unseen.
+
+### Safety-metric trial matrix (Phase 4)
+
+Ten trials per mode, seeds 1234–1243 (same seeds across modes), modes in
+alternating order, 90 s per leg. Navigation efficiency is not the metric of
+interest; this trial validates the safety stack, and goals and path are given
+for completeness only. Full tables: [safety.md](results/phase4/safety.md),
+[stats.md](results/phase4/stats.md), [semantic.md](results/phase4/semantic.md),
+[per_trial.md](results/phase4/per_trial.md).
+
+**Baseline was re-run.** In the first run, 5 of the 10 baseline trials walked
+the whole trial with the 0.12 m lift (`CAREFUL` or `STOP`) left on the sim
+bridge by the preceding `traversability_semantic` trial; baseline runs no gait
+supervisor. `run_all.sh` now resets the gait to `NORMAL` before every trial, and
+all 10 re-run baselines ran `NORMAL`. With the clean baseline its foot numbers
+got worse, as expected for a 0.04 m lift:
+
+| Baseline | Goals | Foot strikes per metre (median) | Strikes on step-over items (total) | Clearance on items ≤ 0.10 m |
+|---|---|---|---|---|
+| First run (confounded) | 27/30 | 0.30 | 27 | 21/56 (38 %) |
+| Re-run (`NORMAL` throughout) | 27/30 | 0.24 | 34 | **15/58 (26 %)** |
+
+| Safety metric | `baseline` | `traversability` | `traversability_semantic` |
+|---|---|---|---|
+| Unsafe published labels, LiDAR-measured | n/a | n/a | **0** of 149 trial-objects |
+| NORMAL while the costmap saw something (backstop failure) | n/a | **0** of 2359 | **0** of 3534 |
+| NORMAL, unseen by costmap and camera (perception gap) | n/a | 86 of 2359 (3.6 %) | 23 of 3534 (0.7 %) |
+| Foot clearance on items ≤ 0.10 m | 15/58 (26 %) | **25/47 (53 %)** | 15/37 (41 %) |
+| … of which under `HIGH_STEP` | — | 10/13 | 2/3 |
+| Foot strikes per metre, median [IQR] | 0.24 [0.16–0.35] | 0.23 [0.04–0.40] | 0.24 [0.03–0.43] |
+| Trunk hits, median | 0 | 0 | 0 |
+| Backstop raised the gait, samples per trial (median) | — | 197 | 232 |
+| RPP collision aborts, median (known limitation) | 0 | 0.5 | 1.5 |
+| Goals reached (completeness) | 27/30 | 25/30 | 21/30 |
+| Path per trial, m, median (completeness) | 19.7 | 18.7 | 16.1 |
+
+Semantic log: 426 VLM requests, 0 failed, median 2.1 s; 55 trial-objects had no
+LiDAR height (4 of them tall, held at CAUTION by the two-signal rule); the raw
+VLM answered `STEP_OVER` on a tall measured object 6 times, all caught by the
+LiDAR floor.
+
+Pairwise tests (significant only with p < 0.05 and Cohen's h > 0.2 or r > 0.1;
+backstop samples are not compared, since baseline has no gait supervisor):
+
+| Comparison | Metric | p | Effect | 95% CI of difference | Significant |
+|---|---|---|---|---|---|
+| `traversability` vs `baseline` | Foot clearance ≤ 0.10 m | 0.008 | h = +0.57 | +0.09 to +0.46 | **yes** |
+| `traversability` vs `baseline` | Foot strikes per metre | 0.761 | r = 0.08 | −0.27 to +0.24 | no |
+| `traversability` vs `baseline` | Goals reached | 0.704 | h = −0.20 | −0.24 to +0.10 | no |
+| `traversability_semantic` vs `baseline` | Foot clearance ≤ 0.10 m | 0.202 | h = +0.31 | −0.05 to +0.34 | no |
+| `traversability_semantic` vs `baseline` | Foot strikes per metre | 0.849 | r = 0.05 | −0.27 to +0.26 | no |
+| `traversability_semantic` vs `baseline` | Goals reached | 0.107 | h = −0.52 | −0.40 to −0.00 | no |
+| `traversability_semantic` vs `traversability` | Foot clearance ≤ 0.10 m | 0.351 | h = −0.25 | −0.34 to +0.09 | no |
+| `traversability_semantic` vs `traversability` | Goals reached | 0.360 | h = −0.32 | −0.34 to +0.08 | no |
+
+Path walked and step-over cells entered: no comparison significant (all p > 0.2).
+
+What n = 10 establishes: the height-band and gait stack clears low items more
+often than the low-stepping baseline (53 % vs 26 %, p = 0.008, h = 0.57).
+Nothing else differs significantly, including foot strikes per metre and goals.
+The validated safety claims are within-mode and hold at n = 10: 0 unsafe
+published labels on measured objects, and 0 backstop failures in 5893
+care-needed samples. `HIGH_STEP` cleared 12 of 16 passes; the misses ended about
+2 cm below the item top (foothold landing, see below). The MPPI critic is not a
+comparison arm; its two single-trial checks are in the MPPI section above.
 
 ### Known limitations
 

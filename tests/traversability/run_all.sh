@@ -62,6 +62,16 @@ mppi_up() {
             --params-file /trav/controller_$1.yaml -r cmd_vel:=cmd_vel_nav" >/dev/null
 }
 
+# The sim bridge keeps the last /gait/command it got. Without this, a trial
+# inherits the previous trial's gait: baseline runs no gait supervisor and walked
+# whole trials with the 0.12 m lift left by traversability_semantic.
+gait_reset() {
+    docker exec go2-lidar3d bash -c 'source /opt/ros/humble/setup.bash
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///ws/log/3d/cyclonedds.xml ROS_DOMAIN_ID=64
+        timeout 30 ros2 topic pub -w 1 --once /gait/command std_msgs/msg/String "{data: NORMAL}"' >/dev/null 2>&1 \
+        || echo "WARNING: gait reset to NORMAL failed" >&2
+}
+
 sim_time() {
     docker exec go2-sim bash -c "$GZ; timeout 3 gz topic -e -n 1 -t /stats" 2>/dev/null \
         | awk '/^sim_time/{f=1} f&&/ sec:/{s=$2} f&&/nsec:/{print s+$2/1e9; exit}'
@@ -83,6 +93,7 @@ trial() {
         --reptype gz.msgs.Boolean --timeout 3000 \
         --req 'name: \"go2\", position: {x: $x, y: $y, z: 0.2984}, orientation: {z: $qz, w: $qw}'" >/dev/null
     sleep 2
+    gait_reset
     case "$mode" in traversability*) yolo_up; sleep 12 ;; *) docker rm -f go2-yolo >/dev/null 2>&1 ;; esac
     local ext=0
     case "$mode" in *mppi*) mppi_up "$mode"; ext=1 ;; esac
