@@ -5,12 +5,12 @@
 The one simulation record for the traversability feature: the Go2 model with
 moving legs walking a Gazebo arena of real objects, the camera + LiDAR 3D boxes
 and height costmap that choose each step, the VLM semantic layer, and the work
-to make all of it match the real robot. Physical-robot testing is documented
-separately.
+to make all of it match the real robot. Physical-robot testing starts from
+[HARDWARE_HANDOFF.md](HARDWARE_HANDOFF.md) and is documented separately.
 
 - [Part 1: Items world, the Go2 stepping over real objects](#part-1-items-world-the-go2-stepping-over-real-objects)
 - [Part 2: Semantic layer, VLM labels in the local costmap](#part-2-semantic-layer-vlm-labels-in-the-local-costmap)
-- [Part 3: Hardware readiness (in progress)](#part-3-hardware-readiness-in-progress)
+- [Part 3: Hardware readiness](#part-3-hardware-readiness)
 - [Appendix: First version on plain shapes](#appendix-first-version-on-plain-shapes-cluttered_nav_test)
 
 Parts 1 and 2 were run with the earlier bands (step over ≤ 0.15 m, lethal ≥ 0.25 m);
@@ -656,10 +656,11 @@ Hardware: none of this runs on the robot yet. `gait_supervisor` and
 `vlm_heuristic_node` take `backend: gazebo` only; `sport_client` raises
 `NotImplementedError` (Phase 2 hardware work).
 
-## Part 3: Hardware readiness (in progress)
+## Part 3: Hardware readiness
 
 Work after Part 2 to bring the simulation in line with the real Go2 before
-hardware trials. Status as of 2026-11-08.
+hardware trials. Closed 2026-11-08; what carries to the robot is summarised in
+[HARDWARE_HANDOFF.md](HARDWARE_HANDOFF.md).
 
 ### MPPI step-over critic: built, null result on these routes
 
