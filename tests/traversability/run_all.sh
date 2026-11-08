@@ -4,7 +4,8 @@
 #     SIM_CAMERA=1 SIM_CONTACTS=1 SIM_GAIT=1 ./gazebo/run_sim.sh up
 #   tests/traversability/run_all.sh RESULTS_DIR "1 2 3 4 5"
 # Environment:
-#   MODES="baseline traversability"  modes, alternated within each run number
+#   MODES="baseline traversability"  modes, alternated within each run number;
+#                 traversability_semantic adds the VLM labeller and SemanticCostmapLayer
 #   SEED=1234     random spawn and goals (route.py); run i uses seed SEED + i - 1.
 #                 Unset: the fixed (0,0) -> (5,0) -> (10,0) -> (0,0) sequence
 #   TIMEOUT=120   seconds per leg
@@ -22,14 +23,15 @@ mkdir -p "$RES"
 
 docker exec go2-lidar3d mkdir -p /tmp/trav
 for f in planner.yaml controller_baseline.yaml controller_traversability.yaml run_trial.sh route.py \
-         start_extra_traversability.sh save_frames.py record_semantic.py; do
+         start_extra_traversability.sh save_frames.py record_semantic.py save_costmap.py; do
     docker cp "$HERE/$f" go2-lidar3d:/tmp/trav/$f
 done
 for f in "$HERE"/controller_traversability_*.yaml "$HERE"/start_extra_traversability_*.sh; do
     [ -f "$f" ] && docker cp "$f" go2-lidar3d:/tmp/trav/
 done
 docker cp "$REPO/tests/nav_trial_runner.py" go2-lidar3d:/tmp/trav/nav_trial_runner.py
-for f in object_box_fusion.py sim_box_detector.py gait_supervisor.py vlm_heuristic_node.py; do
+docker cp "$REPO/scripts/config/ollama.yaml" go2-lidar3d:/tmp/trav/ollama.yaml
+for f in object_box_fusion.py sim_box_detector.py gait_supervisor.py vlm_heuristic_node.py semantic_labeler.py; do
     docker cp "$REPO/scripts/nodes/$f" go2-lidar3d:/tmp/trav/$f
 done
 docker cp "$REPO/gazebo/worlds/$WORLD.json" go2-lidar3d:/tmp/trav/$WORLD.json

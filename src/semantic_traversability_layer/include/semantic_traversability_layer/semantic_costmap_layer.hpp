@@ -31,6 +31,7 @@ public:
   bool isClearable() override { return false; }
 
 private:
+  int labelCost(const std::string & label, int msg_cost) const;
   void obstacleCallback(
     go2_semantic_msgs::msg::SemanticObstacleArray::ConstSharedPtr msg);
 
@@ -39,6 +40,8 @@ private:
   struct CostMark {
     double wx, wy;
     double radius;
+    bool oriented;     // true: rectangle hx x hy (half sizes) rotated by yaw
+    double hx, hy, yaw;
     unsigned char cost;
   };
   std::vector<CostMark> marks_;
@@ -47,6 +50,9 @@ private:
   bool enabled_;
   std::string topic_;
   double max_range_;
+  double confidence_min_;
+  int avoid_cost_, caution_cost_, step_over_cost_;
+  double footprint_margin_ = 0.05;
   double robot_x_, robot_y_;
   bool has_robot_pose_;
 };

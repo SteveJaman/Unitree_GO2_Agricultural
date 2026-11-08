@@ -1,0 +1,93 @@
+{
+ "objects_labelled": 58,
+ "accuracy": 0.638,
+ "per_class": {
+  "STEP_OVER": {
+   "precision": 1.0,
+   "recall": 0.741,
+   "n_true": 27
+  },
+  "CAUTION": {
+   "precision": 0.0,
+   "recall": 0.0,
+   "n_true": 3
+  },
+  "AVOID": {
+   "precision": 0.895,
+   "recall": 0.85,
+   "n_true": 20
+  }
+ },
+ "unsafe_tall_labelled_low": 0,
+ "step_over_when_true_blocked": 0,
+ "unsafe_examples": [],
+ "trials_with_semantic_log": 5,
+ "raw_vlm": {
+  "objects_labelled": 45,
+  "accuracy": 0.733,
+  "per_class": {
+   "STEP_OVER": {
+    "precision": 0.913,
+    "recall": 0.955,
+    "n_true": 22
+   },
+   "CAUTION": {
+    "precision": 0.222,
+    "recall": 1.0,
+    "n_true": 2
+   },
+   "AVOID": {
+    "precision": 0.833,
+    "recall": 0.625,
+    "n_true": 16
+   }
+  },
+  "unsafe_tall_labelled_low": 5,
+  "step_over_when_true_blocked": 2,
+  "unsafe_examples": [
+   {
+    "trial": "traversability_semantic1",
+    "object": "trash_bin_1",
+    "true": "AVOID",
+    "true_h": 0.3,
+    "vlm": "CAUTION",
+    "messages": 274
+   },
+   {
+    "trial": "traversability_semantic2",
+    "object": "toolbox_1",
+    "true": "AVOID",
+    "true_h": 0.299,
+    "vlm": "CAUTION",
+    "messages": 585
+   },
+   {
+    "trial": "traversability_semantic2",
+    "object": "trash_bin_1",
+    "true": "AVOID",
+    "true_h": 0.3,
+    "vlm": "CAUTION",
+    "messages": 715
+   },
+   {
+    "trial": "traversability_semantic3",
+    "object": "toolbox_1",
+    "true": "AVOID",
+    "true_h": 0.299,
+    "vlm": "STEP_OVER",
+    "messages": 399
+   },
+   {
+    "trial": "traversability_semantic5",
+    "object": "toolbox_1",
+    "true": "AVOID",
+    "true_h": 0.299,
+    "vlm": "STEP_OVER",
+    "messages": 115
+   }
+  ]
+ },
+ "vlm_requests": 104,
+ "vlm_failed": 0,
+ "vlm_latency_s_median": 3.16
+}

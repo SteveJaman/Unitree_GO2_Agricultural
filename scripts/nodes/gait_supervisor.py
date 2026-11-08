@@ -13,12 +13,22 @@ Gait modes:
 
 When 3D object boxes are available (object_box_fusion.py) the gait comes from
 the tallest object in the corridor ahead, and HIGH_STEP is chosen only if the
-raised foot clears it. The costmap decision stays in /gait/status for comparison.
+raised foot clears it. The costmap decision stays in /gait/status for comparison;
+with backstop_enabled the gait is never lower than the costmap's, so an object
+the boxes missed still raises the feet.
+
+With use_semantic, a track's label from vlm_heuristic_node.py can raise the gait
+(CAUTION: at least CAREFUL, AVOID: STOP) but never lower it.
+
+Backends: "gazebo" publishes /gait/command, which the sim bridge turns into foot
+lift. "sport_client" (the robot) is Phase 2 hardware work and raises
+NotImplementedError; nothing here imports unitree_sdk2py.
 
 Subscribes:
   /local_costmap/costmap   nav_msgs/OccupancyGrid
   /lidar3d/body_odom       nav_msgs/Odometry
   /objects/boxes_json      std_msgs/String
+  /semantic/labels_json    std_msgs/String (use_semantic)
 
 Publishes:
   /gait/command            std_msgs/String (gait mode name)
@@ -30,7 +40,10 @@ Parameters:
   check_rate_hz:    evaluation frequency (default 5.0)
   foot_margin:      clearance the raised foot must keep above an object (default 0.02m)
   lethal_height:    object height that means STOP (default 0.25m)
-  dry_run:          if true, log commands but don't send to sport_client
+  backstop_enabled: gait is at least the costmap's (default true)
+  use_semantic:     raise the gait from semantic labels (default false)
+  backend:          "gazebo" (default) | "sport_client" (NotImplementedError)
+  dry_run:          if true, log commands but don't send them to the backend (default true)
 """
 import json
 import math
@@ -68,6 +81,14 @@ GAITS = {
 }
 
 
+ORDER = ("NORMAL", "HIGH_STEP", "CAREFUL", "STOP")
+SEMANTIC_GAIT = {"CAUTION": "CAREFUL", "AVOID": "STOP"}
+
+
+def worst(*gaits):
+    return max(gaits, key=ORDER.index)
+
+
 def gait_for_height(height, foot_height, margin, lethal_height):
     if height is None:      # seen, but not measured: never treat it as low
         return "CAREFUL"
@@ -100,6 +121,25 @@ class GaitSupervisor(Node):
         self.declare_parameter("foot_margin", 0.02)
         self.declare_parameter("lethal_height", 0.25)
         self.declare_parameter("dry_run", True)
+        self.declare_parameter("backend", "gazebo")
+        self.declare_parameter("backstop_enabled", True)
+        self.declare_parameter("use_semantic", False)
+        self.declare_parameter("semantic_topic", "/semantic/labels_json")
+        self.declare_parameter("boxes_topic", "/objects/boxes_json")
+        self.declare_parameter("costmap_topic", "/local_costmap/costmap")
+        self.declare_parameter("odom_topic", "/lidar3d/body_odom")
+        self.declare_parameter("command_topic", "/gait/command")
+        self.declare_parameter("status_topic", "/gait/status")
+
+        self.backend = self.get_parameter("backend").value
+        if self.backend == "sport_client":
+            raise NotImplementedError(
+                "SportClient backend is Phase 2 (hardware) work. Not implemented in sim.")
+        if self.backend != "gazebo":
+            raise ValueError(f"backend must be gazebo or sport_client, not {self.backend}")
+        self.backstop = bool(self.get_parameter("backstop_enabled").value)
+        self.use_semantic = bool(self.get_parameter("use_semantic").value)
+        self.semantic = {}
 
         self.foot_margin = self.get_parameter("foot_margin").value
         self.lethal_height = self.get_parameter("lethal_height").value
@@ -113,20 +153,21 @@ class GaitSupervisor(Node):
         self.odom = None
         self.current_gait = "NORMAL"
 
-        self.create_subscription(
-            OccupancyGrid, "/local_costmap/costmap", self._cm_cb, COSTMAP_QOS)
-        self.create_subscription(
-            Odometry, "/lidar3d/body_odom", self._odom_cb, SENSOR_QOS)
-        self.create_subscription(String, "/objects/boxes_json", self._boxes_cb, 10)
+        g = lambda k: self.get_parameter(k).value  # noqa: E731
+        self.create_subscription(OccupancyGrid, g("costmap_topic"), self._cm_cb, COSTMAP_QOS)
+        self.create_subscription(Odometry, g("odom_topic"), self._odom_cb, SENSOR_QOS)
+        self.create_subscription(String, g("boxes_topic"), self._boxes_cb, 10)
+        if self.use_semantic:
+            self.create_subscription(String, g("semantic_topic"), self._semantic_cb, 10)
 
-        self.cmd_pub = self.create_publisher(String, "/gait/command", 10)
-        self.status_pub = self.create_publisher(String, "/gait/status", 10)
+        self.cmd_pub = self.create_publisher(String, g("command_topic"), 10)
+        self.status_pub = self.create_publisher(String, g("status_topic"), 10)
         self.create_timer(1.0 / rate, self._evaluate)
 
         mode = "DRY_RUN" if self.dry_run else "ACTIVE"
         self.get_logger().info(
-            "gait_supervisor [%s]: scan=%.1fm width=%.1fm"
-            % (mode, self.scan_dist, self.scan_width))
+            "gait_supervisor [%s]: backend=%s scan=%.1fm width=%.1fm backstop=%s semantic=%s"
+            % (mode, self.backend, self.scan_dist, self.scan_width, self.backstop, self.use_semantic))
 
     def _cm_cb(self, msg):
         self.costmap = msg
@@ -136,6 +177,9 @@ class GaitSupervisor(Node):
 
     def _boxes_cb(self, msg):
         self.boxes = json.loads(msg.data)["boxes"]
+
+    def _semantic_cb(self, msg):
+        self.semantic = {o["track_id"]: o["label"] for o in json.loads(msg.data).get("objects", [])}
 
     def _get_yaw(self):
         if self.odom is None:
@@ -190,7 +234,7 @@ class GaitSupervisor(Node):
             costmap_gait = "NORMAL"
 
         desired = costmap_gait
-        hits = []
+        hits, box_gait, semantic_gait = [], None, None
         if self.boxes and self.odom is not None:
             p = self.odom.pose.pose.position
             hits = objects_ahead(self.boxes, p.x, p.y, self._get_yaw(),
@@ -200,7 +244,15 @@ class GaitSupervisor(Node):
                 gaits = [gait_for_height(b["height"] if b["traverse"] != "unknown" else None,
                                          GAITS["HIGH_STEP"]["foot_height"],
                                          self.foot_margin, self.lethal_height) for b in hits]
-                desired = max(gaits, key=("NORMAL", "HIGH_STEP", "CAREFUL", "STOP").index)
+                desired = worst(*gaits)
+                labels = [self.semantic.get(b.get("id")) for b in hits] if self.use_semantic else []
+                sem = [SEMANTIC_GAIT[lb] for lb in labels if lb in SEMANTIC_GAIT]
+                if sem:
+                    semantic_gait = worst(*sem)
+                    desired = worst(desired, semantic_gait)
+            box_gait = desired
+            if self.backstop:
+                desired = worst(desired, costmap_gait)
 
         if desired != self.current_gait:
             self.current_gait = desired
@@ -213,18 +265,19 @@ class GaitSupervisor(Node):
 
         self.cmd_pub.publish(String(data=desired))
         self.status_pub.publish(String(data=json.dumps({
-            "gait": desired, "costmap_gait": costmap_gait, "cost": max_cost,
+            "gait": desired, "costmap_gait": costmap_gait, "box_gait": box_gait,
+            "semantic_gait": semantic_gait, "backstop": self.backstop, "cost": max_cost,
             "objects": [b["class"] for b in hits],
             "foot": GAITS[desired]["foot_height"],
             "speed_pct": GAITS[desired]["speed_scale"] * 100})))
 
     def _send_gait_command(self, gait_name):
-        # Phase 6: sport_client integration
-        # For now, log the intended command
+        # gazebo: /gait/command (published every cycle above) is the command; the
+        # sim bridge sets the foot lift from it. Nothing further to send.
         params = GAITS[gait_name]
         self.get_logger().info(
-            "SPORT_CLIENT (not implemented): foot_height=%.2f speed_scale=%.1f"
-            % (params["foot_height"], params["speed_scale"]))
+            "gazebo backend: %s foot_height=%.2f speed_scale=%.1f"
+            % (gait_name, params["foot_height"], params["speed_scale"]))
 
 
 def main(args=None):

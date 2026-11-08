@@ -1,6 +1,6 @@
 # Items World (`cluttered_items`): The Go2 Stepping Over Real Objects
 
-[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [First version, plain shapes](cluttered_nav.md) · [Indoor lab world](lab_office.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md)
+[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [First version, plain shapes](cluttered_nav.md) · [Indoor lab world](lab_office.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md) · [Semantic traversability (VLM)](semantic_traversability.md)
 
 The Go2 model with moving leg joints, walking through a Gazebo arena of real
 objects: mugs, a power strip, a shoe, a keyboard, a chair and more. The front

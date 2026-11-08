@@ -1,0 +1,15 @@
+# Ollama (Windows host) as seen from WSL2 / the host-network containers.
+# WSL2 NAT: the Windows host is the WSL default gateway (ip route | awk '/default/{print $3}'),
+# 172.30.160.1 on the development machine. Ollama runs with OLLAMA_HOST=0.0.0.0 and an
+# inbound firewall rule for TCP 11434 from 172.30.160.0/20 only.
+# The trial scripts pass the gateway they find at run time, overriding ollama_url.
+# Proposal named llava:7b; implementation uses qwen2.5vl for better instruction
+# following. `llava:7b` is pullable if required.
+vlm_heuristic_node:
+  ros__parameters:
+    ollama_url: "http://172.30.160.1:11434"
+    model: "qwen2.5vl"
+    timeout_s: 10.0
+    confidence_min: 0.7
+    reclassify_s: 5.0
+    fallback_on_timeout: "geometry"

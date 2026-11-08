@@ -3,9 +3,11 @@
 
   analyze_semantic.py RESULTS_DIR OUT_DIR WORLD_JSON
 
-Reads each trial's semantic.jsonl (record_semantic.py: one /semantic/obstacles
-message per line). Each obstacle is matched to the nearest true object within
-MATCH_M; its label is compared with the label that object's band calls for:
+Reads each trial's semantic.jsonl (record_semantic.py: one /semantic/labels_json
+message per line; the published label of every track). Each obstacle is matched
+to the true object whose footprint is nearest, within MATCH_M of the footprint
+(a long bookshelf's box centre can be far from the shelf's centre); its label is
+compared with the label that object's band calls for:
 
   step_over -> STEP_OVER    caution -> CAUTION    blocked -> AVOID
 
@@ -22,10 +24,11 @@ from collections import Counter, defaultdict
 
 LABELS = ["STEP_OVER", "CAUTION", "AVOID", "UNKNOWN"]
 TRUE_LABELS = ["STEP_OVER", "CAUTION", "AVOID", "NO_OBJECT"]
-MATCH_M = 0.6
+MATCH_M = 0.35   # from the object's footprint edge
 TALL_M = 0.25
 STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.15"))
 LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.25"))
+CONF_MIN = float(os.environ.get("CONF_MIN", "0.7"))
 COST_LABEL = {254: "AVOID", 253: "AVOID", 200: "CAUTION", 40: "STEP_OVER", 0: "UNKNOWN"}
 
 
@@ -57,24 +60,43 @@ def load_semantic(path):
     return out
 
 
+def footprint_dist(o, x, y):
+    c, s = math.cos(o.get("yaw", 0.0)), math.sin(o.get("yaw", 0.0))
+    dx, dy = x - o["x"], y - o["y"]
+    ex = max(0.0, abs(c * dx + s * dy) - o["sx"] / 2)
+    ey = max(0.0, abs(-s * dx + c * dy) - o["sy"] / 2)
+    return math.hypot(ex, ey)
+
+
 def match(ob, objects):
     best, dist = None, MATCH_M
     for o in objects:
-        d = math.hypot(o["x"] - ob["x"], o["y"] - ob["y"])
-        if d < dist:
+        d = footprint_dist(o, ob["x"], ob["y"])
+        if d < dist or (d == dist == 0.0 and best is not None and
+                        math.hypot(o["x"] - ob["x"], o["y"] - ob["y"]) < math.hypot(best["x"] - ob["x"], best["y"] - ob["y"])):
             best, dist = o, d
     return best
 
 
-def score(trials, objects):
+def raw_vlm_label(ob):
+    """The VLM's own answer (below CONF_MIN counts as UNKNOWN); None before it has answered."""
+    if not ob.get("vlm"):
+        return None
+    return ob["vlm"] if (ob.get("vlm_conf") or 0.0) >= CONF_MIN else "UNKNOWN"
+
+
+def score(trials, objects, label_of=obstacle_label):
     """One vote per (trial, object or track) per label: the label it held longest."""
     votes = defaultdict(Counter)
     for name, msgs in trials.items():
         for msg in msgs:
             for ob in msg.get("obstacles", []):
+                label = label_of(ob)
+                if label is None:
+                    continue
                 o = match(ob, objects)
                 key = (name, o["name"] if o else f"track{ob.get('track_id', '?')}")
-                votes[key][obstacle_label(ob)] += 1
+                votes[key][label] += 1
     rows = []
     for (trial, obj), c in sorted(votes.items()):
         o = next((x for x in objects if x["name"] == obj), None)
@@ -113,9 +135,20 @@ def main():
     rows = score(trials, objects)
     m, summary = summarize(rows)
     summary["trials_with_semantic_log"] = len(trials)
+    raw_rows = score(trials, objects, raw_vlm_label)
+    raw_m, summary["raw_vlm"] = summarize(raw_rows)
+    calls = [msgs[-1] for msgs in trials.values() if msgs]
+    summary["vlm_requests"] = sum(c.get("asked") or 0 for c in calls)
+    summary["vlm_failed"] = sum(c.get("failed") or 0 for c in calls)
+    # One latency per answer: an answer stays in every message until the next one.
+    answers = {(n, ob.get("track_id"), ob["latency_s"], round(msg["t"] - ob.get("label_age_s", 0.0)))
+               for n, msgs in trials.items() for msg in msgs for ob in msg.get("obstacles", [])
+               if ob.get("latency_s")}
+    lats = sorted(a[2] for a in answers)
+    summary["vlm_latency_s_median"] = lats[len(lats) // 2] if lats else None
     with open(os.path.join(out, "semantic_confusion.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["true \\ vlm"] + LABELS)
+        w.writerow(["true \\ label"] + LABELS)
         for t in TRUE_LABELS:
             w.writerow([t] + [m[t][p] for p in LABELS])
     with open(os.path.join(out, "semantic_objects.csv"), "w", newline="") as f:
@@ -124,9 +157,15 @@ def main():
         w.writerows(rows)
     json.dump(summary, open(os.path.join(out, "semantic_summary.json"), "w"), indent=1)
     with open(os.path.join(out, "semantic.md"), "w") as f:
-        f.write("| true \\ VLM | " + " | ".join(LABELS) + " |\n|" + "---|" * (len(LABELS) + 1) + "\n")
-        for t in TRUE_LABELS:
-            f.write(f"| {t} | " + " | ".join(str(m[t][p]) for p in LABELS) + " |\n")
+        for title, mm, sm in (("Published label (VLM combined with LiDAR height)", m, summary),
+                              ("Raw VLM answer", raw_m, summary["raw_vlm"])):
+            f.write(f"**{title}**: {sm['objects_labelled']} trial-objects, accuracy {sm['accuracy']}, "
+                    f"unsafe_tall_labelled_low {sm['unsafe_tall_labelled_low']}, "
+                    f"step_over_when_true_blocked {sm['step_over_when_true_blocked']}\n\n")
+            f.write("| true \\ label | " + " | ".join(LABELS) + " |\n|" + "---|" * (len(LABELS) + 1) + "\n")
+            for t in TRUE_LABELS:
+                f.write(f"| {t} | " + " | ".join(str(mm[t][p]) for p in LABELS) + " |\n")
+            f.write("\n")
     print(json.dumps(summary, indent=1))
 
 

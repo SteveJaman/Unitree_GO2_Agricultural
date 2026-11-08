@@ -33,8 +33,10 @@ BAND = {"step_over": "#0ca30c", "caution": "#fab219", "blocked": "#d03b3b"}
 BAND_LABEL = {"step_over": "Step over (≤ 0.15 m)", "caution": "Caution (0.15–0.25 m)", "blocked": "Blocked (≥ 0.25 m)"}
 GAIT_ORDER = ["NORMAL", "HIGH_STEP", "CAREFUL", "STOP"]
 GAIT_COLOR = {"NORMAL": "#c3c2b7", "HIGH_STEP": "#1baf7a", "CAREFUL": "#eda100", "STOP": "#6250d6"}
-MODES = ["baseline", "traversability"]
-MODE_COLOR = {"baseline": BLUE, "traversability": ORANGE}
+# Modes in this order when present; main() keeps the ones the results contain.
+ALL_MODES = ["baseline", "traversability", "traversability_semantic"]
+MODES = list(ALL_MODES)
+MODE_COLOR = {"baseline": BLUE, "traversability": ORANGE, "traversability_semantic": "#6250d6"}
 FOOT_HIGH, MARGIN, LETHAL = 0.12, 0.02, 0.25
 BODY = (0.70, 0.31)
 SCAN_D, SCAN_W = 1.5, 0.3
@@ -492,7 +494,8 @@ def fig_floorplan(out, objects, walls, goals):
 
 
 def fig_trajectories(out, trials, objects, walls):
-    fig, axes = plt.subplots(2, 1, figsize=(10, 10.5))
+    fig, axes = plt.subplots(len(MODES), 1, figsize=(10, 5.25 * len(MODES)), squeeze=False)
+    axes = axes[:, 0]
     for ax, mode in zip(axes, MODES):
         draw_world(ax, objects, walls)
         ts = [t for t in trials if t["mode"] == mode]
@@ -521,11 +524,11 @@ def contact_points(t):
 def fig_legs(out, legs):
     goals = list(dict.fromkeys(l["goal"] for l in legs))
     fig, ax = plt.subplots(figsize=(7.5, 3.4))
-    w = 0.34
+    w = 0.7 / len(MODES)
     for k, mode in enumerate(MODES):
         ns = [sum(1 for l in legs if l["goal"] == g and l["mode"] == mode and l["result"] == "reached") for g in goals]
         tot = [sum(1 for l in legs if l["goal"] == g and l["mode"] == mode) for g in goals]
-        xs = np.arange(len(goals)) + (k - 0.5) * (w + 0.03)
+        xs = np.arange(len(goals)) + (k - (len(MODES) - 1) / 2) * (w + 0.03)
         ax.bar(xs, ns, w, color=MODE_COLOR[mode], label=mode)
         for x, n, m in zip(xs, ns, tot):
             ax.annotate(f"{n}/{m}", (x, n), xytext=(0, 3), textcoords="offset points", ha="center", fontsize=9, color=INK2)
@@ -535,7 +538,7 @@ def fig_legs(out, legs):
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
     ax.grid(axis="y")
     ax.set_axisbelow(True)
-    ax.legend(loc="upper right", ncol=2)
+    ax.legend(loc="upper right", ncol=len(MODES), fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(out, "goals.png"), dpi=150)
     plt.close(fig)
@@ -647,7 +650,7 @@ def fig_foot_passes(out, passes, ms):
         ax.bar(k, np.mean(y), 0.55, color=MODE_COLOR[m], label=m)
         ax.plot([k] * len(y), y, "o", ms=8, mfc=SURFACE, mec=INK2, zorder=4)
         ax.annotate(f"{np.mean(y):.1f}", (k, np.mean(y)), xytext=(26, 2), textcoords="offset points", fontsize=9, color=INK2)
-    ax.set_xticks([0, 1], MODES)
+    ax.set_xticks(range(len(MODES)), MODES)
     ax.set_ylabel("foot strikes on step-over items\nper trial (dots: each trial)")
     ax.grid(axis="y")
     ax.set_axisbelow(True)
@@ -662,16 +665,21 @@ def summary_stats(ms):
             ("body_hits", "Trunk hits"), ("objects_hit", "Objects touched"),
             ("collision_aborts", "Nav2 collision aborts"), ("start_in_lethal", "Plans refused: start in lethal space"),
             ("resends", "Goals re-sent"), ("min_clear_tall_m", "Closest to a tall object or wall (m)"), ("rtf", "Sim real-time factor")]
-    a = [m for m in ms if m["mode"] == MODES[0]]
-    b = [m for m in ms if m["mode"] == MODES[1]]
+    by = {mode: [m for m in ms if m["mode"] == mode] for mode in MODES}
+    f = lambda v: "" if len(v) == 0 else f"{v.mean():.2f} ± {v.std(ddof=1) if len(v) > 1 else 0:.2f} [{v.min():.2f}–{v.max():.2f}]"  # noqa: E731
     rows = []
     for k, label in keys:
-        x, y = np.array([m[k] for m in a], float), np.array([m[k] for m in b], float)
-        p = ""
-        if len(x) > 1 and len(y) > 1 and (x.std() + y.std()) > 0:
-            p = f"{stats.ttest_ind(x, y, equal_var=False).pvalue:.3f}"
-        f = lambda v: "" if len(v) == 0 else f"{v.mean():.2f} ± {v.std(ddof=1) if len(v) > 1 else 0:.2f} [{v.min():.2f}–{v.max():.2f}]"  # noqa: E731
-        rows.append({"Metric": label, f"`baseline` (n={len(a)})": f(x), f"`traversability` (n={len(b)})": f(y), "p (Welch t)": p})
+        vals = {mode: np.array([m[k] for m in by[mode]], float) for mode in MODES}
+        row = {"Metric": label}
+        for mode in MODES:
+            row[f"`{mode}` (n={len(by[mode])})"] = f(vals[mode])
+        x = vals[MODES[0]]
+        for mode in MODES[1:]:
+            y, p = vals[mode], ""
+            if len(x) > 1 and len(y) > 1 and (x.std() + y.std()) > 0:
+                p = f"{stats.ttest_ind(x, y, equal_var=False).pvalue:.3f}"
+            row[f"p vs {MODES[0]}: {mode}"] = p
+        rows.append(row)
     return rows
 
 
@@ -681,6 +689,10 @@ def main():
     objects, walls = load_objects(world), load_walls(world)
     names = sorted(d for d in os.listdir(res) if os.path.exists(os.path.join(res, d, "legs.json")))
     trials = [load_trial(os.path.join(res, d)) for d in names]
+    present = {t["mode"] for t in trials}
+    MODES[:] = [m for m in ALL_MODES if m in present] + sorted(present - set(ALL_MODES))
+    for m in MODES:
+        MODE_COLOR.setdefault(m, MUTED)
     tall = Raster(objects, walls, lambda o: o["height"] > 0.15)
     grid = BandGrid(objects)
     ms, legs, clear = [], [], {}
@@ -690,7 +702,7 @@ def main():
         legs += leg_rows
         clear[t["name"]] = c
     contacts = [r for t in trials for r in contact_rows(t, objects)]
-    trav = [t for t in trials if t["mode"] == "traversability"]
+    trav = [t for t in trials if t["mode"].startswith("traversability")]
     boxes = box_rows(trav, objects)
     gait = gait_agreement(trav, objects)
     audit = track_audit(trav, objects)
@@ -739,7 +751,7 @@ def main():
     json.dump(fusion, open(os.path.join(out, "data", "fusion_summary.json"), "w"), indent=1)
 
     with open(os.path.join(out, "stats.md"), "w") as f:
-        f.write("Per mode over trials: mean ± SD [min–max]; p from Welch's t-test.\n\n")
+        f.write(f"Per mode over trials: mean ± SD [min–max]; p from Welch's t-test against `{MODES[0]}`.\n\n")
         f.write(md_table(summary_stats(ms)) + "\n")
         f.write(f"Band metrics, robot centre on {CELL} m cells, bands from the true object footprints "
                 f"(step over ≤ {STEP_OVER_MAX} m, lethal ≥ {LETHAL_MIN} m):\n\n")
@@ -749,8 +761,10 @@ def main():
             f.write(f"`{mode}` legs reached: {sum(l['result'] == 'reached' for l in ls)}/{len(ls)}\n\n")
         a = [sum(l["result"] == "reached" for l in legs if l["mode"] == m) for m in MODES]
         c = [sum(l["mode"] == m for l in legs) for m in MODES]
-        if min(c):
-            f.write(f"Fisher exact, per leg: p = {stats.fisher_exact([[a[0], c[0] - a[0]], [a[1], c[1] - a[1]]])[1]:.3f}\n\n")
+        for k in range(1, len(MODES)):
+            if c[0] and c[k]:
+                f.write(f"Fisher exact, per leg, `{MODES[k]}` vs `{MODES[0]}`: "
+                        f"p = {stats.fisher_exact([[a[0], c[0] - a[0]], [a[k], c[k] - a[k]]])[1]:.3f}\n\n")
         f.write("Fusion summary: " + json.dumps(fusion) + "\n")
     with open(os.path.join(out, "per_trial.md"), "w") as f:
         f.write(md_table(ms))

@@ -1,0 +1,112 @@
+{
+ "model": "llava:7b",
+ "frames": 30,
+ "crops": 28,
+ "objects": 13,
+ "confidence_min": 0.7,
+ "errors": 0,
+ "latency_s": {
+  "median": 1.76,
+  "p90": 1.83,
+  "max": 17.57
+ },
+ "vlm": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 0,
+    "CAUTION": 16,
+    "AVOID": 0,
+    "UNKNOWN": 1
+   },
+   "CAUTION": {
+    "STEP_OVER": 0,
+    "CAUTION": 2,
+    "AVOID": 0,
+    "UNKNOWN": 0
+   },
+   "AVOID": {
+    "STEP_OVER": 0,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.393,
+  "unsafe_tall_labelled_low": 0,
+  "step_over_when_true_blocked": 0,
+  "unknown": 1,
+  "precision_STEP_OVER": null,
+  "recall_STEP_OVER": 0.0,
+  "precision_CAUTION": 0.111,
+  "recall_CAUTION": 1.0,
+  "precision_AVOID": 1.0,
+  "recall_AVOID": 1.0
+ },
+ "geometry": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 13,
+    "CAUTION": 0,
+    "AVOID": 0,
+    "UNKNOWN": 4
+   },
+   "CAUTION": {
+    "STEP_OVER": 1,
+    "CAUTION": 0,
+    "AVOID": 0,
+    "UNKNOWN": 1
+   },
+   "AVOID": {
+    "STEP_OVER": 0,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.786,
+  "unsafe_tall_labelled_low": 0,
+  "step_over_when_true_blocked": 0,
+  "unknown": 5,
+  "precision_STEP_OVER": 0.929,
+  "recall_STEP_OVER": 0.765,
+  "precision_CAUTION": null,
+  "recall_CAUTION": 0.0,
+  "precision_AVOID": 1.0,
+  "recall_AVOID": 1.0
+ },
+ "final": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 0,
+    "CAUTION": 13,
+    "AVOID": 0,
+    "UNKNOWN": 4
+   },
+   "CAUTION": {
+    "STEP_OVER": 0,
+    "CAUTION": 1,
+    "AVOID": 0,
+    "UNKNOWN": 1
+   },
+   "AVOID": {
+    "STEP_OVER": 0,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.357,
+  "unsafe_tall_labelled_low": 0,
+  "step_over_when_true_blocked": 0,
+  "unknown": 5,
+  "precision_STEP_OVER": null,
+  "recall_STEP_OVER": 0.0,
+  "precision_CAUTION": 0.071,
+  "recall_CAUTION": 0.5,
+  "precision_AVOID": 1.0,
+  "recall_AVOID": 1.0
+ }
+}
