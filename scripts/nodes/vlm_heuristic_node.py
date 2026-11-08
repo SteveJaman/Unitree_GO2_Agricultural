@@ -3,9 +3,12 @@
 
 For each world-fixed track on /objects/boxes_json (object_box_fusion.py), the
 node finds the track's 2D detection in the current camera image, crops it, and
-asks the VLM for STEP_OVER | CAUTION | AVOID | UNKNOWN. One request is in flight
-at a time; a track is asked again after reclassify_s. The VLM label is combined
-with the track's measured height so it can raise a cost but never lower one
+asks the VLM to verify the detector's class and classify it independently:
+STEP_OVER | CAUTION | AVOID. One request is in flight at a time; a track is asked
+again after reclassify_s. Height comes from LiDAR only: the published label is the
+more severe of the LiDAR band and the VLM label (VLM AVOID is lethal only for a
+LiDAR-measured object); with no LiDAR height any VLM label is CAUTION, flagged
+low_confidence
 (scripts/nodes/semantic_labeler.py has the rule and the prompt).
 
 Subscribes (all topic names are parameters):
@@ -68,8 +71,8 @@ class VlmHeuristicNode(Node):
         p("camera_info_topic", "/camera/camera_info")
         p("obstacles_topic", "/semantic/obstacles")
         p("labels_topic", "/semantic/labels_json")
-        p("step_over_height_max", 0.15)
-        p("lethal_height_min", 0.25)
+        p("step_over_height_max", 0.12)
+        p("lethal_height_min", 0.22)
         p("detection_max_age_s", 0.6)
         p("radius_margin", 0.05)
         p("publish_hz", 2.0)
@@ -183,15 +186,17 @@ class VlmHeuristicNode(Node):
             if got is None:
                 continue
             self.busy = True
-            self.jobs.put((b["id"], b["class"], got[0].copy()))
+            self.jobs.put((b["id"], det.get("class", b["class"]), float(det.get("score", b.get("score", 0.0))),
+                           got[0].copy()))
             return
 
     def worker(self):
         while True:
-            tid, cls, crop = self.jobs.get()
+            tid, cls, score, crop = self.jobs.get()
             ans = {"t": time.time(), "error": None}
             try:
-                label, conf, reason, lat = sl.ask_ollama(self.url, self.model, crop, cls, self.timeout_s)
+                # The detector's class and score go in for verification, not as an answer.
+                label, conf, reason, lat = sl.ask_ollama(self.url, self.model, crop, cls, score, self.timeout_s)
                 ans.update(label=label, conf=conf, reason=reason, latency_s=round(lat, 2))
                 self.get_logger().info(
                     f"track {tid} {cls}: {label} {conf:.2f} ({reason}) {lat:.2f}s")
@@ -213,6 +218,7 @@ class VlmHeuristicNode(Node):
         out = {"track_id": b["id"], "class": b["class"], "x": b["x"], "y": b["y"],
                "height": b.get("height"), "geometry": geo, "vlm": None, "vlm_conf": None,
                "vlm_reason": None, "latency_s": None, "label_age_s": None, "error": None}
+        low = geo == "UNKNOWN"   # no LiDAR height: whatever is published is flagged
         if a is None:
             final, source, conf = geo, ("geometry_only" if geo != "UNKNOWN" else "none"), 1.0
         else:
@@ -221,9 +227,9 @@ class VlmHeuristicNode(Node):
             if a["error"] and self.fallback == "unknown":
                 final, source, conf = "UNKNOWN", "fallback_unknown", 0.0
             else:
-                final, source = sl.combine(a["label"], a["conf"], geo, self.conf_min)
-                conf = a["conf"] if source == "vlm" else 1.0
-        out.update(label=final, source=source, confidence=round(conf, 2),
+                final, source, low = sl.combine(a["label"], a["conf"], geo, self.conf_min)
+                conf = a["conf"] if source.startswith("vlm") else 1.0
+        out.update(label=final, source=source, confidence=round(conf, 2), low_confidence=low,
                    cost=COSTS[final], radius=round(sl.radius(b, self.r_margin), 3),
                    size_x=b.get("sx") or 0.0, size_y=b.get("sy") or 0.0, yaw=b.get("yaw") or 0.0)
         return out

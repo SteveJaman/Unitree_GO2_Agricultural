@@ -18,8 +18,8 @@ namespace mppi::critics
  * Parameters (under the critic's name):
  *   enabled              (true)
  *   cost_weight          (0.2)
- *   step_over_cost_min   (30)
- *   step_over_cost_max   (60)
+ *   step_over_cost_min   (38)   only HeightBandLayer step_over_cost 40;
+ *   step_over_cost_max   (42)   30-60 also caught inflation falloff
  */
 class StepOverCritic : public CriticFunction
 {
@@ -29,8 +29,8 @@ public:
 
 protected:
   float cost_weight_{0.2f};
-  int step_over_cost_min_{30};
-  int step_over_cost_max_{60};
+  int step_over_cost_min_{38};
+  int step_over_cost_max_{42};
 };
 
 }  // namespace mppi::critics

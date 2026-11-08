@@ -11,21 +11,14 @@ import semantic_labeler as sl  # noqa: E402
 
 
 def test_parse_json_answer():
-    label, conf, reason = sl.parse_answer('{"object": "chair", "height_cm": 80, "label": "AVOID", "confidence": 0.95}')
-    assert (label, conf) == ("AVOID", 0.95)
-    assert "chair" in reason
+    label, conf, reason = sl.parse_answer('{"object": "chair", "label": "AVOID", "confidence": 0.95}')
+    assert (label, conf, reason) == ("AVOID", 0.95, "chair")
 
 
-def test_parse_raises_label_to_own_height():
-    label, _, reason = sl.parse_answer('{"object": "side table", "height_cm": 20, "label": "STEP_OVER", "confidence": 0.8}')
-    assert label == "CAUTION" and "raised" in reason
-    label, _, _ = sl.parse_answer('{"object": "bin", "height_cm": 40, "label": "CAUTION", "confidence": 0.8}')
-    assert label == "AVOID"
-
-
-def test_parse_never_lowers_label():
-    label, _, _ = sl.parse_answer('{"object": "cable", "height_cm": 3, "label": "CAUTION", "confidence": 0.9}')
-    assert label == "CAUTION"
+def test_parse_ignores_vlm_height_guess():
+    # A height estimate is not a measurement: it never changes the label.
+    label, _, _ = sl.parse_answer('{"object": "saucer", "height_cm": 15, "label": "STEP_OVER", "confidence": 0.8}')
+    assert label == "STEP_OVER"
 
 
 def test_parse_garbage_is_unknown():
@@ -33,29 +26,37 @@ def test_parse_garbage_is_unknown():
     assert sl.parse_answer('{"label": "FLY", "confidence": 1}')[:2] == ("UNKNOWN", 0.0)
 
 
-def test_combine_never_below_geometry():
-    assert sl.combine("STEP_OVER", 0.99, "AVOID", 0.7) == ("AVOID", "geometry")
-    assert sl.combine("STEP_OVER", 0.99, "CAUTION", 0.7) == ("CAUTION", "geometry")
+def test_prompt_offers_detector_class_for_verification():
+    p = sl.PROMPT.format(cls="person", score=0.56)
+    assert "'person' with confidence 0.56" in p and "wrong" in p
 
 
-def test_combine_vlm_can_raise():
-    assert sl.combine("CAUTION", 0.9, "STEP_OVER", 0.7) == ("CAUTION", "vlm")
-    assert sl.combine("AVOID", 0.9, "CAUTION", 0.7) == ("AVOID", "vlm")
+def test_combine_is_max_of_geometry_and_semantic():
+    assert sl.combine("STEP_OVER", 0.99, "AVOID", 0.7) == ("AVOID", "geometry", False)
+    assert sl.combine("STEP_OVER", 0.99, "CAUTION", 0.7) == ("CAUTION", "geometry", False)
+    assert sl.combine("CAUTION", 0.9, "STEP_OVER", 0.7) == ("CAUTION", "vlm", False)
+    assert sl.combine("AVOID", 0.9, "STEP_OVER", 0.7) == ("AVOID", "vlm", False)   # fragile laptop
+    assert sl.combine("STEP_OVER", 0.9, "STEP_OVER", 0.7) == ("STEP_OVER", "agree", False)
 
 
 def test_combine_low_confidence_ignored():
-    assert sl.combine("AVOID", 0.5, "STEP_OVER", 0.7) == ("STEP_OVER", "geometry")
+    assert sl.combine("AVOID", 0.5, "STEP_OVER", 0.7) == ("STEP_OVER", "geometry", False)
 
 
-def test_combine_unmeasured_only_avoid_passes():
-    assert sl.combine("STEP_OVER", 0.9, "UNKNOWN", 0.7) == ("UNKNOWN", "none")
-    assert sl.combine("CAUTION", 0.9, "UNKNOWN", 0.7) == ("UNKNOWN", "none")
-    assert sl.combine("AVOID", 0.9, "UNKNOWN", 0.7) == ("AVOID", "vlm")
+def test_combine_unmeasured_never_below_caution():
+    assert sl.combine("STEP_OVER", 0.9, "UNKNOWN", 0.7) == ("CAUTION", "vlm_unmeasured", True)
+    assert sl.combine("CAUTION", 0.9, "UNKNOWN", 0.7) == ("CAUTION", "vlm_unmeasured", True)
+    # Lethal needs LiDAR too: an unmeasured AVOID is CAUTION.
+    assert sl.combine("AVOID", 0.9, "UNKNOWN", 0.7) == ("CAUTION", "vlm_unmeasured", True)
+    assert sl.combine("STEP_OVER", 0.5, "UNKNOWN", 0.7) == ("UNKNOWN", "none", True)
 
 
 def test_geometry_label_bands():
     assert sl.geometry_label({"height": 0.04}) == "STEP_OVER"
+    assert sl.geometry_label({"height": 0.12}) == "STEP_OVER"
+    assert sl.geometry_label({"height": 0.13}) == "CAUTION"
     assert sl.geometry_label({"height": 0.20}) == "CAUTION"
+    assert sl.geometry_label({"height": 0.22}) == "AVOID"
     assert sl.geometry_label({"height": 0.30}) == "AVOID"
     assert sl.geometry_label({"height": None}) == "UNKNOWN"
 

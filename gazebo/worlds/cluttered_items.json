@@ -129,7 +129,8 @@
    "sx": 0.131,
    "sy": 0.097,
    "sz": 0.115,
-   "height": 0.115
+   "height": 0.115,
+   "band": "caution"
   },
   {
    "name": "shoe_1",
@@ -141,7 +142,8 @@
    "sx": 0.106,
    "sy": 0.281,
    "sz": 0.124,
-   "height": 0.124
+   "height": 0.124,
+   "band": "caution"
   },
   {
    "name": "plastic_cup_1",
@@ -153,7 +155,22 @@
    "sx": 0.075,
    "sy": 0.075,
    "sz": 0.13,
-   "height": 0.13
+   "height": 0.13,
+   "band": "caution"
+  },
+  {
+   "name": "laptop_1",
+   "class": "laptop",
+   "x": 7.0,
+   "y": -0.05,
+   "z": 0.03,
+   "yaw": 0.0,
+   "sx": 0.33,
+   "sy": 0.446,
+   "sz": 0.06,
+   "height": 0.06,
+   "band": "caution",
+   "fragile": true
   },
   {
    "name": "bottle_1",

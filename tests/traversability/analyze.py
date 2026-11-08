@@ -30,14 +30,16 @@ from sim_box_detector import load_objects  # noqa: E402
 BLUE, ORANGE = "#2a78d6", "#eb6834"
 INK, INK2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 BAND = {"step_over": "#0ca30c", "caution": "#fab219", "blocked": "#d03b3b"}
-BAND_LABEL = {"step_over": "Step over (≤ 0.15 m)", "caution": "Caution (0.15–0.25 m)", "blocked": "Blocked (≥ 0.25 m)"}
 GAIT_ORDER = ["NORMAL", "HIGH_STEP", "CAREFUL", "STOP"]
 GAIT_COLOR = {"NORMAL": "#c3c2b7", "HIGH_STEP": "#1baf7a", "CAREFUL": "#eda100", "STOP": "#6250d6"}
 # Modes in this order when present; main() keeps the ones the results contain.
-ALL_MODES = ["baseline", "traversability", "traversability_semantic"]
+ALL_MODES = ["baseline", "traversability", "traversability_semantic", "traversability_mppi_stepover",
+             "traversability_mppi", "traversability_nobackstop"]
 MODES = list(ALL_MODES)
-MODE_COLOR = {"baseline": BLUE, "traversability": ORANGE, "traversability_semantic": "#6250d6"}
-FOOT_HIGH, MARGIN, LETHAL = 0.12, 0.02, 0.25
+MODE_COLOR = {"baseline": BLUE, "traversability": ORANGE, "traversability_semantic": "#6250d6",
+              "traversability_mppi_stepover": "#1baf7a", "traversability_mppi": "#7a9a3a",
+              "traversability_nobackstop": "#898781"}
+FOOT_HIGH, MARGIN = 0.12, 0.02
 BODY = (0.70, 0.31)
 SCAN_D, SCAN_W = 1.5, 0.3
 XLIM, YLIM = (-2.3, 12.3), (-4.8, 4.8)
@@ -51,8 +53,12 @@ plt.rcParams.update({
 })
 
 
-STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.15"))
-LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.25"))
+STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.12"))
+LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.22"))
+LETHAL = LETHAL_MIN
+BAND_LABEL = {"step_over": f"Step over (≤ {STEP_OVER_MAX:.2f} m)",
+              "caution": f"Caution ({STEP_OVER_MAX:.2f}–{LETHAL_MIN:.2f} m)",
+              "blocked": f"Blocked (≥ {LETHAL_MIN:.2f} m)"}
 CELL = 0.05    # m, the local costmap's resolution
 
 
@@ -113,10 +119,13 @@ def band_metrics(traj, grid, t0=-1e18, t1=1e18):
     return out
 
 
+GAIT_STOP_M = 0.25   # gait_supervisor lethal_height: STOP from here (2c), not at the 0.22 band
+
+
 def gait_for_height(h):
-    if h + MARGIN <= FOOT_HIGH:
+    if h + MARGIN <= FOOT_HIGH + 1e-6:
         return "HIGH_STEP"
-    return "CAREFUL" if h < LETHAL else "STOP"
+    return "CAREFUL" if h < GAIT_STOP_M else "STOP"
 
 
 def load_walls(path):
@@ -285,7 +294,24 @@ def truth_gait(pose, objects):
         reach = max(o["sx"], o["sy"]) / 2
         if -0.45 - reach < fw < SCAN_D + reach and abs(lat) < SCAN_W + reach:
             hs.append(o["height"])
+            if o.get("fragile"):
+                hs.append(FOOT_HIGH)   # fragile: at least CAREFUL, whatever its height
     return gait_for_height(max(hs)) if hs else "NORMAL"
+
+
+def backstop_metrics(t, objects):
+    """Gait samples where care was right (true gait not NORMAL) but the published gait
+    was NORMAL; and how often the costmap backstop lifted the gait."""
+    need = normal = raised = 0
+    for ts, g in gait_series(t):
+        if g.get("backstop_raised"):
+            raised += 1
+        if truth_gait(pose_at(t["traj"], ts), objects) != "NORMAL":
+            need += 1
+            normal += g["gait"] == "NORMAL"
+    return {"care_needed_samples": need, "normal_when_tall_ahead_count": normal,
+            "normal_when_tall_ahead_rate": round(normal / need, 3) if need else None,
+            "backstop_raised_samples": raised}
 
 
 def gait_series(trial):
@@ -323,7 +349,7 @@ def trial_metrics(t, objects, tall, grid):
     samples = traj[::4]
     clear_tall = [tall.clearance(*p[1:]) for p in samples]
     eps = contact_episodes(t)
-    low_h = {o["name"]: o["height"] <= 0.15 for o in objects}
+    low_h = {o["name"]: object_band(o) == "step_over" for o in objects}
     msgs = Counter(e["msg"] for e in t["events"] if e["kind"] == "nav2")
     aborts = sum(v for k, v in msgs.items() if "collision ahead" in k)
     plan_fail = sum(v for k, v in msgs.items() if "Starting point in lethal" in k)
@@ -338,11 +364,12 @@ def trial_metrics(t, objects, tall, grid):
             "collision_aborts": aborts, "start_in_lethal": plan_fail,
             "resends": sum(l["resends"] for l in legs),
             "min_clear_tall_m": round(min(clear_tall), 3),
-            "rtf": t["rtf"], **band_metrics(traj, grid)}, leg_rows, clear_tall
+            "rtf": t["rtf"], **band_metrics(traj, grid), **backstop_metrics(t, objects)}, leg_rows, clear_tall
 
 
 BAND_KEYS = [f"{n}_cells_entered" for n in BandGrid.NAMES.values()] + \
-            [f"time_on_{n}_s" for n in BandGrid.NAMES.values()]
+            [f"time_on_{n}_s" for n in BandGrid.NAMES.values()] + \
+            ["normal_when_tall_ahead_rate", "normal_when_tall_ahead_count", "backstop_raised_samples"]
 
 
 def band_summary(ms, modes):
@@ -351,7 +378,7 @@ def band_summary(ms, modes):
     for k in BAND_KEYS:
         row = {"Metric": k}
         for m in modes:
-            v = np.array([x[k] for x in ms if x["mode"] == m], float)
+            v = np.array([x[k] for x in ms if x["mode"] == m and x.get(k) is not None], float)
             row[f"`{m}` median [IQR]"] = "" if not len(v) else \
                 f"{np.median(v):.2f} [{np.percentile(v, 25):.2f}–{np.percentile(v, 75):.2f}]"
         rows.append(row)
@@ -550,9 +577,9 @@ def fig_boxes(out, rows):
         return
     fig, ax = plt.subplots(figsize=(6.2, 5.4))
     lim = max(max(r["true_h"] for r in pts), max(float(r["est_h"]) for r in pts)) + 0.05
-    ax.axhspan(0, 0.15, color=BAND["step_over"], alpha=0.08, lw=0)
-    ax.axhspan(0.15, 0.25, color=BAND["caution"], alpha=0.10, lw=0)
-    ax.axhspan(0.25, lim, color=BAND["blocked"], alpha=0.08, lw=0)
+    ax.axhspan(0, STEP_OVER_MAX, color=BAND["step_over"], alpha=0.08, lw=0)
+    ax.axhspan(STEP_OVER_MAX, LETHAL_MIN, color=BAND["caution"], alpha=0.10, lw=0)
+    ax.axhspan(LETHAL_MIN, lim, color=BAND["blocked"], alpha=0.08, lw=0)
     ax.plot([0, lim], [0, lim], color=MUTED, lw=1)
     ax.annotate("perfect estimate", (lim * 0.62, lim * 0.68), color=MUTED, fontsize=8, rotation=38)
     rng = np.random.default_rng(0)
@@ -693,7 +720,7 @@ def main():
     MODES[:] = [m for m in ALL_MODES if m in present] + sorted(present - set(ALL_MODES))
     for m in MODES:
         MODE_COLOR.setdefault(m, MUTED)
-    tall = Raster(objects, walls, lambda o: o["height"] > 0.15)
+    tall = Raster(objects, walls, lambda o: object_band(o) != "step_over")
     grid = BandGrid(objects)
     ms, legs, clear = [], [], {}
     for t in trials:
@@ -774,7 +801,7 @@ def main():
         f.write("\n### Fused boxes per object (box_accuracy.png)\n\n" + md_table(obj_rows))
 
     goals = [(5, 0, "goal 1"), (10, 0, "goal 2"), (0, 0, "start / goal 3")]
-    passes = [r for t in trials for r in foot_passes(t, [o for o in objects if o["height"] <= 0.15])]
+    passes = [r for t in trials for r in foot_passes(t, [o for o in objects if object_band(o) != "blocked"])]
     write_csv(os.path.join(out, "data", "foot_passes.csv"), passes)
     fig_foot_passes(out, passes, ms)
     fig_floorplan(out, objects, walls, goals)

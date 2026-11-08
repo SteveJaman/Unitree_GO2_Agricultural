@@ -8,4 +8,3 @@ bg python3 "$T/vlm_heuristic_node.py" --ros-args --params-file "$T/ollama.yaml" 
     -p ollama_url:="http://$GW:11434" -p dry_run:=false -p backend:=gazebo \
     > "$OUT/vlm.log" 2>&1
 bg python3 "$T/record_semantic.py" "$OUT" > "$OUT/record_semantic.log" 2>&1
-bg python3 "$T/save_costmap.py" "$OUT" 5 > "$OUT/save_costmap.log" 2>&1

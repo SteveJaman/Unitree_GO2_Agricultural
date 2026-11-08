@@ -44,7 +44,10 @@ bg ros2 run go2_nav2 go2_odom_tf --ros-args -r __node:=lidar3d_body_odom \
     -p publish_odom:=true -p derive_planar_twist:=true -p publish_tf:=false \
     -p odom_out_topic:=/lidar3d/body_odom > "$OUT/body_odom.log" 2>&1
 
-bg ros2 run nav2_planner planner_server --ros-args --params-file "$T/planner.yaml" \
+# A mode may bring its own global costmap (traversability_semantic: semantic layer in both).
+PLANNER="$T/planner.yaml"
+[ -f "$T/planner_${MODE}.yaml" ] && PLANNER="$T/planner_${MODE}.yaml"
+bg ros2 run nav2_planner planner_server --ros-args --params-file "$PLANNER" \
     > "$OUT/planner.log" 2>&1
 # CONTROLLER_EXTERNAL=1: controller_server runs in another container (MPPI modes,
 # started by run_all.sh); the lifecycle manager below still manages it over DDS.

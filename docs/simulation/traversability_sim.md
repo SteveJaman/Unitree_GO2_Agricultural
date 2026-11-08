@@ -694,43 +694,92 @@ The nominal caution band is 0.12–0.22 m, but the obstacle_layer's
 This is intentional: anything ≥ 0.15 m is beyond the SDK's 12 cm foot lift and
 should not be considered passable regardless of semantic label.
 
-### Semantic fusion revised
+### Semantic fusion (final)
 
-- Height comes from LiDAR only. The published label is the more severe of the
-  LiDAR band and the VLM label (costs 40 / 200 / 254). The VLM's own height
-  estimate is no longer used: with the band at 0.12 m its usual "15 cm" guess
-  turned low items into CAUTION and blocked passages.
-- The VLM is no longer told the detector's class: a false YOLO "person" on the
-  shoe was confirmed by the VLM ("person, 180 cm") and blocked the corridor.
-- With no LiDAR height, the VLM label is published flagged `low_confidence`,
-  never below CAUTION, and the gait is at least `CAREFUL`.
+- **Height from LiDAR, meaning from the VLM.** With a LiDAR height, the published
+  label is the more severe of the LiDAR band (40 / 200 / 254) and the VLM label:
+  VLM AVOID → 254, CAUTION → 200, STEP_OVER → 40. The VLM's own height estimate
+  is not used: with the band at 0.12 m its usual "15 cm" guess turned low items
+  into CAUTION and blocked passages.
+- **Two-signal lethal rule.** A VLM AVOID is lethal only when LiDAR measured the
+  object. With no LiDAR height, any VLM label is published as CAUTION (200),
+  flagged `low_confidence`, and the gait is at least `CAREFUL`. A single signal
+  never makes a cell lethal, and an unmeasured object is never assumed to be clutter.
+- **Unsafe-label metric counts measured objects only.** An unmeasured tall object
+  held at CAUTION is the rule working, not a safety failure; such objects are
+  reported separately (`unmeasured_objects`, `unmeasured_tall_held_at_caution`).
+- **Layer placement.** Semantic mode differs from traversability mode by adding
+  semantic information to *both* planning (global) and control (local). This
+  reflects the proposal's claim that semantic reasoning should drive global
+  re-routing, not only local speed modulation. With the layer in the local
+  costmap only, the global plan ran through lethal semantic marks and RPP
+  aborted on them ("detected collision ahead!") instead of anything routing
+  around. Trial-mode costmaps now:
+
+| Mode | Global costmap | Local costmap |
+|---|---|---|
+| `baseline` | obstacle, inflation | obstacle, inflation |
+| `traversability` | obstacle, inflation | obstacle, height band, inflation |
+| `traversability_semantic` | obstacle, **semantic**, inflation | obstacle, height band, semantic, inflation |
+
 - A fragile low object was added to the world: `laptop_1`, 0.06 m, on the fixed
   route at (7.0, −0.05). The height band alone would call it step over.
-- `/gait/status` now reports `backstop_raised` when the costmap backstop lifts
-  the gait above what the boxes asked for.
+- `/gait/status` reports `backstop_raised` when the costmap backstop lifts the
+  gait above what the boxes asked for.
 
-### Fixed-route check after the revision: not passed
+### Phase 2 attempts on the fixed route
 
-| Fixed route, one trial each | Goals reached |
-|---|---|
-| `baseline` | 3/3 |
-| `traversability` | 3/3 |
-| `traversability_semantic` | 1/3 (stuck: RPP "detected collision ahead!" ×11) |
+One trial per mode each time; `baseline` and `traversability` reached 3/3 in every attempt.
 
-| Criterion | Observed |
-|---|---|
-| Laptop final cost ≥ 200 | 254 (VLM AVOID) |
-| Shoe 200 | CAUTION (200) |
-| Blue mug 200 | 254: VLM said AVOID ("furniture") in some answers |
-| Power strip 40 when the VLM says STEP_OVER | 200: VLM said STEP_OVER but LiDAR had no height, so the unmeasured rule held it at CAUTION |
-| Backstop events | 2 episodes (186 samples) in the semantic run, 17 in `traversability` |
+| Attempt | Change | `traversability_semantic` goals | RPP collision aborts | What blocked it |
+|---|---|---|---|---|
+| 1 | Band 0.12 m, VLM height guess raises the label | 0/3, then 1/3 | 12 (repeat) | "Starting point in lethal space" by the shelf; false YOLO "person" on the shoe confirmed by the VLM |
+| 2 | Height from LiDAR only, no class hint, laptop added; semantic local only | 1/3 | 11 | AVOID marks on the laptop (correct), blue mug ("furniture"), plant pot ("basketball hoop") at x ≈ 6–7.6 m; global plan ran through them |
+| 3 | Semantic in both costmaps, two-signal lethal, class hint as verification | 2/3 | 10 | VLM answered "detector wrong" on 45 of 46 crops and AVOID on 43: the measured cable coil, saucer and power strip became lethal; aborts at (5.31, −0.36) ×5 by `cable_coil_1` |
 
-Why the semantic run stopped: AVOID marks on the laptop (correct), the blue mug
-("furniture") and the plant pot ("basketball hoop") closed the corridor at
-x ≈ 6–7.6 m. Semantic marks are in the local costmap only, so the global plan
-still runs through them and RPP aborts on the lethal cells ahead instead of the
-planner routing around. Without the class hint the VLM misnames small, low-resolution
-crops more often (over-cautious, not unsafe). Next steps are pending a decision.
+Attempt 3 per object: laptop never measured by LiDAR and the VLM answer below
+`confidence_min`, so UNKNOWN; toolbox (0.30 m, unmeasured) held at CAUTION;
+backstop 7 episodes; 0 unsafe labels on measured objects, 4 unmeasured objects.
+Phase 2 is closed here: implemented, VLM accuracy insufficient for
+safety-critical use.
+
+### VLM prompt selection
+
+Three prompts on the same 30 saved frames (28 crops of 13 objects, truth with
+the 0.12 / 0.22 m bands), `qwen2.5vl`, `tests/traversability/eval_vlm_frames.py --prompt`.
+Per-prompt confusion matrices: [verify_oneword](semantic/prompt_selection/verify_oneword.md),
+[verify_defs_first](semantic/prompt_selection/verify_defs_first.md),
+[object_first](semantic/prompt_selection/object_first.md).
+Rule set before running: the lowest AVOID-on-low-items rate with 0 unsafe
+answers wins, and the winner ships even if none passes.
+
+| Prompt | AVOID on true step-over crops | VLM accuracy | VLM tall-called-low (of which STEP_OVER) | Published accuracy | Published unsafe | Median latency |
+|---|---|---|---|---|---|---|
+| `verify_oneword`: detector class to verify, one-word answer | **2 / 14** | **0.68** | 1 (1) | **0.71** | 0 | 2.1 s |
+| `verify_defs_first`: definitions first, class as a suggestion, JSON | 9 / 14 | 0.43 | 1 (1) | 0.54 | 0 | 1.0 s |
+| `object_first`: no class, name then label, JSON | 3 / 14 | 0.46 | 3 (0) | 0.64 | 0 | 1.0 s |
+
+None reached 0 unsafe raw answers. **`verify_oneword` ships** (`PROMPT_ID` in
+`scripts/nodes/semantic_labeler.py`): lowest AVOID-on-low rate, tied lowest
+unsafe count. Its one STEP_OVER on a tall object is caught by the LiDAR floor,
+so the published labels stay at 0 unsafe. A one-word answer carries no
+confidence (scored 1.0), so `confidence_min` does not filter its answers. The
+earlier 0.89 (Part 2) was a different prompt and the 0.15 / 0.25 m bands; the
+numbers are not comparable. Best available with a 7B model on these crops.
+
+### Semantic mode: what it does and does not establish
+
+The semantic layer is integrated end-to-end: `SemanticCostmapLayer` loads in
+both global and local costmaps, the two-signal lethal rule prevents single-
+source escalations, and unmeasured objects are held at CAUTION. What the sim
+does not establish is that the semantic layer improves navigation. Across
+three Phase 2 attempts, the VLM's classification accuracy on Gazebo-rendered
+crops of small objects (mugs, pots, cable coils) was insufficient to drive
+routing decisions: misclassifications either closed low-clutter corridors or
+produced RPP aborts. The architecture is sound; the perception input is not
+yet reliable enough for safety-critical use. Improving VLM accuracy (larger
+model, better crops, or a fine-tuned classifier) is future work and does not
+block the hardware trial, which tests the height-band and backstop stack.
 
 ### Known limitations
 

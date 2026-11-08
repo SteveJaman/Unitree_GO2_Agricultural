@@ -29,7 +29,7 @@ for f in planner.yaml controller_baseline.yaml controller_traversability.yaml ru
          start_extra_traversability.sh save_frames.py record_semantic.py save_costmap.py; do
     docker cp "$HERE/$f" go2-lidar3d:/tmp/trav/$f
 done
-for f in "$HERE"/controller_traversability_*.yaml "$HERE"/start_extra_traversability_*.sh; do
+for f in "$HERE"/controller_traversability_*.yaml "$HERE"/planner_*.yaml "$HERE"/start_extra_traversability_*.sh; do
     [ -f "$f" ] && docker cp "$f" go2-lidar3d:/tmp/trav/
 done
 docker cp "$REPO/tests/nav_trial_runner.py" go2-lidar3d:/tmp/trav/nav_trial_runner.py
@@ -38,6 +38,8 @@ for f in object_box_fusion.py sim_box_detector.py gait_supervisor.py vlm_heurist
     docker cp "$REPO/scripts/nodes/$f" go2-lidar3d:/tmp/trav/$f
 done
 docker cp "$REPO/gazebo/worlds/$WORLD.json" go2-lidar3d:/tmp/trav/$WORLD.json
+# traversability_nobackstop: same local costmap as traversability, gait backstop off.
+docker exec go2-lidar3d cp /tmp/trav/controller_traversability.yaml /tmp/trav/controller_traversability_nobackstop.yaml
 docker exec go2-lidar3d bash -c "sed -i 's/\r$//' /tmp/trav/*.sh"
 
 yolo_up() {

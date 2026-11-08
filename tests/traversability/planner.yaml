@@ -1,5 +1,6 @@
-# Global planning for the traversability trials. Same for both modes: the
-# plugins stay out of the global costmap. Values follow go2-nav2-wifi's
+# Global planning for the traversability trials: baseline and traversability (the
+# height band is local only). traversability_semantic uses
+# planner_traversability_semantic.yaml (this plus SemanticCostmapLayer). Values follow go2-nav2-wifi's
 # lidar3d_planning.launch.py with GO2_LIDAR3D_NAV=1.
 planner_server:
   ros__parameters:

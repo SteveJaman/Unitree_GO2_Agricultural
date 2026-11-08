@@ -1,0 +1,115 @@
+{
+ "model": "qwen2.5vl",
+ "prompt": "verify_defs_first",
+ "frames": 30,
+ "avoid_on_low_items": 9,
+ "low_items": 14,
+ "crops": 28,
+ "objects": 13,
+ "confidence_min": 0.7,
+ "errors": 0,
+ "latency_s": {
+  "median": 0.95,
+  "p90": 1.08,
+  "max": 1.18
+ },
+ "vlm": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 4,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 1
+   },
+   "CAUTION": {
+    "STEP_OVER": 2,
+    "CAUTION": 0,
+    "AVOID": 2,
+    "UNKNOWN": 1
+   },
+   "AVOID": {
+    "STEP_OVER": 1,
+    "CAUTION": 0,
+    "AVOID": 8,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.429,
+  "unsafe_tall_labelled_low": 1,
+  "step_over_when_true_blocked": 1,
+  "unknown": 2,
+  "precision_STEP_OVER": 0.571,
+  "recall_STEP_OVER": 0.286,
+  "precision_CAUTION": null,
+  "recall_CAUTION": 0.0,
+  "precision_AVOID": 0.421,
+  "recall_AVOID": 0.889
+ },
+ "geometry": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 11,
+    "CAUTION": 0,
+    "AVOID": 0,
+    "UNKNOWN": 3
+   },
+   "CAUTION": {
+    "STEP_OVER": 1,
+    "CAUTION": 2,
+    "AVOID": 0,
+    "UNKNOWN": 2
+   },
+   "AVOID": {
+    "STEP_OVER": 0,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.786,
+  "unsafe_tall_labelled_low": 0,
+  "step_over_when_true_blocked": 0,
+  "unknown": 5,
+  "precision_STEP_OVER": 0.917,
+  "recall_STEP_OVER": 0.786,
+  "precision_CAUTION": 1.0,
+  "recall_CAUTION": 0.4,
+  "precision_AVOID": 1.0,
+  "recall_AVOID": 1.0
+ },
+ "final": {
+  "matrix": {
+   "STEP_OVER": {
+    "STEP_OVER": 4,
+    "CAUTION": 3,
+    "AVOID": 7,
+    "UNKNOWN": 0
+   },
+   "CAUTION": {
+    "STEP_OVER": 1,
+    "CAUTION": 2,
+    "AVOID": 1,
+    "UNKNOWN": 1
+   },
+   "AVOID": {
+    "STEP_OVER": 0,
+    "CAUTION": 0,
+    "AVOID": 9,
+    "UNKNOWN": 0
+   }
+  },
+  "n": 28,
+  "accuracy": 0.536,
+  "unsafe_tall_labelled_low": 0,
+  "step_over_when_true_blocked": 0,
+  "unknown": 1,
+  "precision_STEP_OVER": 0.8,
+  "recall_STEP_OVER": 0.286,
+  "precision_CAUTION": 0.4,
+  "recall_CAUTION": 0.4,
+  "precision_AVOID": 0.529,
+  "recall_AVOID": 1.0
+ }
+}

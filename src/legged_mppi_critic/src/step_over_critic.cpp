@@ -9,8 +9,8 @@ void StepOverCritic::initialize()
 {
   auto getParam = parameters_handler_->getParamGetter(name_);
   getParam(cost_weight_, "cost_weight", 0.2f);
-  getParam(step_over_cost_min_, "step_over_cost_min", 30);
-  getParam(step_over_cost_max_, "step_over_cost_max", 60);
+  getParam(step_over_cost_min_, "step_over_cost_min", 38);
+  getParam(step_over_cost_max_, "step_over_cost_max", 42);
   RCLCPP_INFO(
     logger_, "StepOverCritic: reward %.3f per step-over cell, cost band [%d, %d]",
     cost_weight_, step_over_cost_min_, step_over_cost_max_);

@@ -3,7 +3,7 @@
 
 The cluttered arena rebuilt with real objects: scanned household items (Google
 Scanned Objects on Gazebo Fuel), Fuel models, the lab's 3DGEMS furniture, and a
-modelled power strip (Fuel has none). Run ./gazebo/setup_gazebo.sh --items once.
+modelled power strip and laptop (Fuel has neither). Run ./gazebo/setup_gazebo.sh --items once.
 
 Visuals are the real meshes. Collisions are boxes from the measured mesh bounds:
 they are what the feet and trunk touch, and the JSON holds the same boxes as the
@@ -28,7 +28,8 @@ SCANS = "https://fuel.gazebosim.org/1.0/GoogleResearch/models"
 
 # name, class, source, x, y, yaw deg, (sx, sy, height) from the mesh, options
 # source "scan:DIR" is meshes/model.obj, "mesh:DIR/FILE" any other mesh, "model:NAME"
-# is an included 3DGEMS model, "strip" is the modelled power strip.
+# is an included 3DGEMS model, "strip" / "laptop" are modelled here. opt "band" overrides the
+# height band in the truth JSON (items the 0.12 m lift should not claim to clear, and fragile ones).
 ITEMS = [
     # Step over
     ("power_strip_1", "power_strip", "strip", 1.9, 0.75, 90, (0.30, 0.055, 0.04), {}),
@@ -39,9 +40,11 @@ ITEMS = [
     ("pot_1", "plant_pot", "scan:Ecoforms_Plant_Container_B4_Har", 7.6, -0.4, 0, (0.101, 0.101, 0.072), {}),
     ("mug_blue_1", "cup", "scan:" + MUG_B, 6.3, -0.2, 30, (0.166, 0.126, 0.095), {}),
     ("power_strip_2", "power_strip", "strip", 7.0, 0.55, 80, (0.30, 0.055, 0.04), {}),
-    ("mug_white_1", "cup", "scan:" + MUG_W, 6.6, 0.95, 200, (0.131, 0.097, 0.115), {}),
-    ("shoe_1", "shoe", "scan:ASICS_GEL1140V_WhiteRoyalSilver", 8.4, 0.1, 60, (0.106, 0.281, 0.124), {}),
-    ("plastic_cup_1", "cup", "mesh:Plastic_Cup/meshes/plastic_cup.dae", 8.0, -0.9, 0, (0.075, 0.075, 0.13), {"lift": 0.065}),
+    ("mug_white_1", "cup", "scan:" + MUG_W, 6.6, 0.95, 200, (0.131, 0.097, 0.115), {"band": "caution"}),
+    ("shoe_1", "shoe", "scan:ASICS_GEL1140V_WhiteRoyalSilver", 8.4, 0.1, 60, (0.106, 0.281, 0.124), {"band": "caution"}),
+    ("plastic_cup_1", "cup", "mesh:Plastic_Cup/meshes/plastic_cup.dae", 8.0, -0.9, 0, (0.075, 0.075, 0.13), {"lift": 0.065, "band": "caution"}),
+    # Fragile and low: the height band alone says step over; the semantic layer should not.
+    ("laptop_1", "laptop", "laptop", 7.0, -0.05, 0, (0.33, 0.446, 0.06), {"band": "caution", "fragile": True}),
     # Caution
     ("bottle_1", "bottle", "mesh:Water_Bottle/meshes/WaterBottle.glb", 5.0, -1.6, 0, (0.087, 0.087, 0.208), {"roll": 90, "scale": 0.8, "lift": 0.104}),
     # Blocked
@@ -79,6 +82,22 @@ def strip_visuals():
     return "".join(out)
 
 
+def laptop_visuals():
+    """An open laptop with the lid folded back nearly flat, 0.06 m tall: base, keys,
+    touchpad, and a lit screen on the lid. Local frame: base at -y, hinge near y=0."""
+    out = [box_vis("base", "0.33 0.23 0.02", 0.01, (0.30, 0.31, 0.33), y=-0.108),
+           box_vis("keys", "0.29 0.11 0.002", 0.021, (0.07, 0.07, 0.08), y=-0.07),
+           box_vis("pad", "0.10 0.06 0.001", 0.0205, (0.22, 0.23, 0.25), y=-0.175)]
+    pitch = math.asin(0.04 / 0.22)                   # lid end at 0.06 m
+    yc, zc = 0.007 + 0.11 * math.cos(pitch), 0.02 + 0.11 * math.sin(pitch)
+    for name, size, dz, color in (("lid", "0.33 0.22 0.008", 0.0, (0.30, 0.31, 0.33)),
+                                  ("screen", "0.30 0.19 0.001", 0.0045, (0.18, 0.42, 0.78))):
+        out.append(f'<visual name="{name}"><pose>0 {yc:.4f} {zc + dz:.4f} {-pitch:.4f} 0 0</pose><geometry><box>'
+                   f'<size>{size}</size></box></geometry><material><ambient>{color[0]} {color[1]} {color[2]} 1</ambient>'
+                   f'<diffuse>{color[0]} {color[1]} {color[2]} 1</diffuse></material></visual>')
+    return "".join(out)
+
+
 def item_sdf(it):
     name, _cls, src, x, y, yaw, (sx, sy, sz), opt = it
     yaw_r = math.radians(yaw)
@@ -91,6 +110,8 @@ def item_sdf(it):
                 f'<pose>{px:.3f} {py:.3f} 0 0 0 {yaw_r:.4f}</pose></include>\n')
     if kind == "strip":
         visual = strip_visuals()
+    elif kind == "laptop":
+        visual = laptop_visuals()
     else:
         uri = f"model://{ref}/meshes/model.obj" if kind == "scan" else f"model://{ref}"
         scale = opt.get("scale", 1.0)
@@ -139,9 +160,11 @@ def world():
 
 def truth():
     objects = []
-    for name, cls, _src, x, y, yaw, (sx, sy, sz), _opt in ITEMS:
-        objects.append({"name": name, "class": cls, "x": x, "y": y, "z": round(sz / 2, 4),
-                        "yaw": round(math.radians(yaw), 4), "sx": sx, "sy": sy, "sz": sz, "height": sz})
+    for name, cls, _src, x, y, yaw, (sx, sy, sz), opt in ITEMS:
+        o = {"name": name, "class": cls, "x": x, "y": y, "z": round(sz / 2, 4),
+             "yaw": round(math.radians(yaw), 4), "sx": sx, "sy": sy, "sz": sz, "height": sz}
+        o.update({k: opt[k] for k in ("band", "fragile") if k in opt})
+        objects.append(o)
     x0, x1, y0, y1 = ARENA
     walls = [{"name": "wall_north", "x": (x0 + x1) / 2, "y": y1, "sx": x1 - x0, "sy": 0.1},
              {"name": "wall_south", "x": (x0 + x1) / 2, "y": y0, "sx": x1 - x0, "sy": 0.1},

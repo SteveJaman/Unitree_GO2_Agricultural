@@ -92,8 +92,9 @@ local_costmap:
         topic: /lidar3d/obstacle_points
         ground_z: 0.0
         ground_tolerance: 0.02
-        step_over_height_max: 0.15
-        lethal_height_min: 0.25
+        step_over_height_max: 0.12   # real Go2 FootRaiseHeight ceiling (was 0.15)
+        lethal_height_min: 0.22      # was 0.25, proportional
+        min_range: 0.25              # URDF self-filter removes the body; this is the rest
         max_range: 5.0
         step_over_cost: 40
         caution_cost: 200

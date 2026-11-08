@@ -30,7 +30,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-def classify_height(height, step_over_max=0.15, lethal_min=0.25):
+def classify_height(height, step_over_max=0.12, lethal_min=0.22):
     if height <= step_over_max:
         return "step_over"
     return "caution" if height < lethal_min else "blocked"
@@ -141,7 +141,7 @@ class Tracks:
     """World-fixed objects. Same class and close together is the same object;
     a track is published once it has been seen min_obs times."""
 
-    def __init__(self, merge_dist=0.7, step_over_max=0.15, lethal_min=0.25, history=9, min_obs=2):
+    def __init__(self, merge_dist=0.7, step_over_max=0.12, lethal_min=0.22, history=9, min_obs=2):
         self.merge, self.step, self.lethal, self.history, self.min_obs = (
             merge_dist, step_over_max, lethal_min, history, min_obs)
         self.items = []
@@ -236,8 +236,8 @@ def main():
             p("camera_frame", "front_camera")
             p("cloud_history", 15)
             p("floor_z", 0.0)
-            p("step_over_height_max", 0.15)
-            p("lethal_height_min", 0.25)
+            p("step_over_height_max", 0.12)
+            p("lethal_height_min", 0.22)
             p("min_points", 4)
             p("max_range", 6.0)
             p("unknown_range", 3.0)   # a floor-ray position is poor beyond this

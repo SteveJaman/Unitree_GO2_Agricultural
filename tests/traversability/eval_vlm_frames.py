@@ -12,8 +12,9 @@ box with a matching detection in that image is cropped from the detection and se
 Writes to --out: crops/*.png, vlm_eval.csv, vlm_eval.json, vlm_eval.md with
 confusion matrices for the raw VLM label, the LiDAR geometry label and the
 combined label, plus the safety counts:
-  unsafe_tall_labelled_low   true >= LETHAL_MIN labelled STEP_OVER or CAUTION
-  step_over_when_true_blocked  true >= LETHAL_MIN labelled STEP_OVER
+  unsafe_tall_labelled_low   LiDAR-measured, true >= LETHAL_MIN, labelled STEP_OVER or CAUTION
+  step_over_when_true_blocked  LiDAR-measured, true >= LETHAL_MIN, labelled STEP_OVER
+  unmeasured_objects         crops with no LiDAR height (held at CAUTION by design)
 """
 import argparse
 import csv
@@ -29,8 +30,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "nodes"))
 import semantic_labeler as sl  # noqa: E402
 
-STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.15"))
-LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.25"))
+STEP_OVER_MAX = float(os.environ.get("STEP_OVER_MAX", "0.12"))
+LETHAL_MIN = float(os.environ.get("LETHAL_MIN", "0.22"))
 MATCH_M = 0.6
 K = (468.0, 468.0, 320.0, 180.0)
 TRUE = ["STEP_OVER", "CAUTION", "AVOID"]
@@ -59,9 +60,12 @@ def scores(rows, key):
         m[r["true"]][r[key]] += 1
     n = len(rows)
     correct = sum(m[t][t] for t in TRUE)
+    # Unsafe counts LiDAR-measured objects only (unmeasured ones are held at CAUTION by design).
+    meas = [r for r in rows if r.get("measured_height") is not None]
     out = {"matrix": m, "n": n, "accuracy": round(correct / n, 3) if n else None,
-           "unsafe_tall_labelled_low": m["AVOID"]["STEP_OVER"] + m["AVOID"]["CAUTION"],
-           "step_over_when_true_blocked": m["AVOID"]["STEP_OVER"],
+           "unsafe_tall_labelled_low": sum(r["true"] == "AVOID" and r[key] in ("STEP_OVER", "CAUTION") for r in meas),
+           "step_over_when_true_blocked": sum(r["true"] == "AVOID" and r[key] == "STEP_OVER" for r in meas),
+           "unmeasured_objects": n - len(meas),
            "unknown": sum(m[t]["UNKNOWN"] for t in TRUE)}
     for c in TRUE:
         tp = m[c][c]
@@ -90,6 +94,7 @@ def main():
     ap.add_argument("--frames", type=int, default=24, help="frames sampled, spread evenly over all runs")
     ap.add_argument("--url", default="http://172.30.160.1:11434")
     ap.add_argument("--model", default="qwen2.5vl")
+    ap.add_argument("--prompt", default=sl.PROMPT_ID, choices=sorted(sl.PROMPTS))
     ap.add_argument("--timeout", type=float, default=60.0, help="the first call also loads the model")
     ap.add_argument("--confidence-min", type=float, default=0.7)
     a = ap.parse_args()
@@ -129,11 +134,11 @@ def main():
             with open(os.path.join(a.out, "crops", tag + ".png"), "wb") as fh:
                 fh.write(sl.png_bytes(sl.upscale(crop)))
             try:
-                label, conf, reason, lat = sl.ask_ollama(a.url, a.model, crop, b["class"], a.timeout)
+                label, conf, reason, lat = sl.ask_ollama(a.url, a.model, crop, det["class"], det.get("score", 0.0), a.timeout, a.prompt)
             except Exception as ex:  # noqa: BLE001 - recorded, counted as UNKNOWN
                 label, conf, reason, lat = "UNKNOWN", 0.0, f"error: {ex}", None
             geo = sl.geometry_label(b, STEP_OVER_MAX, LETHAL_MIN)
-            final, source = sl.combine(label, conf, geo, a.confidence_min)
+            final, source, _ = sl.combine(label, conf, geo, a.confidence_min)
             vlm_used = label if conf >= a.confidence_min else "UNKNOWN"
             r = {"crop": tag, "object": o["name"], "class": b["class"], "true_height": o["height"],
                  "true": true_label(o), "measured_height": b.get("height"), "vlm_raw": label,
@@ -149,14 +154,17 @@ def main():
         w.writeheader()
         w.writerows(rows)
     lat = [r["latency_s"] for r in rows if r["latency_s"] is not None]
-    summary = {"model": a.model, "frames": len(pick), "crops": len(rows),
+    low = [r for r in rows if r["true"] == "STEP_OVER"]
+    summary = {"model": a.model, "prompt": a.prompt, "frames": len(pick),
+               "avoid_on_low_items": sum(r["vlm_raw"] == "AVOID" for r in low), "low_items": len(low), "crops": len(rows),
                "objects": len({r["object"] for r in rows}), "confidence_min": a.confidence_min,
                "errors": sum(1 for r in rows if r["reason"].startswith("error")),
                "latency_s": {"median": round(float(np.median(lat)), 2), "p90": round(float(np.percentile(lat, 90)), 2),
                              "max": round(max(lat), 2)} if lat else None,
                "vlm": scores(rows, "vlm"), "geometry": scores(rows, "geometry"), "final": scores(rows, "final")}
     json.dump(summary, open(os.path.join(a.out, "vlm_eval.json"), "w"), indent=1)
-    md = [f"# VLM labeller on saved frames ({a.model})", "",
+    md = [f"# VLM labeller on saved frames ({a.model}, prompt {a.prompt})", "",
+          f"AVOID on true step-over crops: {summary['avoid_on_low_items']} of {summary['low_items']}", "",
           f"{summary['frames']} frames, {summary['crops']} crops of {summary['objects']} objects, "
           f"confidence_min {a.confidence_min}, latency {summary['latency_s']}, errors {summary['errors']}", ""]
     md += md_matrix(summary["vlm"], "VLM alone (below confidence_min counts as UNKNOWN)")

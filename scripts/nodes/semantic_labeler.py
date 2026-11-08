@@ -10,10 +10,18 @@ Labels, from least to most severe:
   AVOID      plan around it
   UNKNOWN    no usable answer; contributes no cost
 
-The final label is never less severe than the LiDAR height band says, so the
-VLM can raise a cost (a cable is low but tangles) but never lower one (a
-backpack it calls "soft" is still 0.44 m tall). With no measured height only a
-VLM AVOID is used: nothing confirms that an object the VLM calls low is low.
+Fusion (geometry from LiDAR, meaning from the VLM; never the reverse):
+  * LiDAR measured the height: the band gives cost_geometric (<= 0.12 m
+    STEP_OVER 40, 0.12-0.22 CAUTION 200, >= 0.22 AVOID 254); the VLM label gives
+    cost_semantic; the published label is the more severe of the two. Lethal
+    from the VLM needs both signals: LiDAR says something is there, the VLM
+    says avoid it.
+  * No LiDAR height: any VLM label is published as CAUTION (200), flagged
+    low_confidence; the gait for it is CAREFUL. A single signal never makes a
+    cell lethal, and an unmeasured object is never assumed to be clutter.
+The VLM's own height estimate is not used anywhere. The detector's class and
+score are given to the VLM to verify, not to adopt: it is asked whether they
+match what it sees and to classify independently.
 
 Crops come from the detector's own 2D box for the track (associate()), not from
 projecting the track: an unmeasured track's position is a floor-ray estimate and
@@ -34,24 +42,50 @@ SEVERITY = {"UNKNOWN": -1, "STEP_OVER": 0, "CAUTION": 1, "AVOID": 2}
 GEOMETRY = {"step_over": "STEP_OVER", "caution": "CAUTION", "blocked": "AVOID", "lethal": "AVOID"}
 UNKNOWN_SIZE = 0.3   # footprint assumed for a track whose extent was not measured, m
 
-# The model names the object and estimates its height before it picks a label:
-# asked for the label first (with format=json) qwen2.5vl answered STEP_OVER for
-# every crop, chairs included.
-PROMPT = (
-    "This image is from the front camera of a small quadruped robot dog (legs about 30 cm long) "
-    "walking on an indoor floor. The detector says the object is a '{cls}'. First identify the "
-    "object and estimate its real height above the floor in centimetres. Then choose how the "
-    "robot should treat it:\n"
-    "AVOID if it is taller than 25 cm (furniture such as chairs, tables, shelves, cabinets, bins, "
-    "bags), a person or animal, or must not be touched.\n"
-    "CAUTION if it is 15-25 cm tall, or low but could tangle the feet, roll, tip over, spill or "
-    "break (cables, cups, bottles, shoes).\n"
-    "STEP_OVER only if it is under 15 cm, flat and solid (a mat, a board, a power strip, a book).\n"
-    "UNKNOWN if no object is clearly visible.\n"
-    "Answer with JSON only, in this order: "
-    '{{"object": "what it is", "height_cm": number, '
-    '"label": "AVOID or CAUTION or STEP_OVER or UNKNOWN", "confidence": 0.0-1.0}}'
-)
+# Prompt variants compared offline on 30 saved frames (eval_vlm_frames.py --prompt);
+# PROMPT_ID is the one the node ships. {cls} and {score} are the detector's.
+#   verify_oneword      the verification prompt as specified: detector class as a claim
+#                       to check, one-word answer (no confidence: scored 1.0)
+#   verify_defs_first   label definitions first, detector class after, no "say so if
+#                       wrong" nudge; JSON with a confidence
+#   object_first        no detector class; name the object, then label (JSON). Given
+#                       the class as plain context the VLM adopted it ("person" on a shoe).
+# The JSON variants name the object before the label: label-first, qwen2.5vl
+# answered STEP_OVER for every crop.
+_DEFS = (
+    "STEP_OVER: safe clutter (cable, mat, shoe, low object), safe to step over with a 12 cm foot lift.\n"
+    "AVOID: tall barrier, liquid, or fragile object; do not touch.\n"
+    "CAUTION: uncertain, potentially fragile, or slow-and-careful only.\n")
+PROMPTS = {
+    "verify_oneword": (
+        "Another detector identified this as '{cls}' with confidence {score:.2f}. Looking at the image, "
+        "does that match what you see? Classify independently as STEP_OVER (safe clutter: cable, mat, "
+        "shoe, low object; safe to step over with 12 cm foot lift), AVOID (tall barrier, liquid, "
+        "fragile object; do not touch), or CAUTION (uncertain, potentially fragile, or "
+        "slow-and-careful only). If the detector's suggestion is wrong, say so. Answer with one word."),
+    "verify_defs_first": (
+        "This image is from the front camera of a small quadruped robot dog walking on an indoor floor. "
+        "Labels:\n" + _DEFS +
+        "A detector suggested '{cls}' (confidence {score:.2f}); use it only if it matches what you see. "
+        "Answer with JSON only, in this order: "
+        '{{"object": "what you see", "label": "STEP_OVER or AVOID or CAUTION", "confidence": 0.0-1.0}}'),
+    "object_first": (
+        "This image is from the front camera of a small quadruped robot dog walking on an indoor "
+        "floor. Its feet can lift about 12 cm. What is the object in the image? First identify it, "
+        "then choose how the robot should treat it:\n"
+        "AVOID if it is taller than about 22 cm (furniture such as chairs, tables, shelves, cabinets, "
+        "bins, bags), a person or animal, or valuable or fragile and must not be stepped on "
+        "(electronics, glass).\n"
+        "CAUTION if it is low but could tangle the feet, roll, tip over, spill or break "
+        "(cables, cups, bottles, shoes).\n"
+        "STEP_OVER only if it is low (under 12 cm), flat and solid (a mat, a board, a power strip, a book).\n"
+        "UNKNOWN if no object is clearly visible.\n"
+        "Answer with JSON only, in this order: "
+        '{{"object": "what it is", "label": "AVOID or CAUTION or STEP_OVER or UNKNOWN", '
+        '"confidence": 0.0-1.0}}'),
+}
+PROMPT_ID = "verify_oneword"   # locked by the offline comparison (traversability_sim.md, "VLM prompt selection")
+PROMPT = PROMPTS[PROMPT_ID]
 
 
 def rotation_matrix(q):
@@ -118,40 +152,35 @@ def upscale(rgb, min_side=224):
     return rgb if k <= 1 else np.repeat(np.repeat(rgb, k, axis=0), k, axis=1)
 
 
-def parse_answer(text, step_over_max=0.15, lethal_min=0.25):
+def parse_answer(text):
     """(label, confidence, reason) from the model's text; UNKNOWN, 0.0 if unusable.
-
-    The label is raised to the band of the model's own height estimate when the
-    two disagree (e.g. "side table, 20 cm, STEP_OVER" becomes CAUTION).
-    """
+    A bare one-word answer (verify_oneword) has no confidence and is scored 1.0."""
+    word = text.strip().strip(".!\"'").upper().replace(" ", "_").replace("-", "_")
+    if word in LABELS:
+        return word, 1.0, "one-word answer"
     try:
         m = re.search(r"\{.*\}", text, re.S)
         d = json.loads(m.group(0) if m else text)
         label = str(d.get("label", "")).strip().upper().replace(" ", "_").replace("-", "_")
         conf = max(0.0, min(1.0, float(d.get("confidence", 0.0))))
-        reason = f"{d.get('object', '?')}, {d.get('height_cm', '?')} cm"
-        if label not in LABELS:
-            raise ValueError(label)
-        try:
-            h = float(d.get("height_cm")) / 100.0
-            own = geometry_label({"height": h}, step_over_max, lethal_min)
-            if label != "UNKNOWN" and SEVERITY[own] > SEVERITY[label]:
-                reason += f", {label} raised to {own} by its own height"
-                label = own
-        except (TypeError, ValueError):
-            pass
-        return label, conf, reason
+        if label in LABELS:
+            reason = str(d.get("object", "?"))[:80]
+            if d.get("detector_correct") is False:
+                reason += " (detector wrong)"
+            return label, conf, reason
     except (ValueError, AttributeError, TypeError):
         pass
     return "UNKNOWN", 0.0, "unparseable: " + text[:120]
 
 
-def ask_ollama(url, model, rgb, cls, timeout_s):
+def ask_ollama(url, model, rgb, cls, score, timeout_s, prompt_id=None):
     """One crop to Ollama /api/chat. Returns (label, confidence, reason, latency_s)."""
-    body = {"model": model, "stream": False, "format": "json", "keep_alive": "30m",
-            "options": {"temperature": 0},
-            "messages": [{"role": "user", "content": PROMPT.format(cls=cls),
+    pid = prompt_id or PROMPT_ID
+    body = {"model": model, "stream": False, "keep_alive": "30m", "options": {"temperature": 0},
+            "messages": [{"role": "user", "content": PROMPTS[pid].format(cls=cls, score=float(score)),
                           "images": [base64.b64encode(png_bytes(upscale(rgb))).decode()]}]}
+    if pid != "verify_oneword":
+        body["format"] = "json"
     req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     t0 = time.time()
@@ -160,7 +189,7 @@ def ask_ollama(url, model, rgb, cls, timeout_s):
     return (*parse_answer(text), time.time() - t0)
 
 
-def geometry_label(box, step_over_max=0.15, lethal_min=0.25):
+def geometry_label(box, step_over_max=0.12, lethal_min=0.22):
     h = box.get("height")
     if h is None:
         return "UNKNOWN"
@@ -170,15 +199,16 @@ def geometry_label(box, step_over_max=0.15, lethal_min=0.25):
 
 
 def combine(vlm_label, vlm_conf, geo_label, confidence_min):
-    """Final label and where it came from. See the module docstring for the rule."""
+    """(label, source, low_confidence). See the module docstring for the rule."""
     vlm = vlm_label if vlm_label and vlm_conf >= confidence_min else "UNKNOWN"
-    if geo_label == "UNKNOWN" and vlm != "AVOID":
-        vlm = "UNKNOWN"
-    if SEVERITY[vlm] > SEVERITY[geo_label]:
-        return vlm, "vlm"
     if geo_label == "UNKNOWN":
-        return "UNKNOWN", "none"
-    return geo_label, ("geometry" if SEVERITY[geo_label] > SEVERITY[vlm] else "agree")
+        if vlm == "UNKNOWN":
+            return "UNKNOWN", "none", True
+        # Unmeasured: any VLM label is CAUTION. Lethal needs LiDAR as well.
+        return "CAUTION", "vlm_unmeasured", True
+    if SEVERITY[vlm] > SEVERITY[geo_label]:
+        return vlm, "vlm", False
+    return geo_label, ("geometry" if SEVERITY[geo_label] > SEVERITY[vlm] else "agree"), False
 
 
 def radius(box, margin=0.05):

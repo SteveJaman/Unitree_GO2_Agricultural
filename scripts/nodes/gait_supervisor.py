@@ -7,8 +7,8 @@ commands in dry_run mode.
 
 Gait modes:
   NORMAL:    default trot gait for free terrain
-  HIGH_STEP: raised foot clearance for step_over obstacles (h < 0.15m)
-  CAREFUL:   slow deliberate gait for caution terrain
+  HIGH_STEP: raised foot clearance, objects the 0.12 m lift clears with foot_margin (h <= 0.10 m)
+  CAREFUL:   slow deliberate gait, 0.10 m < h < lethal_height, or height not measured
   STOP:      halt for lethal obstacles (planner should reroute)
 
 When 3D object boxes are available (object_box_fusion.py) the gait comes from
@@ -18,7 +18,9 @@ with backstop_enabled the gait is never lower than the costmap's, so an object
 the boxes missed still raises the feet.
 
 With use_semantic, a track's label from vlm_heuristic_node.py can raise the gait
-(CAUTION: at least CAREFUL, AVOID: STOP) but never lower it.
+(CAUTION: at least CAREFUL, AVOID: STOP; low_confidence, i.e. no LiDAR height:
+at least CAREFUL) but never lower it. /gait/status has backstop_raised when the
+costmap backstop lifted the gait above the boxes' choice.
 
 Backends: "gazebo" publishes /gait/command, which the sim bridge turns into foot
 lift. "sport_client" (the robot) is Phase 2 hardware work and raises
@@ -92,7 +94,7 @@ def worst(*gaits):
 def gait_for_height(height, foot_height, margin, lethal_height):
     if height is None:      # seen, but not measured: never treat it as low
         return "CAREFUL"
-    if height + margin <= foot_height:
+    if height + margin <= foot_height + 1e-6:   # 0.10 + 0.02 is 0.12000000000000001
         return "HIGH_STEP"
     return "CAREFUL" if height < lethal_height else "STOP"
 
@@ -179,7 +181,8 @@ class GaitSupervisor(Node):
         self.boxes = json.loads(msg.data)["boxes"]
 
     def _semantic_cb(self, msg):
-        self.semantic = {o["track_id"]: o["label"] for o in json.loads(msg.data).get("objects", [])}
+        self.semantic = {o["track_id"]: (o["label"], bool(o.get("low_confidence")))
+                         for o in json.loads(msg.data).get("objects", [])}
 
     def _get_yaw(self):
         if self.odom is None:
@@ -235,24 +238,34 @@ class GaitSupervisor(Node):
 
         desired = costmap_gait
         hits, box_gait, semantic_gait = [], None, None
-        if self.boxes and self.odom is not None:
+        # With odometry the gait comes from the boxes (NORMAL when none are ahead,
+        # including before the first box); the costmap only enters as the backstop.
+        if self.odom is not None:
             p = self.odom.pose.pose.position
             hits = objects_ahead(self.boxes, p.x, p.y, self._get_yaw(),
-                                 self.scan_dist, self.scan_width)
+                                 self.scan_dist, self.scan_width) if self.boxes else []
             desired = "NORMAL"
             if hits:
                 gaits = [gait_for_height(b["height"] if b["traverse"] != "unknown" else None,
                                          GAITS["HIGH_STEP"]["foot_height"],
                                          self.foot_margin, self.lethal_height) for b in hits]
                 desired = worst(*gaits)
-                labels = [self.semantic.get(b.get("id")) for b in hits] if self.use_semantic else []
-                sem = [SEMANTIC_GAIT[lb] for lb in labels if lb in SEMANTIC_GAIT]
+                sem = []
+                for b in hits if self.use_semantic else []:
+                    label, low = self.semantic.get(b.get("id"), (None, False))
+                    if label in SEMANTIC_GAIT:
+                        sem.append(SEMANTIC_GAIT[label])
+                    if low:   # no LiDAR height for it: never less than CAREFUL
+                        sem.append("CAREFUL")
                 if sem:
                     semantic_gait = worst(*sem)
                     desired = worst(desired, semantic_gait)
             box_gait = desired
             if self.backstop:
                 desired = worst(desired, costmap_gait)
+        # The backstop raised the gait above what the boxes (and labels) asked for:
+        # the costmap saw something ahead that the camera path did not.
+        backstop_raised = box_gait is not None and desired != box_gait
 
         if desired != self.current_gait:
             self.current_gait = desired
@@ -266,7 +279,8 @@ class GaitSupervisor(Node):
         self.cmd_pub.publish(String(data=desired))
         self.status_pub.publish(String(data=json.dumps({
             "gait": desired, "costmap_gait": costmap_gait, "box_gait": box_gait,
-            "semantic_gait": semantic_gait, "backstop": self.backstop, "cost": max_cost,
+            "semantic_gait": semantic_gait, "backstop": self.backstop,
+            "backstop_raised": backstop_raised, "cost": max_cost,
             "objects": [b["class"] for b in hits],
             "foot": GAITS[desired]["foot_height"],
             "speed_pct": GAITS[desired]["speed_scale"] * 100})))
