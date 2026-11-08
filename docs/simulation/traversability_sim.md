@@ -781,6 +781,44 @@ yet reliable enough for safety-critical use. Improving VLM accuracy (larger
 model, better crops, or a fine-tuned classifier) is future work and does not
 block the hardware trial, which tests the height-band and backstop stack.
 
+### Backstop measurement (Phase 3)
+
+The gait comes from the fused 3D boxes; with `backstop_enabled` it is never lower
+than what the local costmap ahead calls for, so an object the camera missed
+still raises the feet. Measured on the fixed route (about ten low items),
+`traversability` with the backstop off and on, three pairs in alternating order.
+A gait sample "needs care" when the true objects in the 1.5 m corridor call for
+anything but `NORMAL`. A `NORMAL` sample there is split by why:
+
+- **Costmap saw it** (`costmap_gait` not `NORMAL`) and the gait stayed `NORMAL`:
+  a backstop failure. Target 0 with the backstop on.
+- **Unseen** by both the costmap and the camera: a perception gap, reported only.
+
+Data: [results/phase3_backstop/](results/phase3_backstop/trials.csv).
+
+| Trial | Backstop | Goals | Care-needed samples | NORMAL, costmap saw it | NORMAL, unseen | Backstop raised the gait |
+|---|---|---|---|---|---|---|
+| 1 | off | 3/3 | 453 | 77 | 9 | — |
+| 1 | on | 3/3 | 504 | **0** | 3 | 276 |
+| 2 | off | 0/3 | 865 | 0 | 0 | — |
+| 2 | on | 3/3 | 460 | **0** | 7 | 232 |
+| 3 | off | 3/3 | 504 | 140 | 3 | — |
+| 3 | on | 3/3 | 501 | **0** | 4 | 217 |
+| **Total** | **off** | 6/9 | 1822 | **217 (11.9 %)** | 12 (0.7 %) | — |
+| **Total** | **on** | 9/9 | 1465 | **0 (0 %)** | 14 (1.0 %) | 725 |
+
+The backstop is validated: with it on, the gait never stayed `NORMAL` while the
+costmap had something in the corridor (0 of 1465 samples), against 217 of 1822
+with it off. What remains with it on (14 samples, 1 %) is objects neither sensor
+saw, a perception limitation rather than a backstop failure: the keyboard
+(0.024 m) is 4 mm above the 0.02 m ground tolerance, and the book (0.051 m) is
+rarely resolved. Off-trial 2 stalled by the bookshelf ("Starting point in lethal
+space!" ×14, the planner limitation seen before; the gait is `dry_run` and does
+not steer), so it adds no costmap-saw samples. An earlier seeded check (seed
+1234, one pair) is not comparable: with the backstop off the path never put an
+object in the corridor, and all 33 `NORMAL` samples with it on were the book
+and keyboard, unseen.
+
 ### Known limitations
 
 - Blue mug (0.095 m) was cleared on 0 of 3 HIGH_STEP passes despite 12 cm

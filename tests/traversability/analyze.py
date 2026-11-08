@@ -301,16 +301,27 @@ def truth_gait(pose, objects):
 
 def backstop_metrics(t, objects):
     """Gait samples where care was right (true gait not NORMAL) but the published gait
-    was NORMAL; and how often the costmap backstop lifted the gait."""
-    need = normal = raised = 0
+    was NORMAL, split by why:
+      normal_costmap_saw   the costmap had something in the corridor (costmap_gait not
+                           NORMAL) and the gait still stayed NORMAL: a backstop failure
+                           when the backstop is on (target 0)
+      normal_unseen        neither the costmap nor a fused box saw it: a perception gap
+    and how often the costmap backstop lifted the gait."""
+    need = normal = saw = unseen = raised = 0
     for ts, g in gait_series(t):
         if g.get("backstop_raised"):
             raised += 1
         if truth_gait(pose_at(t["traj"], ts), objects) != "NORMAL":
             need += 1
-            normal += g["gait"] == "NORMAL"
+            if g["gait"] == "NORMAL":
+                normal += 1
+                if g.get("costmap_gait", "NORMAL") != "NORMAL":
+                    saw += 1
+                else:
+                    unseen += 1
     return {"care_needed_samples": need, "normal_when_tall_ahead_count": normal,
             "normal_when_tall_ahead_rate": round(normal / need, 3) if need else None,
+            "normal_costmap_saw": saw, "normal_unseen": unseen,
             "backstop_raised_samples": raised}
 
 
@@ -369,7 +380,8 @@ def trial_metrics(t, objects, tall, grid):
 
 BAND_KEYS = [f"{n}_cells_entered" for n in BandGrid.NAMES.values()] + \
             [f"time_on_{n}_s" for n in BandGrid.NAMES.values()] + \
-            ["normal_when_tall_ahead_rate", "normal_when_tall_ahead_count", "backstop_raised_samples"]
+            ["normal_when_tall_ahead_rate", "normal_when_tall_ahead_count", "normal_costmap_saw",
+             "normal_unseen", "backstop_raised_samples"]
 
 
 def band_summary(ms, modes):
@@ -710,6 +722,100 @@ def summary_stats(ms):
     return rows
 
 
+def two_prop(k1, n1, k2, n2):
+    """Two-proportion z-test with continuity correction, Cohen's h, 95% CI of p2 - p1."""
+    if not n1 or not n2:
+        return None
+    p1, p2, pool = k1 / n1, k2 / n2, (k1 + k2) / (n1 + n2)
+    se = math.sqrt(pool * (1 - pool) * (1 / n1 + 1 / n2))
+    cc = 0.5 * (1 / n1 + 1 / n2)
+    z = 0.0 if se == 0 else max(0.0, abs(p2 - p1) - cc) / se
+    se_d = math.sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2)
+    h = 2 * math.asin(math.sqrt(p2)) - 2 * math.asin(math.sqrt(p1))
+    return {"p": 2 * (1 - stats.norm.cdf(z)), "effect": h, "ci": (p2 - p1 - 1.96 * se_d, p2 - p1 + 1.96 * se_d)}
+
+
+def mann_whitney(a, b, seed=0):
+    """Mann-Whitney U (two-sided), effect size r = |z| / sqrt(N), bootstrap 95% CI of the median difference."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if len(a) < 2 or len(b) < 2 or (np.ptp(np.concatenate([a, b])) == 0):
+        return None
+    u = stats.mannwhitneyu(a, b, alternative="two-sided")
+    n1, n2 = len(a), len(b)
+    z = (u.statistic - n1 * n2 / 2) / math.sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
+    rng = np.random.default_rng(seed)
+    d = [np.median(rng.choice(b, n2)) - np.median(rng.choice(a, n1)) for _ in range(2000)]
+    return {"p": float(u.pvalue), "effect": abs(z) / math.sqrt(n1 + n2),
+            "ci": (float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5)))}
+
+
+def significant(t, kind):
+    """p < 0.05 and an effect above the small threshold (Cohen's h > 0.2, r > 0.1)."""
+    return t is not None and t["p"] < 0.05 and abs(t["effect"]) > (0.2 if kind == "h" else 0.1)
+
+
+def safety_stats(ms, legs, passes, sem_unsafe):
+    """Per-mode safety table and pairwise tests (every mode against the first, and
+    traversability vs traversability_semantic). Efficiency rows are for completeness."""
+    by = {m: [x for x in ms if x["mode"] == m] for m in MODES}
+    per_m = {m: [x["foot_strikes"] / max(x["walked_m"], 1e-6) for x in by[m]] for m in MODES}
+    clear = {m: [r for r in passes if r["mode"] == m and r["height"] <= 0.10 + 1e-9] for m in MODES}
+    goals = {m: [l for l in legs if l["mode"] == m] for m in MODES}
+    med = lambda v: "" if not len(v) else f"{np.median(v):.2f} [{np.percentile(v, 25):.2f}–{np.percentile(v, 75):.2f}]"  # noqa: E731
+    rows = []
+
+    def row(name, fn):
+        r = {"Metric": name}
+        for m in MODES:
+            r[f"`{m}`"] = fn(m)
+        rows.append(r)
+    row("Unsafe published labels, LiDAR-measured (semantic log)",
+        lambda m: str(sem_unsafe.get(m)) if m in sem_unsafe else "n/a (no semantic layer)")
+    row("Foot strikes per metre walked, median [IQR]", lambda m: med(per_m[m]))
+    row("Foot strikes on step-over items, median [IQR]", lambda m: med([x["foot_strikes_low"] for x in by[m]]))
+    row("Trunk hits, median [IQR]", lambda m: med([x["body_hits"] for x in by[m]]))
+    row("Backstop raised the gait (samples), median [IQR]", lambda m: med([x["backstop_raised_samples"] for x in by[m]]))
+    row("Foot clearance on items ≤ 0.10 m (passes cleared)",
+        lambda m: f"{sum(r['cleared'] for r in clear[m])}/{len(clear[m])}" if clear[m] else "no passes")
+    row("NORMAL gait when care was needed (rate), median [IQR]",
+        lambda m: med([x["normal_when_tall_ahead_rate"] for x in by[m] if x["normal_when_tall_ahead_rate"] is not None]))
+    row("NORMAL while the costmap saw it (backstop failure; target 0 with backstop on), total samples",
+        lambda m: f"{sum(x['normal_costmap_saw'] for x in by[m])} of {sum(x['care_needed_samples'] for x in by[m])}")
+    row("NORMAL, unseen by costmap and camera (perception gap), total samples",
+        lambda m: f"{sum(x['normal_unseen'] for x in by[m])} of {sum(x['care_needed_samples'] for x in by[m])}")
+    row("RPP collision aborts, median [IQR] (known limitation, not a failure)",
+        lambda m: med([x["collision_aborts"] for x in by[m]]))
+    row("Goals reached (completeness)", lambda m: f"{sum(l['result'] == 'reached' for l in goals[m])}/{len(goals[m])}")
+    row("Path walked per trial, m, median [IQR] (completeness)", lambda m: med([x["walked_m"] for x in by[m]]))
+
+    pairs = [(MODES[0], m) for m in MODES[1:]]
+    if "traversability" in MODES and "traversability_semantic" in MODES:
+        pairs.append(("traversability", "traversability_semantic"))
+    tests = []
+    for a, b in pairs:
+        ka, na = sum(l["result"] == "reached" for l in goals[a]), len(goals[a])
+        kb, nb = sum(l["result"] == "reached" for l in goals[b]), len(goals[b])
+        ca, cb = clear[a], clear[b]
+        for name, t, kind in (
+                ("Goals reached (per leg)", two_prop(ka, na, kb, nb), "h"),
+                ("Foot clearance ≤ 0.10 m (per pass)", two_prop(sum(r["cleared"] for r in ca), len(ca),
+                                                                sum(r["cleared"] for r in cb), len(cb)), "h"),
+                ("Foot strikes per metre", mann_whitney(per_m[a], per_m[b]), "r"),
+                ("Backstop samples", mann_whitney([x["backstop_raised_samples"] for x in by[a]],
+                                                  [x["backstop_raised_samples"] for x in by[b]]), "r"),
+                ("Path walked (m)", mann_whitney([x["walked_m"] for x in by[a]], [x["walked_m"] for x in by[b]]), "r"),
+                ("Step-over cells entered", mann_whitney([x["step_over_cells_entered"] for x in by[a]],
+                                                         [x["step_over_cells_entered"] for x in by[b]]), "r")):
+            tests.append({"Comparison": f"`{b}` vs `{a}`", "Metric": name,
+                          "Test": "two-proportion z (cc)" if kind == "h" else "Mann-Whitney U",
+                          "p": "" if t is None else f"{t['p']:.3f}",
+                          "Effect": "" if t is None else (f"h = {t['effect']:+.2f}" if kind == "h"
+                                                          else f"r = {t['effect']:.2f}"),
+                          "95% CI of difference": "" if t is None else f"{t['ci'][0]:+.2f} to {t['ci'][1]:+.2f}",
+                          "Significant": "n/a (no variance or data)" if t is None else ("yes" if significant(t, kind) else "no")})
+    return rows, tests
+
+
 def main():
     res, out, world = sys.argv[1:4]
     os.makedirs(os.path.join(out, "data"), exist_ok=True)
@@ -803,6 +909,19 @@ def main():
     goals = [(5, 0, "goal 1"), (10, 0, "goal 2"), (0, 0, "start / goal 3")]
     passes = [r for t in trials for r in foot_passes(t, [o for o in objects if object_band(o) != "blocked"])]
     write_csv(os.path.join(out, "data", "foot_passes.csv"), passes)
+    sem_unsafe = {}
+    sem_file = os.path.join(out, "semantic_summary.json")
+    if os.path.exists(sem_file):
+        for m in MODES:
+            if "semantic" in m:
+                sem_unsafe[m] = json.load(open(sem_file)).get("unsafe_tall_labelled_low")
+    srows, stests = safety_stats(ms, legs, passes, sem_unsafe)
+    with open(os.path.join(out, "safety.md"), "w") as f:
+        f.write("Safety metrics per mode (medians over trials, [IQR]). Navigation efficiency is not the "
+                "metric of interest; goals and path are for completeness.\n\n" + md_table(srows) + "\n")
+        f.write("Pairwise tests. Significant only with p < 0.05 and an effect above the small threshold "
+                "(Cohen's h > 0.2 for proportions, r > 0.1 for Mann-Whitney).\n\n" + md_table(stests) + "\n")
+    write_csv(os.path.join(out, "data", "safety_tests.csv"), stests)
     fig_foot_passes(out, passes, ms)
     fig_floorplan(out, objects, walls, goals)
     fig_trajectories(out, trials, objects, walls)
