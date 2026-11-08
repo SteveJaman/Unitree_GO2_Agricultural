@@ -46,9 +46,13 @@ bg ros2 run go2_nav2 go2_odom_tf --ros-args -r __node:=lidar3d_body_odom \
 
 bg ros2 run nav2_planner planner_server --ros-args --params-file "$T/planner.yaml" \
     > "$OUT/planner.log" 2>&1
-bg ros2 run nav2_controller controller_server --ros-args \
-    --params-file "$T/controller_${MODE}.yaml" -r cmd_vel:=cmd_vel_nav \
-    > "$OUT/controller.log" 2>&1
+# CONTROLLER_EXTERNAL=1: controller_server runs in another container (MPPI modes,
+# started by run_all.sh); the lifecycle manager below still manages it over DDS.
+if [ "${CONTROLLER_EXTERNAL:-0}" != 1 ]; then
+    bg ros2 run nav2_controller controller_server --ros-args \
+        --params-file "$T/controller_${MODE}.yaml" -r cmd_vel:=cmd_vel_nav \
+        > "$OUT/controller.log" 2>&1
+fi
 bg ros2 run nav2_velocity_smoother velocity_smoother --ros-args \
     -r cmd_vel:=cmd_vel_nav -r cmd_vel_smoothed:=cmd_vel \
     -p smoothing_frequency:=20.0 -p scale_velocities:=true -p feedback:=OPEN_LOOP \

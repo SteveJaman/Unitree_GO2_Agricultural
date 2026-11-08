@@ -1,0 +1,9 @@
+<library path="legged_mppi_critic">
+  <class type="mppi::critics::StepOverCritic" base_class_type="mppi::critics::CriticFunction">
+    <description>
+      Rewards MPPI trajectories that cross step-over cells (HeightBandLayer step-over cost),
+      so a legged robot walks over low items instead of detouring. Caution and lethal cells
+      are left to the existing critics.
+    </description>
+  </class>
+</library>

@@ -5,7 +5,10 @@
 #   tests/traversability/run_all.sh RESULTS_DIR "1 2 3 4 5"
 # Environment:
 #   MODES="baseline traversability"  modes, alternated within each run number;
-#                 traversability_semantic adds the VLM labeller and SemanticCostmapLayer
+#                 traversability_semantic adds the VLM labeller and SemanticCostmapLayer;
+#                 *_mppi* modes run controller_server in the go2-3d image (MPPI and
+#                 legged_mppi_critic, built in $MPPI_WS) instead of go2-lidar3d
+#   MPPI_WS=$HOME/files/ws_mppi   colcon workspace built in go2-3d:local
 #   SEED=1234     random spawn and goals (route.py); run i uses seed SEED + i - 1.
 #                 Unset: the fixed (0,0) -> (5,0) -> (10,0) -> (0,0) sequence
 #   TIMEOUT=120   seconds per leg
@@ -45,6 +48,18 @@ yolo_up() {
         go2-3d:local -c 'source /opt/ros/humble/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///cyclonedds.xml ROS_DOMAIN_ID=64; exec python3 /nodes/yolo_json_node.py' >/dev/null
 }
 
+# MPPI controller_server in go2-3d (MPPI is not installed in go2-lidar3d).
+mppi_up() {
+    docker rm -f go2-mppi >/dev/null 2>&1
+    docker run -d --name go2-mppi --network host --entrypoint bash \
+        -v "${MPPI_WS:-$HOME/files/ws_mppi}:/ws_mppi:ro" -v "$HERE:/trav:ro" \
+        -v "$HOME/files/go2-nav2-wifi/ws/log/3d/cyclonedds.xml:/cyclonedds.xml:ro" \
+        go2-3d:local -c "source /opt/ros/humble/setup.bash; source /ws_mppi/install/setup.bash; \
+            export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI=file:///cyclonedds.xml ROS_DOMAIN_ID=64; \
+            exec ros2 run nav2_controller controller_server --ros-args \
+            --params-file /trav/controller_$1.yaml -r cmd_vel:=cmd_vel_nav" >/dev/null
+}
+
 sim_time() {
     docker exec go2-sim bash -c "$GZ; timeout 3 gz topic -e -n 1 -t /stats" 2>/dev/null \
         | awk '/^sim_time/{f=1} f&&/ sec:/{s=$2} f&&/nsec:/{print s+$2/1e9; exit}'
@@ -67,16 +82,22 @@ trial() {
         --req 'name: \"go2\", position: {x: $x, y: $y, z: 0.2984}, orientation: {z: $qz, w: $qw}'" >/dev/null
     sleep 2
     case "$mode" in traversability*) yolo_up; sleep 12 ;; *) docker rm -f go2-yolo >/dev/null 2>&1 ;; esac
+    local ext=0
+    case "$mode" in *mppi*) mppi_up "$mode"; ext=1 ;; esac
     docker exec go2-sim rm -f /tmp/contacts.jsonl /tmp/contact_monitor.pid
     docker exec -d go2-sim bash -c "echo \$\$ > /tmp/contact_monitor.pid; $GZ; exec python3 /sim/sim/contact_monitor.py --out /tmp/contacts.jsonl --topics \$(cat /tmp/sim-gen/contact_topics.txt)"
     docker exec go2-lidar3d rm -rf /tmp/trav_out/$name
     local s0 w0 s1 w1
     s0="$(sim_time)"; w0="$(date +%s.%N)"
-    timeout 700 docker exec go2-lidar3d bash /tmp/trav/run_trial.sh "$mode" /tmp/trav_out/$name \
+    timeout 700 docker exec -e CONTROLLER_EXTERNAL=$ext go2-lidar3d bash /tmp/trav/run_trial.sh "$mode" /tmp/trav_out/$name \
         --timeout "$TIMEOUT" "${extra[@]}" 2>&1 | tail -1 | cut -c1-200
     s1="$(sim_time)"; w1="$(date +%s.%N)"
     docker exec go2-sim bash -c 'kill $(cat /tmp/contact_monitor.pid) 2>/dev/null'
     docker rm -f go2-yolo >/dev/null 2>&1
+    if [ "$ext" = 1 ]; then
+        docker logs go2-mppi > "$dir/controller_mppi.log" 2>&1
+        docker rm -f go2-mppi >/dev/null 2>&1
+    fi
     docker cp go2-lidar3d:/tmp/trav_out/$name/. "$dir/" >/dev/null
     docker cp go2-sim:/tmp/contacts.jsonl "$dir/contacts.jsonl" 2>/dev/null || : > "$dir/contacts.jsonl"
     awk -v a="$s0" -v b="$s1" -v c="$w0" -v d="$w1" 'BEGIN{printf "%.3f\n",(b-a)/(d-c)}' > "$dir/rtf.txt"

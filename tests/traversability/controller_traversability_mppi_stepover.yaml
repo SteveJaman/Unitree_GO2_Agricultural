@@ -1,0 +1,105 @@
+# MPPI with legged_mppi_critic/StepOverCritic: rewards trajectories crossing step-over cells.
+# controller_server runs in the go2-3d image (MPPI is not in go2-lidar3d); see run_all.sh.
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    odom_topic: /lidar3d/body_odom
+    controller_frequency: 10.0
+    transform_tolerance: 0.3
+    failure_tolerance: 0.0
+    min_x_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.01
+    min_theta_velocity_threshold: 0.02
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.08
+      movement_time_allowance: 35.0
+    general_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 3.14
+      stateful: false
+    FollowPath:
+      plugin: nav2_mppi_controller::MPPIController
+      time_steps: 30
+      model_dt: 0.1   # must equal the controller period (10 Hz)
+      batch_size: 1000
+      iteration_count: 1
+      vx_std: 0.2
+      vy_std: 0.0
+      wz_std: 0.4
+      vx_max: 0.30
+      vx_min: -0.10
+      vy_max: 0.0
+      wz_max: 0.70
+      temperature: 0.3
+      gamma: 0.015
+      prune_distance: 1.7
+      transform_tolerance: 0.3
+      motion_model: DiffDrive
+      reset_period: 1.0
+      regenerate_noises: false
+      visualize: false
+      critics: [ConstraintCritic, CostCritic, GoalCritic, GoalAngleCritic, PathAlignCritic, PathFollowCritic, PathAngleCritic, PreferForwardCritic, StepOverCritic]
+      ConstraintCritic: {enabled: true, cost_power: 1, cost_weight: 4.0}
+      CostCritic: {enabled: true, cost_power: 1, cost_weight: 3.81, critical_cost: 300.0, consider_footprint: true, collision_cost: 1000000.0, near_goal_distance: 1.0, trajectory_point_step: 2}
+      GoalCritic: {enabled: true, cost_power: 1, cost_weight: 5.0, threshold_to_consider: 1.4}
+      GoalAngleCritic: {enabled: true, cost_power: 1, cost_weight: 3.0, threshold_to_consider: 0.5}
+      PathAlignCritic: {enabled: true, cost_power: 1, cost_weight: 14.0, max_path_occupancy_ratio: 0.05, trajectory_point_step: 4, threshold_to_consider: 0.5, offset_from_furthest: 20, use_path_orientations: false}
+      PathFollowCritic: {enabled: true, cost_power: 1, cost_weight: 5.0, offset_from_furthest: 5, threshold_to_consider: 1.4}
+      PathAngleCritic: {enabled: true, cost_power: 1, cost_weight: 2.0, offset_from_furthest: 4, threshold_to_consider: 0.5, max_angle_to_furthest: 1.0, mode: 0}
+      PreferForwardCritic: {enabled: true, cost_power: 1, cost_weight: 5.0, threshold_to_consider: 0.5}
+      StepOverCritic: {enabled: true, cost_weight: 0.2, step_over_cost_min: 30, step_over_cost_max: 60}
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: lidar3d_map
+      robot_base_frame: base_link
+      transform_tolerance: 0.3
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      track_unknown_space: false
+      footprint: "[[0.360,0.200],[0.360,-0.200],[-0.450,-0.200],[-0.450,0.200]]"
+      footprint_padding: 0.03
+      plugins: [obstacle_layer, height_band_layer, inflation_layer]
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        observation_sources: lidar
+        lidar:
+          topic: /lidar3d/obstacle_points
+          sensor_frame: lidar3d_sensor
+          data_type: PointCloud2
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.15
+          max_obstacle_height: 1.6
+          obstacle_min_range: 0.35
+          obstacle_max_range: 12.0
+          raytrace_min_range: 0.35
+          raytrace_max_range: 12.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.8
+      height_band_layer:
+        plugin: semantic_traversability_layer/HeightBandLayer
+        enabled: true
+        topic: /lidar3d/obstacle_points
+        ground_z: 0.0
+        ground_tolerance: 0.02
+        step_over_height_max: 0.15
+        lethal_height_min: 0.25
+        max_range: 5.0
+        step_over_cost: 40
+        caution_cost: 200
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        inflation_radius: 0.55
+        cost_scaling_factor: 5.0
+      always_send_full_costmap: true
