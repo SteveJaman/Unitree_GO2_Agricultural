@@ -340,8 +340,31 @@ the winner ships even if none passes. Per-prompt results:
 
 None reached 0 unsafe raw answers; `verify_oneword` ships. Its one `STEP_OVER`
 on a tall object is caught by the LiDAR floor. This is the best available with a
-7B model on these crops; `llava:7b` was also tried and labelled every low item
-CAUTION.
+7B model on these crops.
+
+#### Model re-evaluation: `qwen2.5vl` vs `llava:7b`
+
+The proposal named `llava:7b`. An earlier comparison used an older prompt, so both
+models were re-run on the same 30 frames with the shipped `verify_oneword`
+prompt (2026-11-09). Rule set before running: swap to `llava:7b` only with ≥ 5
+points more accuracy, 0 unsafe labels, and no higher AVOID-on-low-items rate.
+Results: [qwen2.5vl](semantic/model_eval/qwen2_5vl.md), [llava:7b](semantic/model_eval/llava_7b.md).
+
+| Metric | `qwen2.5vl` | `llava:7b` |
+|---|---|---|
+| VLM accuracy | **0.64** | 0.25 |
+| `STEP_OVER` on a truly blocked object (unsafe) | 1 | 0 |
+| Tall object called low (`STEP_OVER` or `CAUTION`) | 1 | 7 |
+| AVOID on true step-over items | 2 / 14 | 0 / 14 |
+| Published accuracy / published unsafe | 0.71 / 0 | 0.50 / 0 |
+| Median latency | 2.5 s | 1.0 s |
+| Failures | 1 timeout | 0 |
+
+**`qwen2.5vl` stays the default.** `llava:7b` answered `CAUTION` for 26 of 28
+crops: it avoids unsafe `STEP_OVER` answers by saying almost nothing, and is 39
+points less accurate. `qwen2.5vl` scored 0.64 here against 0.68 in the prompt
+comparison (same prompt and frames; run-to-run variation and one timeout).
+The model is one line in `scripts/config/ollama.yaml`.
 
 ### MPPI critic trials
 

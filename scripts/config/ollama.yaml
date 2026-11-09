@@ -3,8 +3,11 @@
 # 172.30.160.1 on the development machine. Ollama runs with OLLAMA_HOST=0.0.0.0 and an
 # inbound firewall rule for TCP 11434 from 172.30.160.0/20 only.
 # The trial scripts pass the gateway they find at run time, overriding ollama_url.
-# Proposal named llava:7b; implementation uses qwen2.5vl for better instruction
-# following. `llava:7b` is pullable if required.
+# Model: the proposal named llava:7b; qwen2.5vl is the default because it won both
+# offline evaluations on the 30 saved frames. Re-evaluated 2026-11-09 with the shipped
+# verify_oneword prompt: qwen2.5vl accuracy 0.64, llava:7b 0.25 (CAUTION on 26 of 28
+# crops); swapping needs >= 5 pp more accuracy and 0 unsafe labels, so no swap.
+# To switch, change the one line below (e.g. model: "llava:7b"; `ollama pull` it first).
 vlm_heuristic_node:
   ros__parameters:
     ollama_url: "http://172.30.160.1:11434"
