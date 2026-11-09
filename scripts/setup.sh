@@ -17,6 +17,11 @@
 # Usage:
 #   ./scripts/setup.sh                 # check, install what is missing
 #   ./scripts/setup.sh --with-extras   # also ultralytics and pyrealsense2
+#   ./scripts/setup.sh --with-traversability
+#                                      # also the traversability costmap layout
+#                                      # (scripts/tools/add-traversability-layers.sh; edits
+#                                      # go2-nav2-wifi; wifi_3d_nav.sh --semantic keeps it,
+#                                      # a session without --semantic removes it)
 #   NAV2_WIFI_DIR=/other/path ./scripts/setup.sh
 set -uo pipefail
 
@@ -27,10 +32,12 @@ UPSTREAM_URL="https://github.com/dancher00/go2-nav2-wifi"
 MODEL="${TWIN_VLM_MODEL:-llava:7b}"
 PY_PACKAGES=(cyclonedds ruckig ikpy)
 EXTRAS=0
+WITH_TRAV=0
 
 for arg in "$@"; do
     case "${arg}" in
         --with-extras) EXTRAS=1 ;;
+        --with-traversability) WITH_TRAV=1 ;;
         -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *) echo "Unknown option: ${arg} (see --help)" >&2; exit 2 ;;
     esac
@@ -112,6 +119,25 @@ if [ -f "${NAV2_WIFI_DIR}/mapping.sh" ]; then
     fi
 else
     problem "lab patches skipped: no upstream repo"
+fi
+
+# 3b. Traversability costmap layout (--with-traversability) --------------------
+# add-traversability-layers.sh edits the external go2-nav2-wifi repo: height band in
+# the local costmap, semantic layer in both, old global height band removed. It runs
+# after the lab patches because it patches the lab-fixed controller launch file.
+if [ "${WITH_TRAV}" = 1 ]; then
+    if [ -f "${NAV2_WIFI_DIR}/mapping.sh" ]; then
+        echo "[...] Traversability costmap layout (add-traversability-layers.sh, edits ${NAV2_WIFI_DIR})..."
+        if TARGET_REPO="${NAV2_WIFI_DIR}" bash "${REPO_DIR}/scripts/tools/add-traversability-layers.sh"; then
+            echo "[✓] Traversability layout applied (wifi_3d_nav.sh keeps it with --semantic, removes it without)"
+        else
+            problem "add-traversability-layers.sh did not apply (see the message above)"
+        fi
+        [ -d "${NAV2_WIFI_DIR}/ws/install/semantic_traversability_layer" ] || \
+            problem "semantic_traversability_layer is not built in ${NAV2_WIFI_DIR}/ws: wifi_3d_nav.sh --semantic needs it"
+    else
+        problem "traversability layout skipped: no upstream repo"
+    fi
 fi
 
 # 4. Python packages ----------------------------------------------------------

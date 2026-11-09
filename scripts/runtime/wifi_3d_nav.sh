@@ -33,8 +33,10 @@
 # Traversability (docs/simulation/HARDWARE_HANDOFF.md): --semantic, --hardware
 # (requires --semantic: sport_client backend, scripts/config/hardware.yaml, still
 # dry_run) and --send-gait (requires --hardware: dry_run false). The dog's feet are
-# commanded only with all three. --semantic is pending its costmap patch script and
-# currently stops with a warning; without these flags nothing changes.
+# commanded only with all three. --semantic applies the traversability costmap layout
+# (scripts/tools/add-traversability-layers.sh, edits the external go2-nav2-wifi repo);
+# without it the script's --undo keeps the standard layout. The traversability nodes
+# are not launched by this script yet.
 #
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
@@ -148,7 +150,7 @@ AI="true"            # one-and-done: YOLO + VLM + battery dock unless --no-ai
 SURVEY_AUTO="1"      # ... and the unattended survey unless --manual
 NO_AI=()
 RESUME="false"
-TRAV_SEMANTIC="false"   # --semantic   (pending: add-traversability-layers.sh)
+TRAV_SEMANTIC="false"   # --semantic   traversability costmap layout (add-traversability-layers.sh)
 TRAV_HARDWARE="false"   # --hardware   sport_client backend armed, still dry_run
 TRAV_SEND_GAIT="false"  # --send-gait  dry_run false
 SIM="false"
@@ -211,8 +213,11 @@ done
 #   --hardware   gait supervisor uses the sport_client backend with
 #                scripts/config/hardware.yaml: enable_hardware_backend true (requires --semantic)
 #   --send-gait  dry_run false: gait commands reach FootRaiseHeight (requires --hardware)
-# Without them nothing here changes. --semantic is not implemented yet (it needs the
-# Nav2 costmap patch script, add-traversability-layers.sh): it stops with a warning.
+# --semantic applies the traversability costmap layout to the external go2-nav2-wifi
+# repo (scripts/tools/add-traversability-layers.sh); a session without it runs the
+# script's --undo, so the costmap is the standard one. The traversability nodes (fusion,
+# clusterer, gait supervisor, VLM) are not launched by this script yet, so --hardware and
+# --send-gait are validated and logged but have nothing to act on until they are.
 TRAV_HW_CONFIG="${REPO_DIR}/scripts/config/hardware.yaml"
 GAIT_ENABLE_HARDWARE="false"
 GAIT_DRY_RUN="true"
@@ -230,12 +235,11 @@ if [ "${TRAV_HARDWARE}" = "true" ]; then
 fi
 [ "${TRAV_SEND_GAIT}" = "true" ] && GAIT_DRY_RUN="false"
 export TRAV_HW_CONFIG GAIT_ENABLE_HARDWARE GAIT_DRY_RUN
-if [ "${TRAV_SEMANTIC}" = "true" ]; then
-    echo "[wifi_3d_nav] semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN}$( \
-        [ "${TRAV_HARDWARE}" = "true" ] && echo " config=${TRAV_HW_CONFIG}")"
-    echo "[wifi_3d_nav] [WARN] --semantic is pending patch script implementation (add-traversability-layers.sh);" \
-         "nothing was started. Run without --semantic/--hardware/--send-gait for the current stack." >&2
-    exit 0
+echo "[wifi_3d_nav] semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN}$( \
+    [ "${TRAV_HARDWARE}" = "true" ] && echo " config=${TRAV_HW_CONFIG}")"
+if [ "${TRAV_HARDWARE}" = "true" ]; then
+    echo "[wifi_3d_nav] [WARN] --hardware/--send-gait: the gait supervisor is not launched by this script yet;" \
+         "nothing commands the legs this session." >&2
 fi
 
 # Drive: hybrid by default. Nav2 drives forward-facing like a differential
@@ -836,6 +840,28 @@ if [ "${TWIN_WRIST_CAMERA}" = 1 ]; then
         || echo "[3d] WARN: wrist costmap patch failed; continuing without it"
 fi
 
+# --semantic: the traversability costmap layout (height band in the local costmap,
+# semantic layer in both). add-traversability-layers.sh edits the EXTERNAL go2-nav2-wifi
+# repo and rebuilds go2_nav2; without --semantic its --undo restores the standard
+# layout (a no-op when it is already standard). Runs after the patches above, so its
+# backup holds their result.
+TRAV_ADD="${REPO_DIR}/scripts/tools/add-traversability-layers.sh"
+if [ "${TRAV_SEMANTIC}" = "true" ]; then
+    [ -d "${NAV2_WIFI_DIR}/ws/install/semantic_traversability_layer" ] || \
+        die "--semantic: the semantic_traversability_layer plugin is not built in ${NAV2_WIFI_DIR}/ws (colcon build src/semantic_traversability_layer first)."
+    echo "[3d] Traversability costmap layout (add-traversability-layers.sh, edits ${NAV2_WIFI_DIR})..."
+    TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" 2>&1 | sed 's/^/    /' ||
+        die "--semantic: add-traversability-layers.sh failed (see above); the costmap was not changed as asked."
+    TRAV_COSTMAP="traversability (local: obstacle, height band 0.12/0.22 m, semantic, inflation; global: obstacle, semantic, inflation)"
+else
+    if TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" --undo 2>&1 | sed 's/^/    /'; then
+        TRAV_COSTMAP="standard (no --semantic)"
+    else
+        TRAV_COSTMAP="UNKNOWN: add-traversability-layers.sh --undo failed (see above)"
+        echo "[3d] WARN: add-traversability-layers.sh --undo failed; continuing with the costmap as it is"
+    fi
+fi
+
 T0="$(date +%s)"
 if [ "${RESUME}" = "true" ]; then
     # Continue the newest map: RTAB-Map opens the existing database, adds this
@@ -875,6 +901,8 @@ case "${DRIVE}" in
     omni)   echo "  Drive       : omni (MPPI: forward, reverse and sidestep while driving)" ;;
     diff)   echo "  Drive       : diff (forward arcs; recovery only steps back)" ;;
 esac
+echo "  Costmap     : ${TRAV_COSTMAP}"
+echo "  Gait        : semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN} (gait supervisor not launched by this script yet)"
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo

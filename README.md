@@ -153,7 +153,7 @@ troubleshooting cover every area and sit at its top level.
 
 > **Traversability on the real Go2:** start from [HARDWARE_HANDOFF.md](docs/simulation/HARDWARE_HANDOFF.md), the single source for hardware sessions.
 > It lists what the sim proved, the pre-session checks (SDK `FootRaiseHeight`, self-body points), and `wifi_3d_nav.sh --semantic --hardware --send-gait`.
-> The legs are commanded only with all three flags; `--semantic` is pending its Nav2 patch script.
+> The legs are commanded only with all three flags; `--semantic` sets the costmap layout, but the traversability nodes are not launched by the script yet.
 
 ## System Requirements
 

@@ -73,28 +73,42 @@ the staged rollout still stands (on a stand, then open floor, then clutter).
 
 | Flag | Does | Requires |
 |---|---|---|
-| `--semantic` | Traversability + semantic stack: height band in the local costmap, semantic layer in both, gait supervisor, VLM node. **Pending:** it currently prints `[WARN] --semantic is pending patch script implementation` and exits, starting nothing | — |
+| `--semantic` | Traversability costmap layout: height band in the local costmap, semantic layer in both (`add-traversability-layers.sh`, edits `go2-nav2-wifi`). The traversability nodes (fusion, clusterer, gait supervisor, VLM) are **not launched by `wifi_3d_nav.sh` yet** | the `semantic_traversability_layer` plugin built in `go2-nav2-wifi/ws` |
 | `--hardware` | Gait supervisor uses `backend: sport_client` with [`scripts/config/hardware.yaml`](../../scripts/config/hardware.yaml): `enable_hardware_backend: true`, `dry_run` still true | `--semantic` (error otherwise) |
 | `--send-gait` | `dry_run: false`: gait commands reach `FootRaiseHeight` | `--hardware` (error otherwise) |
 
 The script logs the combination at startup, e.g.
-`[wifi_3d_nav] semantic=true hardware=true dry_run=false`. Without any of the
-flags `wifi_3d_nav.sh` is unchanged.
+`[wifi_3d_nav] semantic=true hardware=true dry_run=false`, and the session summary
+shows the costmap layout. Without `--semantic`, a session runs
+`add-traversability-layers.sh --undo` (a no-op when the layout is already standard).
+Until the nodes are launched, `--hardware` / `--send-gait` are validated and logged
+but have nothing to act on (the script says so).
 
-**`--semantic` is pending its Nav2 patch script** (`add-traversability-layers.sh`,
-next session). It must account for how the robot's Nav2 config differs from the sim:
+**Costmap patch: [`scripts/tools/add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh)**
+(apply, `--undo`, `--check`; `TARGET_REPO` selects the clone, default
+`~/files/go2-nav2-wifi`). It prints a warning that it is editing the external repo,
+backs up every file it changes (`*.pre-traversability`) and rebuilds `go2_nav2`
+(not for a mock target or `SKIP_BUILD=1`). Also callable from
+`./scripts/setup.sh --with-traversability`. Tested only against a mock built from
+copies of the real files (`tests/tools/test_add_traversability_layers.py`, 9 tests:
+layout, idempotence, exact undo, legacy cleanup, and the patched launch file
+executed to produce the local costmap); **not yet run on the real clone.** It
+handles how the robot's Nav2 config differs from the sim:
 
 - The robot's `go2-nav2-wifi/go2_nav2/config/lidar3d_planner.yaml` has a
   `HeightBandLayer` in the **global** costmap with the old 0.15 / 0.25 m bands
   (a local experiment from 2026-11-06, backup `lidar3d_planner.yaml.pre-heightband`).
-  The patch script removes it; `--undo` leaves the global costmap standard Nav2 and
-  does not restore it.
+  The patch script removes it on apply and on `--undo`, never restores it, and keeps
+  the file as it was once as `lidar3d_planner.yaml.pre-legacy-heightband`.
 - The robot's local costmap is a `deepcopy` of the global one
   (`lidar3d_controller.launch.py`), so nothing can be local-only without editing
-  that launch file. The patch script edits it (backup, `--undo` restores) to add
-  the 0.12 / 0.22 m height band with `floor_estimation: histogram` to the local
-  costmap only, with the semantic layer in both, and warns that it modifies the
-  external `go2-nav2-wifi` repo.
+  that launch file. The patch keeps the copy (so other patches to the global
+  costmap, e.g. the YOLO source, still reach the local one) and merges a new
+  `go2_nav2/config/lidar3d_local_layers.yaml` on top: the 0.12 / 0.22 m height band
+  with `floor_estimation: histogram`, and a local semantic layer (5 m range), placed
+  before inflation. `go2_nav2/setup.py` gets the new file in its data files.
+  `--undo` restores the launch file and `setup.py` byte for byte and deletes the
+  local layers file.
 - Decided layout (2026-11-09), matching the sim's validated design:
 
   | | Global costmap | Local costmap |
@@ -187,9 +201,12 @@ nothing until the inputs return.
 - `scripts/nodes/gait_supervisor.py`: **done**, the `sport_client` backend (see
   [Hardware integration status](#hardware-integration-status)); still to be run on
   the robot. Speed is not commanded through the SDK (Nav2 drives, as in sim).
-- `scripts/runtime/wifi_3d_nav.sh`: **`--hardware` and `--send-gait` done;
-  `--semantic` pending** its costmap patch script (`add-traversability-layers.sh`),
-  which edits the external `go2-nav2-wifi` config and launch file.
+- `scripts/runtime/wifi_3d_nav.sh`: **flags done** (`--semantic` applies the costmap
+  patch, `--hardware`, `--send-gait`); **still to do: launch the traversability
+  nodes** (fusion, clusterer, gait supervisor with `hardware.yaml`, VLM node) when
+  `--semantic` is given.
+- `scripts/tools/add-traversability-layers.sh`: **done, tested on a mock only**;
+  first real run on the campus workstation (`--check` first, then apply).
 - `scripts/nodes/vlm_heuristic_node.py`: `backend` accepts only `gazebo`; the robot
   camera path needs its own backend value.
 - Trial configs under `tests/traversability/` (`controller_traversability*.yaml`,
