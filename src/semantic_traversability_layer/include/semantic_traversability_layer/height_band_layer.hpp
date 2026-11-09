@@ -1,6 +1,7 @@
 #ifndef SEMANTIC_TRAVERSABILITY_LAYER__HEIGHT_BAND_LAYER_HPP_
 #define SEMANTIC_TRAVERSABILITY_LAYER__HEIGHT_BAND_LAYER_HPP_
 
+#include <deque>
 #include <mutex>
 #include <string>
 
@@ -33,6 +34,8 @@ public:
 
 private:
   void pointCloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+  // Floor height for this frame from a z histogram near ground_z (floor_estimation: histogram).
+  double estimateFloor(const sensor_msgs::msg::PointCloud2 & cloud);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -50,6 +53,10 @@ private:
   std::string topic_;
   std::string global_frame_;
   double ground_z_;
+  std::string floor_estimation_;   // "fixed" (ground_z) | "histogram"
+  double floor_window_, floor_bin_, floor_search_radius_;
+  int floor_smoothing_frames_, floor_min_points_;
+  std::deque<double> floor_history_;
   double ground_tolerance_;
   double step_over_height_max_;
   double lethal_height_min_;

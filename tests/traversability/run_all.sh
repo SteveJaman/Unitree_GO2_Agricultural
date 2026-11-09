@@ -41,6 +41,9 @@ done
 docker cp "$REPO/gazebo/worlds/$WORLD.json" go2-lidar3d:/tmp/trav/$WORLD.json
 # traversability_nobackstop: same local costmap as traversability, gait backstop off.
 docker exec go2-lidar3d cp /tmp/trav/controller_traversability.yaml /tmp/trav/controller_traversability_nobackstop.yaml
+# traversability_histfloor: same, with the height band layer's floor from a histogram.
+docker exec go2-lidar3d bash -c "sed 's/^        ground_tolerance: 0.02$/        ground_tolerance: 0.02\n        floor_estimation: histogram/' \
+    /tmp/trav/controller_traversability.yaml > /tmp/trav/controller_traversability_histfloor.yaml"
 docker exec go2-lidar3d bash -c "sed -i 's/\r$//' /tmp/trav/*.sh"
 
 yolo_up() {

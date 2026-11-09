@@ -5,7 +5,7 @@ export PYTHONPATH="$T:$PYTHONPATH"
 bg python3 "$T/sim_box_detector.py" --ros-args -p world:="$T/cluttered_items.json" \
     -p only_classes:="power_strip,plant_saucer,cable,plant_pot,shoe,toolbox,trash_bin,side_table,bookshelf,file_cabinet,laptop" \
     > "$OUT/detector.log" 2>&1
-bg python3 "$T/object_box_fusion.py" > "$OUT/fusion.log" 2>&1
+bg python3 "$T/object_box_fusion.py" --ros-args -p floor_z:=0.0 ${FUSION_ARGS:-} > "$OUT/fusion.log" 2>&1
 bg python3 "$T/gait_supervisor.py" --ros-args -p dry_run:=true -p backend:=gazebo ${GAIT_ARGS:-} > "$OUT/gait.log" 2>&1
 bg python3 "$T/save_frames.py" "$OUT/frames" > "$OUT/frames.log" 2>&1
 bg python3 "$T/save_costmap.py" "$OUT" 5 > "$OUT/save_costmap.log" 2>&1

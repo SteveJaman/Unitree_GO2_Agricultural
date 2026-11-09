@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "nav2_costmap_2d/costmap_math.hpp"
@@ -21,6 +22,9 @@ namespace semantic_traversability_layer
 HeightBandLayer::HeightBandLayer()
 : enabled_(false),
   ground_z_(0.0),
+  floor_estimation_("fixed"),
+  floor_window_(0.15), floor_bin_(0.005), floor_search_radius_(3.0),
+  floor_smoothing_frames_(5), floor_min_points_(20),
   ground_tolerance_(0.02),
   step_over_height_max_(0.15),
   lethal_height_min_(0.25),
@@ -44,6 +48,16 @@ void HeightBandLayer::onInitialize()
   declareParameter("topic", rclcpp::ParameterValue(std::string("/lidar3d/obstacle_points")));
   declareParameter("ground_z", rclcpp::ParameterValue(0.0));
   declareParameter("ground_tolerance", rclcpp::ParameterValue(0.02));
+  // fixed: the floor is ground_z. histogram: per frame, the most populated
+  // floor_bin z-bin within +-floor_window of ground_z among points within
+  // floor_search_radius of the robot, median-smoothed over floor_smoothing_frames
+  // (Yassine Salimi's estimate_floor). For a robot whose body pitches and rolls.
+  declareParameter("floor_estimation", rclcpp::ParameterValue(std::string("fixed")));
+  declareParameter("floor_window", rclcpp::ParameterValue(0.15));
+  declareParameter("floor_bin", rclcpp::ParameterValue(0.005));
+  declareParameter("floor_search_radius", rclcpp::ParameterValue(3.0));
+  declareParameter("floor_smoothing_frames", rclcpp::ParameterValue(5));
+  declareParameter("floor_min_points", rclcpp::ParameterValue(20));
   declareParameter("step_over_height_max", rclcpp::ParameterValue(0.15));
   declareParameter("lethal_height_min", rclcpp::ParameterValue(0.25));
   declareParameter("min_range", rclcpp::ParameterValue(0.0));
@@ -55,6 +69,17 @@ void HeightBandLayer::onInitialize()
   node->get_parameter(name_ + ".topic", topic_);
   node->get_parameter(name_ + ".ground_z", ground_z_);
   node->get_parameter(name_ + ".ground_tolerance", ground_tolerance_);
+  node->get_parameter(name_ + ".floor_estimation", floor_estimation_);
+  node->get_parameter(name_ + ".floor_window", floor_window_);
+  node->get_parameter(name_ + ".floor_bin", floor_bin_);
+  node->get_parameter(name_ + ".floor_search_radius", floor_search_radius_);
+  node->get_parameter(name_ + ".floor_smoothing_frames", floor_smoothing_frames_);
+  node->get_parameter(name_ + ".floor_min_points", floor_min_points_);
+  if (floor_estimation_ != "fixed" && floor_estimation_ != "histogram") {
+    RCLCPP_WARN(node->get_logger(), "HeightBandLayer: floor_estimation '%s' unknown, using fixed",
+      floor_estimation_.c_str());
+    floor_estimation_ = "fixed";
+  }
   node->get_parameter(name_ + ".step_over_height_max", step_over_height_max_);
   node->get_parameter(name_ + ".lethal_height_min", lethal_height_min_);
   node->get_parameter(name_ + ".min_range", min_range_);
@@ -76,8 +101,9 @@ void HeightBandLayer::onInitialize()
       topic_, rclcpp::SensorDataQoS(),
       std::bind(&HeightBandLayer::pointCloudCallback, this, std::placeholders::_1));
     RCLCPP_INFO(node->get_logger(),
-      "HeightBandLayer: topic=%s min_range=%.2f step_over<%.2f lethal>=%.2f",
-      topic_.c_str(), min_range_, step_over_height_max_, lethal_height_min_);
+      "HeightBandLayer: topic=%s min_range=%.2f step_over<%.2f lethal>=%.2f floor=%s ground_z=%.3f",
+      topic_.c_str(), min_range_, step_over_height_max_, lethal_height_min_,
+      floor_estimation_.c_str(), ground_z_);
   } else {
     RCLCPP_INFO(node->get_logger(), "HeightBandLayer: disabled");
   }
@@ -107,6 +133,8 @@ void HeightBandLayer::pointCloudCallback(
     }
   }
 
+  const double ground = floor_estimation_ == "histogram" ? estimateFloor(cloud) : ground_z_;
+
   std::vector<ClassifiedPoint> new_points;
   new_points.reserve(cloud.width * cloud.height / 4);
 
@@ -133,7 +161,7 @@ void HeightBandLayer::pointCloudCallback(
       }
     }
 
-    const double h = pz - ground_z_;
+    const double h = pz - ground;
 
     unsigned char cost = 0;
     if (h < ground_tolerance_) {
@@ -151,6 +179,63 @@ void HeightBandLayer::pointCloudCallback(
 
   std::lock_guard<std::mutex> lock(points_mutex_);
   classified_points_ = std::move(new_points);
+}
+
+double HeightBandLayer::estimateFloor(const sensor_msgs::msg::PointCloud2 & cloud)
+{
+  // Most populated floor_bin_ bin within +-floor_window_ of ground_z_, refined by the
+  // median of the points within 1 cm of it, then median over the last frames.
+  const int nbins = std::max(1, static_cast<int>(std::ceil(2.0 * floor_window_ / floor_bin_)));
+  std::vector<int> counts(nbins, 0);
+  std::vector<float> zs;
+  zs.reserve(cloud.width * cloud.height / 2);
+  const double r2 = floor_search_radius_ * floor_search_radius_;
+  sensor_msgs::PointCloud2ConstIterator<float> ix(cloud, "x"), iy(cloud, "y"), iz(cloud, "z");
+  for (; ix != ix.end(); ++ix, ++iy, ++iz) {
+    const float z = *iz;
+    if (!std::isfinite(*ix) || !std::isfinite(*iy) || !std::isfinite(z)) {continue;}
+    if (std::abs(z - ground_z_) >= floor_window_) {continue;}
+    if (has_robot_pose_) {
+      const double dx = *ix - robot_x_, dy = *iy - robot_y_;
+      if (dx * dx + dy * dy > r2) {continue;}
+    }
+    const int b = static_cast<int>((z - (ground_z_ - floor_window_)) / floor_bin_);
+    if (b < 0 || b >= nbins) {continue;}
+    ++counts[b];
+    zs.push_back(z);
+  }
+
+  double frame = floor_history_.empty() ? ground_z_ : floor_history_.back();
+  if (static_cast<int>(zs.size()) >= floor_min_points_) {
+    const int k = static_cast<int>(std::max_element(counts.begin(), counts.end()) - counts.begin());
+    const double centre = ground_z_ - floor_window_ + (k + 0.5) * floor_bin_;
+    std::vector<float> near;
+    for (float z : zs) {
+      if (std::abs(z - centre) < 0.01) {near.push_back(z);}
+    }
+    if (!near.empty()) {
+      std::nth_element(near.begin(), near.begin() + near.size() / 2, near.end());
+      frame = near[near.size() / 2];
+    } else {
+      frame = centre;
+    }
+    floor_history_.push_back(frame);
+    while (static_cast<int>(floor_history_.size()) > std::max(1, floor_smoothing_frames_)) {
+      floor_history_.pop_front();
+    }
+  }
+  std::vector<double> h(floor_history_.begin(), floor_history_.end());
+  double smoothed = ground_z_;
+  if (!h.empty()) {
+    std::nth_element(h.begin(), h.begin() + h.size() / 2, h.end());
+    smoothed = h[h.size() / 2];
+  }
+  auto node = node_.lock();
+  if (node) {
+    RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 1000,
+      "HeightBandLayer: ground_z frame=%.4f smoothed=%.4f (n=%zu)", frame, smoothed, zs.size());
+  }
+  return smoothed;
 }
 
 void HeightBandLayer::updateBounds(

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """HeightBandLayer acceptance: synthetic objects of known height -> raw costmap cost.
 
-  height_band_check.py CONTROLLER_YAML OUT_JSON [layers]
+  height_band_check.py CONTROLLER_YAML OUT_JSON [--layers L1,L2] [--floor Z]
+                       [--floor-estimation fixed|histogram]
 
 Builds a standalone costmap (nav2_costmap_2d) from the local_costmap section of
 CONTROLLER_YAML, every LiDAR source pointed at /hbtest/points, and publishes a
@@ -9,9 +10,14 @@ static cloud of four 0.10 x 0.10 m columns, 1.5 m ahead of base_link, with
 heights 0.10, 0.14, 0.20 and 0.30 m. Reads /costmap/costmap_raw (node /costmap/costmap) and
 reports the highest raw cost inside each column. `layers` (comma separated)
 keeps only those plugins, e.g. height_band_layer for the layer on its own.
+--floor Z adds a floor of points at height Z (4 x 4 m around the robot) and
+stands the columns on it, so heights are measured from Z; --floor-estimation
+overrides the height band layer's floor_estimation. With a floor at Z != 0,
+fixed (ground_z 0) misclassifies and histogram should not.
 
 Run on its own ROS_DOMAIN_ID; it publishes a static lidar3d_map -> base_link TF.
 """
+import argparse
 import json
 import os
 import signal
@@ -35,8 +41,10 @@ X, YS, SIDE = 1.5, [-0.9, -0.3, 0.3, 0.9], 0.10
 TOPIC = "/hbtest/points"
 
 
-def params_file(controller_yaml, layers):
+def params_file(controller_yaml, layers, floor_estimation=None):
     cfg = yaml.safe_load(open(controller_yaml))["local_costmap"]["local_costmap"]["ros__parameters"]
+    if floor_estimation and "height_band_layer" in cfg:
+        cfg["height_band_layer"]["floor_estimation"] = floor_estimation
     if layers:
         cfg["plugins"] = [p for p in cfg["plugins"] if p in layers]
     for name in cfg["plugins"]:
@@ -54,8 +62,13 @@ def params_file(controller_yaml, layers):
     return f.name, cfg["plugins"]
 
 
-def cloud(stamp):
+def cloud(stamp, floor=None):
     pts = []
+    base = floor or 0.0
+    if floor is not None:
+        for i in range(81):
+            for j in range(81):
+                pts.append((-2.0 + 0.05 * i + 1.5, -2.0 + 0.05 * j, base))
     for y0, h in zip(YS, HEIGHTS):
         n = 5
         for i in range(n):
@@ -64,9 +77,9 @@ def cloud(stamp):
                 y = y0 - SIDE / 2 + SIDE * j / (n - 1)
                 z = 0.03
                 while z < h:
-                    pts.append((x, y, z))
+                    pts.append((x, y, base + z))
                     z += 0.02
-                pts.append((x, y, h))
+                pts.append((x, y, base + h))
     msg = PointCloud2()
     msg.header.frame_id = "lidar3d_map"
     msg.header.stamp = stamp
@@ -80,9 +93,18 @@ def cloud(stamp):
 
 
 def main():
-    controller_yaml, out = sys.argv[1:3]
-    layers = sys.argv[3].split(",") if len(sys.argv) > 3 else None
-    pf, plugins = params_file(controller_yaml, layers)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("controller_yaml")
+    ap.add_argument("out")
+    ap.add_argument("layers_pos", nargs="?", help="same as --layers (older form)")
+    ap.add_argument("--layers")
+    ap.add_argument("--floor", type=float, default=None)
+    ap.add_argument("--floor-estimation", choices=("fixed", "histogram"))
+    a = ap.parse_args()
+    controller_yaml, out = a.controller_yaml, a.out
+    lay = a.layers or a.layers_pos
+    layers = lay.split(",") if lay else None
+    pf, plugins = params_file(controller_yaml, layers, a.floor_estimation)
     proc = subprocess.Popen(["ros2", "run", "nav2_costmap_2d", "nav2_costmap_2d", "--ros-args",
                              "--params-file", pf],
                             stdout=open(out + ".log", "w"), stderr=subprocess.STDOUT,
@@ -106,7 +128,7 @@ def main():
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         end = time.time() + 20
         while time.time() < end:
-            pub.publish(cloud(node.get_clock().now().to_msg()))
+            pub.publish(cloud(node.get_clock().now().to_msg(), a.floor))
             rclpy.spin_once(node, timeout_sec=0.2)
         m = got.get("m")
         if m is None:
@@ -120,7 +142,8 @@ def main():
                 for j in range(int((y0 - SIDE / 2 - oy) / res), int((y0 + SIDE / 2 - oy) / res) + 1):
                     best = max(best, m.data[j * w + i])
             rows.append({"height_m": h, "max_raw_cost": best})
-        result = {"controller_yaml": os.path.basename(controller_yaml), "plugins": plugins, "objects": rows}
+        result = {"controller_yaml": os.path.basename(controller_yaml), "plugins": plugins,
+                  "floor": a.floor, "floor_estimation": a.floor_estimation or "config", "objects": rows}
         json.dump(result, open(out, "w"), indent=1)
         print(json.dumps(result))
     finally:

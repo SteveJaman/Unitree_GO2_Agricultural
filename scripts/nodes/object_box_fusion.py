@@ -236,6 +236,11 @@ def main():
             p("camera_frame", "front_camera")
             p("cloud_history", 15)
             p("floor_z", 0.0)
+            # fixed: the floor is floor_z. histogram: estimated from the stacked cloud
+            # near floor_z (low_object_clusterer.estimate_floor, Yassine's), median over
+            # floor_smoothing_frames; used for heights and the floor-ray distance check.
+            p("floor_estimation", "fixed")
+            p("floor_smoothing_frames", 5)
             p("step_over_height_max", 0.12)
             p("lethal_height_min", 0.22)
             p("min_points", 4)
@@ -249,6 +254,10 @@ def main():
             gp = lambda k: self.get_parameter(k).value  # noqa: E731
             self.map_frame, self.cam_frame = gp("map_frame"), gp("camera_frame")
             self.floor_z, self.min_points = float(gp("floor_z")), int(gp("min_points"))
+            self.floor_mode = gp("floor_estimation")
+            if self.floor_mode not in ("fixed", "histogram"):
+                raise ValueError(f"floor_estimation must be fixed or histogram, not {self.floor_mode}")
+            self.floor_hist = deque(maxlen=max(1, int(gp("floor_smoothing_frames"))))
             self.max_range, self.dry_run = float(gp("max_range")), bool(gp("dry_run"))
             self.unknown_range = float(gp("unknown_range"))
             self.K = (float(gp("fx")), float(gp("fy")), float(gp("cx")), float(gp("cy")))
@@ -290,6 +299,15 @@ def main():
         def on_json(self, msg):
             self.process(json.loads(msg.data)["detections"])
 
+        def current_floor(self, pts):
+            if self.floor_mode == "fixed":
+                return self.floor_z
+            from low_object_clusterer import estimate_floor
+            self.floor_hist.append(estimate_floor(pts, self.floor_z))
+            floor = float(np.median(self.floor_hist))
+            self.get_logger().info(f"floor_z estimate {floor:.4f}", throttle_duration_sec=1.0)
+            return floor
+
         def process(self, detections):
             if not self.scans:
                 return
@@ -299,15 +317,16 @@ def main():
                 self.get_logger().warn(str(ex), throttle_duration_sec=5.0)
                 return
             pts = np.concatenate(list(self.scans))
+            floor = self.current_floor(pts)
             tr = tf.transform.translation
             cam = pts @ rotation_matrix(tf.transform.rotation).T + np.array([tr.x, tr.y, tr.z])
             now = self.get_clock().now().nanoseconds * 1e-9
             rot = rotation_matrix(tf.transform.rotation)
             trans = np.array([tr.x, tr.y, tr.z])
             for det in detections:
-                p = ground_point(det["bbox"], self.K, rot, trans, self.floor_z)
+                p = ground_point(det["bbox"], self.K, rot, trans, floor)
                 floor_range = None if p is None else float((rot @ p + trans)[0])
-                box = fuse_detection(pts, cam, self.K, det["bbox"], self.floor_z, self.min_points,
+                box = fuse_detection(pts, cam, self.K, det["bbox"], floor, self.min_points,
                                      max_range=self.max_range, floor_range=floor_range)
                 if "height" in box:
                     self.tracks.update(det["class"], det["score"], box, now)
