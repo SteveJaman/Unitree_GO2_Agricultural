@@ -43,7 +43,9 @@ failed check.
 2. **No self-body points in the clouds the costmap reads.** The robot's obstacle
    layer reads `/lidar3d/registered` (the sim reads the self-filtered
    `/lidar3d/obstacle_points`); the height band layer reads `/lidar3d/obstacle_points`.
-   If either contains the robot's own legs, the costmap marks them.
+   If either contains the robot's own legs, the costmap marks them. The operator
+   must verify that `/lidar3d/registered` is filtered of self-body points before
+   running; `check_self_points.py` is the official pre-check for this.
 
    ```bash
    python3 scripts/tools/check_self_points.py 10 /lidar3d/registered /lidar3d/obstacle_points
