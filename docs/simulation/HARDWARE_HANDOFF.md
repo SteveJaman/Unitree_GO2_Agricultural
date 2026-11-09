@@ -95,6 +95,16 @@ next session). It must account for how the robot's Nav2 config differs from the 
   the 0.12 / 0.22 m height band with `floor_estimation: histogram` to the local
   costmap only, with the semantic layer in both, and warns that it modifies the
   external `go2-nav2-wifi` repo.
+- Decided layout (2026-11-09), matching the sim's validated design:
+
+  | | Global costmap | Local costmap |
+  |---|---|---|
+  | `--semantic` applied | obstacle, semantic, inflation | obstacle, height band (0.12 / 0.22 m, histogram), semantic, inflation |
+  | `--undo` / no `--semantic` | obstacle, inflation (old 0.15 / 0.25 m band **not** restored) | copy of global (stock `go2_nav2` behaviour) |
+
+  The semantic layer stays in the global costmap: in sim, with it local-only, the
+  global plan ran through lethal semantic marks and RPP aborted ("detected
+  collision ahead!", 11 times) instead of routing around.
 
 **`sport_client` backend** (`scripts/nodes/gait_supervisor.py`, written and tested
 without the robot): `FootRaiseHeight(lift − nominal_foot_height)` with lifts
