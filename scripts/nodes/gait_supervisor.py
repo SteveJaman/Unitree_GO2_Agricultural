@@ -29,8 +29,20 @@ backstop_raised and backstop_source (costmap | cluster | costmap+cluster) when t
 backstop lifted the gait above the boxes' choice.
 
 Backends: "gazebo" publishes /gait/command, which the sim bridge turns into foot
-lift. "sport_client" (the robot) is Phase 2 hardware work and raises
-NotImplementedError; nothing here imports unitree_sdk2py.
+lift. "sport_client" (the robot) also sets the Go2's foot raise height through
+unitree_sdk2py's SportClient.FootRaiseHeight, but only when BOTH dry_run is false
+AND enable_hardware_backend is true; otherwise it logs [DRY_RUN] lines and never
+imports the SDK. The SDK is imported only in SportClientBackend._init_sdk().
+Safety: a missing SDK, a missing FootRaiseHeight or a failed channel init log
+[FATAL] and keep the backend inactive (no crash); deltas outside the SDK's
+-0.06..+0.03 m are clamped with a [WARN]; SDK calls are rate-limited; three
+consecutive SDK failures send NORMAL once and stop; the ~/override_normal service
+forces NORMAL and pauses the backend until the supervisor's gait changes.
+
+Input heartbeat: when odometry or the costmap is older than heartbeat_timeout_s
+(or never arrived), the supervisor has lost sight of what is ahead. The gait is
+then timeout_default_gait (CAREFUL by default: high feet, slow, never NORMAL
+blind), sent to the backend once, and nothing more is sent until inputs return.
 
 Subscribes:
   /local_costmap/costmap   nav_msgs/OccupancyGrid
@@ -53,13 +65,22 @@ Parameters:
   cluster_stop_height: cluster height that means STOP (default 0.12 m, the foot-lift ceiling)
   cluster_max_age_s: clusters older than this are ignored (default 2.0 s)
   use_semantic:     raise the gait from semantic labels (default false)
-  backend:          "gazebo" (default) | "sport_client" (NotImplementedError)
+  backend:          "gazebo" (default) | "sport_client"
   dry_run:          if true, log commands but don't send them to the backend (default true)
+  enable_hardware_backend: second gate for sport_client (default false)
+  sdk_channel, sdk_network_interface: SDK channel name (logged) and the network
+                    interface for ChannelFactoryInitialize ("" = SDK default)
+  nominal_foot_height: the SDK's baseline foot height (default 0.09 m; TODO measure)
+  heartbeat_timeout_s: input age that triggers the timeout gait (default 2.0 s)
+  timeout_default_gait: gait while inputs are lost (default CAREFUL)
+  max_command_rate_hz: SDK call rate limit (default 2.0)
 """
 import json
 import math
 import struct
 import time
+
+from std_srvs.srv import Trigger
 
 import rclpy
 from rclpy.node import Node
@@ -91,8 +112,135 @@ GAITS = {
     "NORMAL":    {"foot_height": 0.04, "speed_scale": 1.0},
     "HIGH_STEP": {"foot_height": 0.12, "speed_scale": 0.7},
     "CAREFUL":   {"foot_height": 0.12, "speed_scale": 0.4},
-    "STOP":      {"foot_height": 0.04, "speed_scale": 0.0},
+    "STOP":      {"foot_height": 0.12, "speed_scale": 0.0},
 }
+# Foot lift per gait on the robot: the same as the sim bridge (gazebo/sim/sim_robot_bridge.py
+# LIFT), which is what the trials validated. STOP keeps the feet high next to a tall object.
+HARDWARE_LIFT = {"NORMAL": 0.04, "HIGH_STEP": 0.12, "CAREFUL": 0.12, "STOP": 0.12}
+SDK_DELTA_MIN, SDK_DELTA_MAX = -0.06, 0.03   # FootRaiseHeight range around the nominal height
+
+
+def inputs_stale(now, stamps, timeout_s):
+    """True when any required input never arrived or is older than timeout_s."""
+    return any(t is None or now - t > timeout_s for t in stamps)
+
+
+class SportClientBackend:
+    """Foot raise height on the Go2 through unitree_sdk2py. Inert unless BOTH gates are open.
+
+    log: an object with info/warn/error/fatal (an rclpy logger). The SDK is imported
+    only in _init_sdk(), on the first command with both gates open.
+    """
+
+    def __init__(self, log, dry_run, enable_hardware, network_interface="", channel="sport",
+                 nominal_foot_height=0.09, max_rate_hz=2.0, clock=time.monotonic):
+        self.log, self.clock = log, clock
+        self.iface, self.channel = network_interface, channel
+        self.nominal, self.min_period = float(nominal_foot_height), 1.0 / float(max_rate_hz)
+        self.active = (not dry_run) and bool(enable_hardware)
+        self.client = None
+        self.sdk_failed = False      # import / FootRaiseHeight / channel init failed: stays inactive
+        self.failures = 0
+        self.halted = False          # three consecutive SDK failures
+        self.paused_on = None        # gait at the time of an operator override
+        self.last_gait, self.last_t = None, -1e9
+        self.last_dry = None
+        if not self.active:
+            missing = [n for n, ok in (("dry_run is true", not dry_run),
+                                       ("enable_hardware_backend is false", enable_hardware)) if not ok]
+            self.log.info("[DRY_RUN] sport_client backend inactive: " + " and ".join(missing))
+
+    def delta_for(self, lift):
+        """FootRaiseHeight delta for an absolute lift, clamped to the SDK range."""
+        raw = lift - self.nominal
+        d = min(SDK_DELTA_MAX, max(SDK_DELTA_MIN, raw))
+        if abs(d - raw) > 1e-9:
+            self.log.warn(f"[WARN] foot delta clamped from {raw:+.3f} to {d:+.3f} m "
+                          f"(lift {lift:.3f} m, nominal {self.nominal:.3f} m)")
+        return d
+
+    def _init_sdk(self):
+        """The only place unitree_sdk2py is imported. False (and inactive) on any failure."""
+        try:
+            from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+            from unitree_sdk2py.go2.sport.sport_client import SportClient
+        except ImportError as ex:
+            self.log.fatal(f"[FATAL] unitree_sdk2py not available; hardware backend inactive ({ex})")
+            self.sdk_failed = True
+            return False
+        if not hasattr(SportClient, "FootRaiseHeight"):
+            self.log.fatal("[FATAL] this unitree_sdk2py SportClient has no FootRaiseHeight; hardware "
+                           "backend inactive (the newer API surface must be substituted)")
+            self.sdk_failed = True
+            return False
+        try:
+            if self.iface:
+                ChannelFactoryInitialize(0, self.iface)
+            else:
+                ChannelFactoryInitialize(0)
+            client = SportClient()
+            client.SetTimeout(5.0)
+            client.Init()
+        except Exception as ex:  # noqa: BLE001 - any channel/DDS failure keeps us inert
+            self.log.fatal(f"[FATAL] SportClient channel init failed ({ex}); hardware backend inactive")
+            self.sdk_failed = True
+            return False
+        self.client = client
+        self.log.info(f"sport_client backend ready (channel {self.channel}, interface "
+                      f"{self.iface or 'SDK default'}, nominal foot height {self.nominal:.3f} m)")
+        return True
+
+    def override_normal(self, current_gait):
+        """Operator override: NORMAL now, then paused until the supervisor's gait changes."""
+        r = self.send("NORMAL", force=True)
+        self.paused_on = current_gait
+        self.log.warn(f"[WARN] operator override: gait NORMAL, backend paused until the gait leaves {current_gait}")
+        return r
+
+    def send(self, gait, force=False):
+        """Command a gait. Returns what happened: dry_run, paused, halted, unchanged,
+        rate_limited, inactive, sent, failed."""
+        if self.paused_on is not None and not force:
+            if gait == self.paused_on:
+                return "paused"
+            self.paused_on = None
+        lift = HARDWARE_LIFT[gait]
+        delta = self.delta_for(lift)
+        if not self.active or self.sdk_failed:
+            if gait != self.last_dry:
+                self.last_dry = gait
+                self.log.info(f"[DRY_RUN] would send FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)")
+            return "dry_run" if not self.sdk_failed else "inactive"
+        if self.halted:      # after 3 failures nothing more goes to the SDK, forced or not
+            return "halted"
+        now = self.clock()
+        if gait == self.last_gait and not force:
+            return "unchanged"
+        if now - self.last_t < self.min_period and not force:
+            return "rate_limited"     # the supervisor calls again next cycle
+        if self.client is None and not self._init_sdk():
+            return "inactive"
+        self.last_t = now
+        try:
+            code = self.client.FootRaiseHeight(delta)
+            if code not in (0, None):
+                raise RuntimeError(f"FootRaiseHeight returned {code}")
+        except Exception as ex:  # noqa: BLE001 - logged, counted, no aggressive retry
+            self.failures += 1
+            self.log.error(f"[ERROR] FootRaiseHeight({delta:+.3f}) for {gait} failed ({ex}); "
+                           f"{self.failures} in a row")
+            if self.failures >= 3 and not self.halted:
+                self.halted = True
+                self.log.error("[ERROR] 3 consecutive SDK failures: sending NORMAL once and stopping")
+                try:
+                    self.client.FootRaiseHeight(self.delta_for(HARDWARE_LIFT["NORMAL"]))
+                except Exception as ex2:  # noqa: BLE001
+                    self.log.error(f"[ERROR] NORMAL after failures also failed ({ex2})")
+            return "failed"
+        self.failures = 0
+        self.last_gait = gait
+        self.log.info(f"sport_client: FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)")
+        return "sent"
 
 
 ORDER = ("NORMAL", "HIGH_STEP", "CAREFUL", "STOP")
@@ -167,13 +315,23 @@ class GaitSupervisor(Node):
         self.declare_parameter("clusters_topic", "/objects/low_clusters")
         self.declare_parameter("cluster_stop_height", 0.12)
         self.declare_parameter("cluster_max_age_s", 2.0)
+        self.declare_parameter("enable_hardware_backend", False)
+        self.declare_parameter("sdk_channel", "sport")
+        self.declare_parameter("sdk_network_interface", "")
+        self.declare_parameter("nominal_foot_height", 0.09)
+        self.declare_parameter("heartbeat_timeout_s", 2.0)
+        self.declare_parameter("timeout_default_gait", "CAREFUL")
+        self.declare_parameter("max_command_rate_hz", 2.0)
 
         self.backend = self.get_parameter("backend").value
-        if self.backend == "sport_client":
-            raise NotImplementedError(
-                "SportClient backend is Phase 2 (hardware) work. Not implemented in sim.")
-        if self.backend != "gazebo":
+        if self.backend not in ("gazebo", "sport_client"):
             raise ValueError(f"backend must be gazebo or sport_client, not {self.backend}")
+        self.timeout_gait = self.get_parameter("timeout_default_gait").value
+        if self.timeout_gait not in ORDER:
+            raise ValueError(f"timeout_default_gait must be one of {ORDER}, not {self.timeout_gait}")
+        self.heartbeat = float(self.get_parameter("heartbeat_timeout_s").value)
+        self.timed_out, self.timeout_sent = False, False
+        self.odom_t = self.costmap_t = None
         self.backstop = bool(self.get_parameter("backstop_enabled").value)
         self.use_semantic = bool(self.get_parameter("use_semantic").value)
         self.semantic = {}
@@ -188,6 +346,15 @@ class GaitSupervisor(Node):
         self.scan_width = self.get_parameter("scan_width").value
         self.dry_run = self.get_parameter("dry_run").value
         rate = self.get_parameter("check_rate_hz").value
+        self.sport = None
+        if self.backend == "sport_client":
+            self.sport = SportClientBackend(
+                self.get_logger(), bool(self.dry_run), bool(self.get_parameter("enable_hardware_backend").value),
+                network_interface=self.get_parameter("sdk_network_interface").value,
+                channel=self.get_parameter("sdk_channel").value,
+                nominal_foot_height=float(self.get_parameter("nominal_foot_height").value),
+                max_rate_hz=float(self.get_parameter("max_command_rate_hz").value))
+        self.create_service(Trigger, "~/override_normal", self._override_normal)
 
         self.costmap = None
         self.odom = None
@@ -208,14 +375,26 @@ class GaitSupervisor(Node):
 
         mode = "DRY_RUN" if self.dry_run else "ACTIVE"
         self.get_logger().info(
-            "gait_supervisor [%s]: backend=%s scan=%.1fm width=%.1fm backstop=%s semantic=%s"
-            % (mode, self.backend, self.scan_dist, self.scan_width, self.backstop, self.use_semantic))
+            "gait_supervisor [%s]: backend=%s enable_hardware_backend=%s scan=%.1fm width=%.1fm "
+            "backstop=%s semantic=%s heartbeat=%.1fs timeout_gait=%s"
+            % (mode, self.backend, self.get_parameter("enable_hardware_backend").value, self.scan_dist,
+               self.scan_width, self.backstop, self.use_semantic, self.heartbeat, self.timeout_gait))
 
     def _cm_cb(self, msg):
-        self.costmap = msg
+        self.costmap, self.costmap_t = msg, time.monotonic()
 
     def _odom_cb(self, msg):
-        self.odom = msg
+        self.odom, self.odom_t = msg, time.monotonic()
+
+    def _override_normal(self, request, response):
+        if self.sport is not None:
+            result = self.sport.override_normal(self.current_gait)
+            response.message = f"NORMAL ({result}); backend paused until the gait leaves {self.current_gait}"
+        else:
+            response.message = "gazebo backend: no hardware to override; nothing sent"
+        response.success = True
+        self.get_logger().warn(f"~/override_normal: {response.message}")
+        return response
 
     def _boxes_cb(self, msg):
         self.boxes = json.loads(msg.data)["boxes"]
@@ -311,6 +490,18 @@ class GaitSupervisor(Node):
                 n_clusters = len(ahead)
                 cluster_gait = cluster_gait_for(ahead, self.cluster_stop)
                 desired = worst(desired, costmap_gait, *([cluster_gait] if cluster_gait else []))
+        # Lost sight of what is ahead: walk carefully, never NORMAL blind.
+        stale = inputs_stale(time.monotonic(), (self.odom_t, self.costmap_t), self.heartbeat)
+        if stale:
+            desired, box_gait = self.timeout_gait, None
+            if not self.timed_out:
+                self.get_logger().warn(
+                    f"[WARN] inputs lost (odometry or costmap older than {self.heartbeat:.1f} s): "
+                    f"gait {self.timeout_gait} (timeout_default_gait)")
+        elif self.timed_out:
+            self.get_logger().info("inputs back: gait from the boxes and backstop again")
+            self.timeout_sent = False
+        self.timed_out = stale
         # The backstop raised the gait above what the boxes (and labels) asked for:
         # the costmap or a LiDAR cluster saw something ahead that the camera path did not.
         backstop_raised = box_gait is not None and desired != box_gait
@@ -323,10 +514,18 @@ class GaitSupervisor(Node):
             self.current_gait = desired
             self.get_logger().info(
                 "gait -> %s (max_cost=%d source=%s dry_run=%s)"
-                % (desired, max_cost, source or "boxes", self.dry_run))
+                % (desired, max_cost, "timeout" if stale else (source or "boxes"), self.dry_run))
 
-            if not self.dry_run:
-                self._send_gait_command(desired)
+        backend_state = None
+        if self.sport is not None:
+            if stale:
+                if not self.timeout_sent:          # once, then silence until inputs return
+                    backend_state = self.sport.send(desired, force=True)
+                    self.timeout_sent = True
+                else:
+                    backend_state = "timeout_silent"
+            else:
+                backend_state = self.sport.send(desired)
 
         self.cmd_pub.publish(String(data=desired))
         self.status_pub.publish(String(data=json.dumps({
@@ -334,25 +533,20 @@ class GaitSupervisor(Node):
             "semantic_gait": semantic_gait, "backstop": self.backstop,
             "backstop_raised": backstop_raised, "backstop_source": source,
             "cluster_gait": cluster_gait, "clusters_ahead": n_clusters, "cost": max_cost,
+            "inputs_stale": stale, "backend": self.backend, "backend_state": backend_state,
             "objects": [b["class"] for b in hits],
             "foot": GAITS[desired]["foot_height"],
             "speed_pct": GAITS[desired]["speed_scale"] * 100})))
 
-    def _send_gait_command(self, gait_name):
-        # gazebo: /gait/command (published every cycle above) is the command; the
-        # sim bridge sets the foot lift from it. Nothing further to send.
-        params = GAITS[gait_name]
-        self.get_logger().info(
-            "gazebo backend: %s foot_height=%.2f speed_scale=%.1f"
-            % (gait_name, params["foot_height"], params["speed_scale"]))
-
 
 def main(args=None):
+    from rclpy.executors import ExternalShutdownException
+
     rclpy.init(args=args)
     node = GaitSupervisor()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):   # SIGINT / SIGTERM
         pass
     finally:
         node.destroy_node()
