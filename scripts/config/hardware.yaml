@@ -1,0 +1,21 @@
+# Hardware configuration for the traversability stack on the real Go2.
+# Loaded only by `wifi_3d_nav.sh --semantic --hardware` (see docs/simulation/HARDWARE_HANDOFF.md).
+# Defaults keep the robot's legs untouched: --hardware turns enable_hardware_backend on,
+# and only --send-gait turns dry_run off. The values below are the safe resting state.
+
+gait_supervisor:
+  backend: sport_client
+  enable_hardware_backend: false
+  dry_run: true
+  nominal_foot_height: 0.09  # TODO: measure on real dog
+  heartbeat_timeout_s: 2.0
+  max_command_rate_hz: 2.0
+
+height_band_layer:
+  step_over_height_max: 0.12  # TODO: update after measuring real lift
+  floor_estimation: histogram  # hardware config uses histogram
+  min_range: 0.25
+
+vlm_heuristic_node:
+  model: qwen2.5vl  # or llava:7b if eval wins (re-evaluated 2026-11-09: qwen2.5vl kept)
+  ollama_url: http://172.30.160.1:11434  # TODO: verify on real dog network

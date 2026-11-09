@@ -17,8 +17,94 @@ the single simulation record. Simulation closed 2026-11-08 on branch
 | **Two-signal lethal rule.** A VLM `AVOID` is lethal only when LiDAR measured the object; an unmeasured object is held at CAUTION (200), flagged `low_confidence`, with a `CAREFUL` gait. In Phase 4, 55 trial-objects were unmeasured, 4 of them tall, all held at CAUTION. | [Semantic layer](traversability_sim.md#semantic-layer) |
 | **The backstop stops under-cautious gait when the costmap sees something.** Gait `NORMAL` while the costmap had an object in the corridor: 0 of 1465 samples with the backstop on vs 217 of 1822 (11.9 %) off (fixed route, 3 pairs); 0 of 5893 across 20 backstop-on trials at n = 10. Residual `NORMAL` samples are objects neither sensor saw (1–3.6 %). | [Backstop pairs](traversability_sim.md#backstop-pairs), [Safety matrix](traversability_sim.md#safety-metric-trial-matrix) |
 | **The stack clears low items more often than a low-stepping baseline.** Items ≤ 0.10 m: 25/47 passes cleared (53 %) vs 15/58 (26 %), p = 0.008, h = 0.57, n = 10 per mode. `HIGH_STEP` cleared 12 of 16 passes; misses ended about 2 cm below the item top. This is the only significant difference between modes; foot strikes per metre and goals do not differ. | [Safety matrix](traversability_sim.md#safety-metric-trial-matrix) |
-| **Gait supervisor thresholds and interface.** `HIGH_STEP` ≤ 0.10 m (0.12 m lift minus 0.02 m margin), `CAREFUL` above, `STOP` ≥ 0.25 m; unmeasured height → `CAREFUL`. Runs with `dry_run` (default true) and `backend: gazebo`; `backend: sport_client` raises `NotImplementedError`. 33 unit tests pass (labeller, fusion, leg gait). | [Height bands](traversability_sim.md#height-band-check), `scripts/nodes/gait_supervisor.py` |
+| **Gait supervisor thresholds and interface.** `HIGH_STEP` ≤ 0.10 m (0.12 m lift minus 0.02 m margin), `CAREFUL` above, `STOP` ≥ 0.25 m; unmeasured height → `CAREFUL`. `backend: gazebo` in sim; `backend: sport_client` is written but inert by default (see [Hardware integration status](#hardware-integration-status)). 58 unit tests pass (labeller, fusion, leg gait, clusterer, decide reference, sport_client backend). | [Height bands](traversability_sim.md#height-band-check), `scripts/nodes/gait_supervisor.py` |
 | **MPPI step-over critic builds and runs** against `nav2_mppi_controller` 1.1.20 (in the `go2-3d` image). | [MPPI critic](traversability_sim.md#mppi-critic-trials) |
+
+## Before every hardware session: pre-session checks
+
+Run these with the robot's stack up and the legs idle. Do not continue past a
+failed check.
+
+1. **`FootRaiseHeight` exists in the installed SDK.** The backend sets the foot
+   lift only through `SportClient.FootRaiseHeight`; newer SDK releases dropped some
+   sport-API calls. On the machine that will run `gait_supervisor.py`:
+
+   ```bash
+   python3 -c "from unitree_sdk2py.go2.sport.sport_client import SportClient; print([m for m in dir(SportClient) if 'Foot' in m or 'Raise' in m])"
+   ```
+
+   It must print `['FootRaiseHeight']`. If the list is empty, the newer API surface
+   must be substituted in `SportClientBackend` before the session begins (the
+   backend otherwise logs `[FATAL] ... has no FootRaiseHeight` and stays inactive).
+   The SDK accepts a delta of −0.06 to +0.03 m around the nominal foot height
+   (0.09 m), so the lift ranges 0.03–0.12 m: `NORMAL` at 4 cm is reachable, zero
+   lift is not, and anything above 0.12 m is clamped with a `[WARN]`.
+
+2. **No self-body points in the clouds the costmap reads.** The robot's obstacle
+   layer reads `/lidar3d/registered` (the sim reads the self-filtered
+   `/lidar3d/obstacle_points`); the height band layer reads `/lidar3d/obstacle_points`.
+   If either contains the robot's own legs, the costmap marks them.
+
+   ```bash
+   python3 scripts/tools/check_self_points.py 10 /lidar3d/registered /lidar3d/obstacle_points
+   ```
+
+   Each topic must report `OK (no self-body points)`. In sim, `/lidar3d/registered`
+   reports 643 body points per cloud (SELF-BODY POINTS PRESENT) and
+   `/lidar3d/obstacle_points` 0: if the robot matches, point the obstacle layer at
+   the self-filtered cloud before running.
+
+3. **First session only: measure the real foot lift** before trusting any band.
+   - `--semantic --hardware` (backend armed, `dry_run` still true): check the
+     `[DRY_RUN] would send FootRaiseHeight(...)` lines and nothing else.
+   - Then `--send-gait` with the dog on a stand or held: command `CAREFUL`
+     (`FootRaiseHeight(+0.03)`), measure the foot height with a ruler or camera,
+     and record it.
+   - Set `nominal_foot_height` and `step_over_height_max` (all configs) to the
+     measured values, not the assumed 0.09 / 0.12 m.
+
+## Hardware integration status
+
+`wifi_3d_nav.sh` has three flags, each doing one thing. **The legs are commanded
+only with all three**, and the flags are safety gates, not permission to test:
+the staged rollout still stands (on a stand, then open floor, then clutter).
+
+| Flag | Does | Requires |
+|---|---|---|
+| `--semantic` | Traversability + semantic stack: height band in the local costmap, semantic layer in both, gait supervisor, VLM node. **Pending:** it currently prints `[WARN] --semantic is pending patch script implementation` and exits, starting nothing | — |
+| `--hardware` | Gait supervisor uses `backend: sport_client` with [`scripts/config/hardware.yaml`](../../scripts/config/hardware.yaml): `enable_hardware_backend: true`, `dry_run` still true | `--semantic` (error otherwise) |
+| `--send-gait` | `dry_run: false`: gait commands reach `FootRaiseHeight` | `--hardware` (error otherwise) |
+
+The script logs the combination at startup, e.g.
+`[wifi_3d_nav] semantic=true hardware=true dry_run=false`. Without any of the
+flags `wifi_3d_nav.sh` is unchanged.
+
+**`--semantic` is pending its Nav2 patch script** (`add-traversability-layers.sh`,
+next session). It must account for how the robot's Nav2 config differs from the sim:
+
+- The robot's `go2-nav2-wifi/go2_nav2/config/lidar3d_planner.yaml` has a
+  `HeightBandLayer` in the **global** costmap with the old 0.15 / 0.25 m bands
+  (a local experiment from 2026-11-06, backup `lidar3d_planner.yaml.pre-heightband`).
+  The patch script removes it; `--undo` leaves the global costmap standard Nav2 and
+  does not restore it.
+- The robot's local costmap is a `deepcopy` of the global one
+  (`lidar3d_controller.launch.py`), so nothing can be local-only without editing
+  that launch file. The patch script edits it (backup, `--undo` restores) to add
+  the 0.12 / 0.22 m height band with `floor_estimation: histogram` to the local
+  costmap only, with the semantic layer in both, and warns that it modifies the
+  external `go2-nav2-wifi` repo.
+
+**`sport_client` backend** (`scripts/nodes/gait_supervisor.py`, written and tested
+without the robot): `FootRaiseHeight(lift − nominal_foot_height)` with lifts
+`NORMAL` 0.04 m, `HIGH_STEP` / `CAREFUL` / `STOP` 0.12 m (as in the sim).
+`unitree_sdk2py` is imported only in `SportClientBackend._init_sdk()`, and only
+with both gates open. A missing SDK, a missing `FootRaiseHeight` or a failed
+channel init log `[FATAL]` and keep it inactive; out-of-range deltas are clamped;
+SDK calls are rate-limited (2 Hz) and sent on change; three consecutive failures
+send `NORMAL` once and stop; `~/override_normal` (std_srvs/Trigger) forces
+`NORMAL` and pauses until the gait changes. If odometry or the costmap goes
+stale for 2 s, the gait is `timeout_default_gait` (`CAREFUL`), sent once, then
+nothing until the inputs return.
 
 ## 2. What is implemented but not validated
 
@@ -86,12 +172,12 @@ the single simulation record. Simulation closed 2026-11-08 on branch
 
 **Files:**
 
-- `scripts/nodes/gait_supervisor.py`: implement the `sport_client` backend
-  (currently raises `NotImplementedError`), sending gait as `FootRaiseHeight` and
-  speed. Keep `dry_run` as the default.
-- `scripts/runtime/wifi_3d_nav.sh`: add a `--semantic` toggle in the option
-  `case` block (around line 151) that starts the fusion, gait supervisor and,
-  optionally, the VLM node, and loads the semantic-mode costmaps.
+- `scripts/nodes/gait_supervisor.py`: **done**, the `sport_client` backend (see
+  [Hardware integration status](#hardware-integration-status)); still to be run on
+  the robot. Speed is not commanded through the SDK (Nav2 drives, as in sim).
+- `scripts/runtime/wifi_3d_nav.sh`: **`--hardware` and `--send-gait` done;
+  `--semantic` pending** its costmap patch script (`add-traversability-layers.sh`),
+  which edits the external `go2-nav2-wifi` config and launch file.
 - `scripts/nodes/vlm_heuristic_node.py`: `backend` accepts only `gazebo`; the robot
   camera path needs its own backend value.
 - Trial configs under `tests/traversability/` (`controller_traversability*.yaml`,

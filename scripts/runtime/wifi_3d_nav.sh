@@ -30,6 +30,12 @@
 # only to get unstuck). --omni (MPPI: also reverses and sidesteps while
 # driving), --diff or --drive diff|hybrid|omni pick another, as in wifi_nav.sh.
 #
+# Traversability (docs/simulation/HARDWARE_HANDOFF.md): --semantic, --hardware
+# (requires --semantic: sport_client backend, scripts/config/hardware.yaml, still
+# dry_run) and --send-gait (requires --hardware: dry_run false). The dog's feet are
+# commanded only with all three. --semantic is pending its costmap patch script and
+# currently stops with a warning; without these flags nothing changes.
+#
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
 # wifi_nav.sh teardown never kills it before it saves.
@@ -142,6 +148,9 @@ AI="true"            # one-and-done: YOLO + VLM + battery dock unless --no-ai
 SURVEY_AUTO="1"      # ... and the unattended survey unless --manual
 NO_AI=()
 RESUME="false"
+TRAV_SEMANTIC="false"   # --semantic   (pending: add-traversability-layers.sh)
+TRAV_HARDWARE="false"   # --hardware   sport_client backend armed, still dry_run
+TRAV_SEND_GAIT="false"  # --send-gait  dry_run false
 SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
@@ -186,11 +195,48 @@ while [ $# -gt 0 ]; do
                       if [ $# -ge 2 ]; then PASSTHRU+=("$2"); shift; fi ;;
         --drive)      DRIVE="${2:-}"; [ $# -ge 2 ] && shift ;;
         --diff|--hybrid|--omni) DRIVE="${1#--}" ;;
+        --semantic)   TRAV_SEMANTIC="true" ;;
+        --hardware)   TRAV_HARDWARE="true" ;;
+        --send-gait)  TRAV_SEND_GAIT="true" ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)            PASSTHRU+=("$1") ;;
     esac
     shift
 done
+
+# --- Traversability flags (docs/simulation/HARDWARE_HANDOFF.md) ---------------
+# Three gates, each doing one thing; reaching the dog's legs needs all three:
+#   --semantic   traversability + semantic stack (height band local, semantic both
+#                costmaps, gait supervisor, VLM node)
+#   --hardware   gait supervisor uses the sport_client backend with
+#                scripts/config/hardware.yaml: enable_hardware_backend true (requires --semantic)
+#   --send-gait  dry_run false: gait commands reach FootRaiseHeight (requires --hardware)
+# Without them nothing here changes. --semantic is not implemented yet (it needs the
+# Nav2 costmap patch script, add-traversability-layers.sh): it stops with a warning.
+TRAV_HW_CONFIG="${REPO_DIR}/scripts/config/hardware.yaml"
+GAIT_ENABLE_HARDWARE="false"
+GAIT_DRY_RUN="true"
+if [ "${TRAV_HARDWARE}" = "true" ] && [ "${TRAV_SEMANTIC}" != "true" ]; then
+    echo "[wifi_3d_nav] ERROR: --hardware requires --semantic (the gait supervisor only runs with the traversability stack)" >&2
+    exit 2
+fi
+if [ "${TRAV_SEND_GAIT}" = "true" ] && [ "${TRAV_HARDWARE}" != "true" ]; then
+    echo "[wifi_3d_nav] ERROR: --send-gait requires --hardware (dry_run false only means something with the sport_client backend)" >&2
+    exit 2
+fi
+if [ "${TRAV_HARDWARE}" = "true" ]; then
+    [ -f "${TRAV_HW_CONFIG}" ] || { echo "[wifi_3d_nav] ERROR: ${TRAV_HW_CONFIG} not found" >&2; exit 2; }
+    GAIT_ENABLE_HARDWARE="true"
+fi
+[ "${TRAV_SEND_GAIT}" = "true" ] && GAIT_DRY_RUN="false"
+export TRAV_HW_CONFIG GAIT_ENABLE_HARDWARE GAIT_DRY_RUN
+if [ "${TRAV_SEMANTIC}" = "true" ]; then
+    echo "[wifi_3d_nav] semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN}$( \
+        [ "${TRAV_HARDWARE}" = "true" ] && echo " config=${TRAV_HW_CONFIG}")"
+    echo "[wifi_3d_nav] [WARN] --semantic is pending patch script implementation (add-traversability-layers.sh);" \
+         "nothing was started. Run without --semantic/--hardware/--send-gait for the current stack." >&2
+    exit 0
+fi
 
 # Drive: hybrid by default. Nav2 drives forward-facing like a differential
 # robot (the LiDAR looks where the dog walks); stepping back or sideways
