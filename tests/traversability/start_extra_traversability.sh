@@ -9,3 +9,7 @@ bg python3 "$T/object_box_fusion.py" > "$OUT/fusion.log" 2>&1
 bg python3 "$T/gait_supervisor.py" --ros-args -p dry_run:=true -p backend:=gazebo ${GAIT_ARGS:-} > "$OUT/gait.log" 2>&1
 bg python3 "$T/save_frames.py" "$OUT/frames" > "$OUT/frames.log" 2>&1
 bg python3 "$T/save_costmap.py" "$OUT" 5 > "$OUT/save_costmap.log" 2>&1
+# LiDAR-only low-object clusters for the gait backstop (no camera, no labels); published
+# (dry_run false) so the supervisor can use them. The gait supervisor itself stays dry_run.
+bg python3 "$T/low_object_clusterer.py" --ros-args -p dry_run:=false -p backend:=gazebo > "$OUT/clusterer.log" 2>&1
+bg python3 "$T/record_json_topic.py" /objects/low_clusters_json "$OUT/low_clusters.jsonl" > "$OUT/record_clusters.log" 2>&1

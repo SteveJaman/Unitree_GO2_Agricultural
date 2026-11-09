@@ -26,7 +26,7 @@ mkdir -p "$RES"
 
 docker exec go2-lidar3d mkdir -p /tmp/trav
 for f in planner.yaml controller_baseline.yaml controller_traversability.yaml run_trial.sh route.py \
-         start_extra_traversability.sh save_frames.py record_semantic.py save_costmap.py; do
+         start_extra_traversability.sh save_frames.py record_semantic.py save_costmap.py record_json_topic.py; do
     docker cp "$HERE/$f" go2-lidar3d:/tmp/trav/$f
 done
 for f in "$HERE"/controller_traversability_*.yaml "$HERE"/planner_*.yaml "$HERE"/start_extra_traversability_*.sh; do
@@ -34,7 +34,8 @@ for f in "$HERE"/controller_traversability_*.yaml "$HERE"/planner_*.yaml "$HERE"
 done
 docker cp "$REPO/tests/nav_trial_runner.py" go2-lidar3d:/tmp/trav/nav_trial_runner.py
 docker cp "$REPO/scripts/config/ollama.yaml" go2-lidar3d:/tmp/trav/ollama.yaml
-for f in object_box_fusion.py sim_box_detector.py gait_supervisor.py vlm_heuristic_node.py semantic_labeler.py; do
+for f in object_box_fusion.py sim_box_detector.py gait_supervisor.py vlm_heuristic_node.py semantic_labeler.py \
+         low_object_clusterer.py; do
     docker cp "$REPO/scripts/nodes/$f" go2-lidar3d:/tmp/trav/$f
 done
 docker cp "$REPO/gazebo/worlds/$WORLD.json" go2-lidar3d:/tmp/trav/$WORLD.json

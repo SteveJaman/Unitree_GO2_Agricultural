@@ -19,8 +19,14 @@ the boxes missed still raises the feet.
 
 With use_semantic, a track's label from vlm_heuristic_node.py can raise the gait
 (CAUTION: at least CAREFUL, AVOID: STOP; low_confidence, i.e. no LiDAR height:
-at least CAREFUL) but never lower it. /gait/status has backstop_raised when the
-costmap backstop lifted the gait above the boxes' choice.
+at least CAREFUL) but never lower it.
+
+The backstop has two sources, both only able to raise the gait: the local
+costmap ahead, and LiDAR-only low-object clusters (low_object_clusterer.py) in the
+corridor, which find flat items no detector reports. Any cluster ahead means at
+least CAREFUL; one at or above cluster_stop_height means STOP. /gait/status has
+backstop_raised and backstop_source (costmap | cluster | costmap+cluster) when the
+backstop lifted the gait above the boxes' choice.
 
 Backends: "gazebo" publishes /gait/command, which the sim bridge turns into foot
 lift. "sport_client" (the robot) is Phase 2 hardware work and raises
@@ -31,6 +37,7 @@ Subscribes:
   /lidar3d/body_odom       nav_msgs/Odometry
   /objects/boxes_json      std_msgs/String
   /semantic/labels_json    std_msgs/String (use_semantic)
+  /objects/low_clusters    sensor_msgs/PointCloud2 (backstop_enabled): x, y, z = height, radius
 
 Publishes:
   /gait/command            std_msgs/String (gait mode name)
@@ -42,13 +49,17 @@ Parameters:
   check_rate_hz:    evaluation frequency (default 5.0)
   foot_margin:      clearance the raised foot must keep above an object (default 0.02m)
   lethal_height:    object height that means STOP (default 0.25m)
-  backstop_enabled: gait is at least the costmap's (default true)
+  backstop_enabled: gait is at least the costmap's and the clusters' (default true)
+  cluster_stop_height: cluster height that means STOP (default 0.12 m, the foot-lift ceiling)
+  cluster_max_age_s: clusters older than this are ignored (default 2.0 s)
   use_semantic:     raise the gait from semantic labels (default false)
   backend:          "gazebo" (default) | "sport_client" (NotImplementedError)
   dry_run:          if true, log commands but don't send them to the backend (default true)
 """
 import json
 import math
+import struct
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -56,6 +67,7 @@ from rclpy.qos import (
     QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy,
 )
 from nav_msgs.msg import OccupancyGrid, Odometry
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 
 COSTMAP_QOS = QoSProfile(
@@ -99,6 +111,26 @@ def gait_for_height(height, foot_height, margin, lethal_height):
     return "CAREFUL" if height < lethal_height else "STOP"
 
 
+def cluster_gait_for(clusters, stop_height):
+    """Backstop gait from LiDAR-only clusters in the corridor: CAREFUL for any
+    (unlabelled, so never assumed clearable), STOP at or above stop_height."""
+    if not clusters:
+        return None
+    return "STOP" if max(c["height"] for c in clusters) >= stop_height - 1e-9 else "CAREFUL"
+
+
+def parse_clusters(msg):
+    """/objects/low_clusters PointCloud2 (x, y, z = height, radius) -> box-like dicts."""
+    off = {f.name: f.offset for f in msg.fields}
+    out = []
+    for k in range(msg.width * msg.height):
+        base = k * msg.point_step
+        x, y, h = (struct.unpack_from("<f", msg.data, base + off[n])[0] for n in ("x", "y", "z"))
+        r = struct.unpack_from("<f", msg.data, base + off["radius"])[0] if "radius" in off else 0.1
+        out.append({"x": x, "y": y, "height": h, "sx": 2 * r, "sy": 2 * r})
+    return out
+
+
 def objects_ahead(boxes, x, y, yaw, scan_distance, scan_width):
     """Boxes whose footprint overlaps the corridor ahead of the body."""
     c, s = math.cos(yaw), math.sin(yaw)
@@ -132,6 +164,9 @@ class GaitSupervisor(Node):
         self.declare_parameter("odom_topic", "/lidar3d/body_odom")
         self.declare_parameter("command_topic", "/gait/command")
         self.declare_parameter("status_topic", "/gait/status")
+        self.declare_parameter("clusters_topic", "/objects/low_clusters")
+        self.declare_parameter("cluster_stop_height", 0.12)
+        self.declare_parameter("cluster_max_age_s", 2.0)
 
         self.backend = self.get_parameter("backend").value
         if self.backend == "sport_client":
@@ -142,6 +177,9 @@ class GaitSupervisor(Node):
         self.backstop = bool(self.get_parameter("backstop_enabled").value)
         self.use_semantic = bool(self.get_parameter("use_semantic").value)
         self.semantic = {}
+        self.clusters, self.clusters_t = [], 0.0
+        self.cluster_stop = float(self.get_parameter("cluster_stop_height").value)
+        self.cluster_max_age = float(self.get_parameter("cluster_max_age_s").value)
 
         self.foot_margin = self.get_parameter("foot_margin").value
         self.lethal_height = self.get_parameter("lethal_height").value
@@ -161,6 +199,8 @@ class GaitSupervisor(Node):
         self.create_subscription(String, g("boxes_topic"), self._boxes_cb, 10)
         if self.use_semantic:
             self.create_subscription(String, g("semantic_topic"), self._semantic_cb, 10)
+        if self.backstop:
+            self.create_subscription(PointCloud2, g("clusters_topic"), self._clusters_cb, 10)
 
         self.cmd_pub = self.create_publisher(String, g("command_topic"), 10)
         self.status_pub = self.create_publisher(String, g("status_topic"), 10)
@@ -183,6 +223,9 @@ class GaitSupervisor(Node):
     def _semantic_cb(self, msg):
         self.semantic = {o["track_id"]: (o["label"], bool(o.get("low_confidence")))
                          for o in json.loads(msg.data).get("objects", [])}
+
+    def _clusters_cb(self, msg):
+        self.clusters, self.clusters_t = parse_clusters(msg), time.monotonic()
 
     def _get_yaw(self):
         if self.odom is None:
@@ -237,7 +280,7 @@ class GaitSupervisor(Node):
             costmap_gait = "NORMAL"
 
         desired = costmap_gait
-        hits, box_gait, semantic_gait = [], None, None
+        hits, box_gait, semantic_gait, cluster_gait, n_clusters = [], None, None, None, 0
         # With odometry the gait comes from the boxes (NORMAL when none are ahead,
         # including before the first box); the costmap only enters as the backstop.
         if self.odom is not None:
@@ -262,16 +305,25 @@ class GaitSupervisor(Node):
                     desired = worst(desired, semantic_gait)
             box_gait = desired
             if self.backstop:
-                desired = worst(desired, costmap_gait)
+                fresh = time.monotonic() - self.clusters_t <= self.cluster_max_age
+                ahead = objects_ahead(self.clusters, p.x, p.y, self._get_yaw(), self.scan_dist,
+                                      self.scan_width) if fresh else []
+                n_clusters = len(ahead)
+                cluster_gait = cluster_gait_for(ahead, self.cluster_stop)
+                desired = worst(desired, costmap_gait, *([cluster_gait] if cluster_gait else []))
         # The backstop raised the gait above what the boxes (and labels) asked for:
-        # the costmap saw something ahead that the camera path did not.
+        # the costmap or a LiDAR cluster saw something ahead that the camera path did not.
         backstop_raised = box_gait is not None and desired != box_gait
+        source = None
+        if backstop_raised:
+            source = "+".join(n for n, g in (("costmap", costmap_gait), ("cluster", cluster_gait))
+                              if g and ORDER.index(g) > ORDER.index(box_gait)) or None
 
         if desired != self.current_gait:
             self.current_gait = desired
             self.get_logger().info(
-                "gait -> %s (max_cost=%d dry_run=%s)"
-                % (desired, max_cost, self.dry_run))
+                "gait -> %s (max_cost=%d source=%s dry_run=%s)"
+                % (desired, max_cost, source or "boxes", self.dry_run))
 
             if not self.dry_run:
                 self._send_gait_command(desired)
@@ -280,7 +332,8 @@ class GaitSupervisor(Node):
         self.status_pub.publish(String(data=json.dumps({
             "gait": desired, "costmap_gait": costmap_gait, "box_gait": box_gait,
             "semantic_gait": semantic_gait, "backstop": self.backstop,
-            "backstop_raised": backstop_raised, "cost": max_cost,
+            "backstop_raised": backstop_raised, "backstop_source": source,
+            "cluster_gait": cluster_gait, "clusters_ahead": n_clusters, "cost": max_cost,
             "objects": [b["class"] for b in hits],
             "foot": GAITS[desired]["foot_height"],
             "speed_pct": GAITS[desired]["speed_scale"] * 100})))
