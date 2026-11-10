@@ -80,6 +80,10 @@ To use the camera together with the LiDAR, calibrate it once
 `/camera/camera_info`, then check the alignment with
 `./scripts/tools/lidar_overlay.sh`. See [camera_lidar_fusion.md](camera_lidar_fusion.md).
 
+> **RealSense D435i (colour + depth):** separate from the front camera, it runs
+> in a Docker container on the Jetson and publishes `/camera/color/*` and
+> `/camera/aligned_depth_to_color/*` on the same domain. See [realsense.md](realsense.md).
+
 > **Note:** the hyperspectral camera on the D1-T arm is a separate device from
 > the Go2's front camera. Its ROS 2 / DDS interface will be documented in a
 > dedicated doc once the physical mount is in place.

@@ -143,6 +143,7 @@ troubleshooting cover every area and sit at its top level.
 | AI and vision | [3D Digital Twin & AI](docs/ai_and_vision/3d_nav.md) | The one command `wifi_3d_nav.sh`: live 3D map, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, export and mesh |
 | | [Camera](docs/ai_and_vision/camera.md) | Go2 camera relay, RViz display, who uses the feed |
 | | [Camera + LiDAR fusion](docs/ai_and_vision/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
+| | [RealSense D435i](docs/ai_and_vision/realsense.md) | **New:** the D435i on the Go2 in a Foxy Docker container (librealsense 2.51.1, realsense-ros 4.51.1), colour + depth to the workstation over CycloneDDS, verification and failure modes |
 | Hardware | [D1-T arm](docs/hardware/d1arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and **new:** MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
 | Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms and lab worlds |
 | | [Indoor lab world](docs/simulation/lab_office.md) | **New:** a furnished 7-room lab in Gazebo (3DGEMS desks, chairs, tables, shelves) and the hybrid vs omni mapping and navigation results, with statistics and graphs |
