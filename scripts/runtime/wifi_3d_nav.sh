@@ -26,6 +26,10 @@
 # autonomous survey with no user input: the dog maps the area, splits it into
 # rooms, names each, writes config/survey_report.json and returns to the dock.
 #
+# Obstacles: --voxel makes Nav2's obstacle layer a 3D VoxelLayer on the self-filtered
+# LiDAR (scripts/tools/nav2_voxel_layer.py); with --camera-obstacles the front camera's
+# LiDAR-scaled depth feeds the same voxel grid (camera + LiDAR fusion).
+#
 # Drive mode: hybrid by default (forward-facing Nav2; steps back or sideways
 # only to get unstuck). --omni (MPPI: also reverses and sidesteps while
 # driving), --diff or --drive diff|hybrid|omni pick another, as in wifi_nav.sh.
@@ -143,6 +147,7 @@ TWIN_CAMERA_WAIT="${TWIN_CAMERA_WAIT:-180}"
 ACTION="run"
 TWIN_MODE="auto"
 TWIN_CAMERA_OBSTACLES=0
+TWIN_VOXEL=0           # --voxel: 3D VoxelLayer obstacle layer (nav2_voxel_layer.py)
 TWIN_ROSBRIDGE="1"
 TWIN_WEB="1"
 TWIN_FOXGLOVE="0"
@@ -165,6 +170,7 @@ while [ $# -gt 0 ]; do
         --camera)     TWIN_MODE="camera" ;;
         --fusion)     TWIN_MODE="fusion" ;;
         --camera-obstacles) TWIN_CAMERA_OBSTACLES=1 ;;
+        --voxel)      TWIN_VOXEL=1 ;;
         --ai|--survey) ;;  # the defaults now (kept for old command lines)
         --no-ai)      AI="false" ;;
         --manual)     SURVEY_AUTO="0" ;;
@@ -885,6 +891,9 @@ echo "  RTAB-Map    : ${TWIN_MODE}, cloud ${TWIN_CLOUD_TOPIC}$( [ "${TWIN_MODE}"
 [ "${TWIN_CAMERA_OBSTACLES}" = 1 ] && echo "  Obstacles   : camera depth (LiDAR-scaled) -> Nav2 costmap source 'camera'"
 # wifi_nav.sh adds (or, without this flag, removes) the costmap camera source.
 export CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}"
+# wifi_nav.sh switches the obstacle layer to a VoxelLayer (or, without --voxel, back).
+export VOXEL_COSTMAP="${TWIN_VOXEL}"
+echo "  Voxels      : $( [ "${TWIN_VOXEL}" = 1 ] && echo "3D VoxelLayer (0.1 m x 16 voxels, LiDAR /lidar3d/obstacle_points$( [ "${TWIN_CAMERA_OBSTACLES}" = 1 ] && echo " + front camera")) -> /global_costmap/voxel_grid, /local_costmap/voxel_grid" || echo "2D ObstacleLayer (default; --voxel for the 3D VoxelLayer)")"
 on_if_camera() { [ "$1" = 1 ] && { [ "${TWIN_MODE}" = auto ] || [ "${TWIN_MODE}" = camera ] || [ "${TWIN_MODE}" = fusion ]; } && echo "on if the camera publishes" || echo off; }
 echo "  YOLO        : $(on_if_camera "${TWIN_YOLO}")"
 echo "  YOLO → Nav2 : ${YOLO_COSTMAP}"

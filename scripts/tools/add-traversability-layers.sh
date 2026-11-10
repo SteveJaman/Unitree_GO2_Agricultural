@@ -99,9 +99,68 @@ def load(path):
     return yaml.safe_load(open(path))
 
 
-def dump(path, doc):
-    with open(path, "w") as f:
-        yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
+# The planner YAML is edited as text, never re-dumped: other patches mark their lines
+# with comments (nav2_camera_source.py, nav2_voxel_layer.py) to undo them byte for
+# byte, and a YAML dump would drop those comments. Each edit is checked by loading
+# the result before it is written.
+def indent_of(line):
+    return len(line) - len(line.lstrip())
+
+
+def block_end(lines, start):
+    ind = indent_of(lines[start])
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].lstrip().startswith("#")
+                                or indent_of(lines[end]) > ind):
+        end += 1
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    return end
+
+
+def params_block(lines, path):
+    """(start, end, key_indent) of global_costmap.global_costmap.ros__parameters children."""
+    top = next((i for i, l in enumerate(lines) if l.rstrip() == "global_costmap:"), None)
+    if top is None:
+        sys.exit(f"ERROR: no global_costmap section in {path}")
+    rp = next((i for i in range(top, block_end(lines, top)) if lines[i].strip() == "ros__parameters:"), None)
+    if rp is None:
+        sys.exit(f"ERROR: no global_costmap ros__parameters in {path}")
+    end = block_end(lines, rp)
+    child = next(indent_of(lines[i]) for i in range(rp + 1, end) if lines[i].strip())
+    return rp + 1, end, child
+
+
+def key_line(lines, start, end, key, ind):
+    return next((i for i in range(start, end)
+                 if indent_of(lines[i]) == ind and re.match(re.escape(key) + r":(\s|$)", lines[i].strip())), None)
+
+
+def plugin_items(lines, start, end, ind):
+    """('flow', line) or ('block', [item line indexes]) for the plugins key."""
+    k = key_line(lines, start, end, "plugins", ind)
+    if k is None:
+        sys.exit("ERROR: no plugins list in global_costmap")
+    if "[" in lines[k]:
+        return "flow", k
+    # Items may sit at the key's own indent ("plugins:\n- a", PyYAML's style) or deeper.
+    items, i = [], k + 1
+    while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("#")
+                              or (re.match(r"\s*-\s", lines[i]) and indent_of(lines[i]) >= ind)):
+        if lines[i].strip().startswith("-"):
+            items.append(i)
+        i += 1
+    return "block", items
+
+
+def set_flow(line, names):
+    return re.sub(r"\[.*\]", "[" + ", ".join(names) + "]", line, count=1)
+
+
+def write_checked(path, lines, check):
+    text = "\n".join(lines)
+    check(gparams(yaml.safe_load(text), path))
+    open(path, "w").write(text)
 
 
 def gparams(doc, path):
@@ -127,13 +186,28 @@ if cmd == "legacy-present":                  # exit 0 when a global HeightBandLa
 
 elif cmd == "legacy-remove":
     path = args[0]
-    doc = load(path)
-    p = gparams(doc, path)
+    p = gparams(load(path), path)
     names = [n for n in p.get("plugins", []) if is_height_band(p, n)]
+    lines = open(path).read().split("\n")
     for n in names:
-        p["plugins"].remove(n)
-        p.pop(n, None)
-    dump(path, doc)
+        start, end, ind = params_block(lines, path)
+        kind, items = plugin_items(lines, start, end, ind)
+        if kind == "flow":
+            lines[items] = set_flow(lines[items], [x for x in p["plugins"] if x != n])
+        else:
+            for i in items:
+                if lines[i].strip().lstrip("-").strip().strip("'\"") == n:
+                    del lines[i]
+                    break
+        start, end, ind = params_block(lines, path)
+        k = key_line(lines, start, end, n, ind)
+        if k is not None:
+            del lines[k:block_end(lines, k)]
+        p["plugins"] = [x for x in p["plugins"] if x != n]
+
+    def check(q):
+        assert not any(is_height_band(q, x) for x in q["plugins"]) and not any(x in q for x in names)
+    write_checked(path, lines, check)
     print("removed global " + ", ".join(names))
 
 elif cmd == "semantic-present":
@@ -142,14 +216,35 @@ elif cmd == "semantic-present":
 
 elif cmd == "semantic-add":
     path = args[0]
-    doc = load(path)
-    p = gparams(doc, path)
-    plugins = p.setdefault("plugins", [])
+    p = gparams(load(path), path)
+    plugins = list(p.get("plugins", []))
+    lines = open(path).read().split("\n")
+    start, end, ind = params_block(lines, path)
     if "semantic_layer" not in plugins:
         at = plugins.index("inflation_layer") if "inflation_layer" in plugins else len(plugins)
         plugins.insert(at, "semantic_layer")
-    p["semantic_layer"] = dict(SEMANTIC_GLOBAL)
-    dump(path, doc)
+        kind, items = plugin_items(lines, start, end, ind)
+        if kind == "flow":
+            lines[items] = set_flow(lines[items], plugins)
+        else:
+            infl = next((i for i in items if lines[i].strip().lstrip("-").strip().strip("'\"") == "inflation_layer"),
+                        None)
+            ref = infl if infl is not None else items[-1]
+            item = lines[ref][: lines[ref].index("-")] + "- semantic_layer"
+            lines.insert(infl if infl is not None else items[-1] + 1, item)
+    start, end, ind = params_block(lines, path)
+    if key_line(lines, start, end, "semantic_layer", ind) is None:
+        pad = " " * ind
+        child = pad + "  "
+        block = [pad + "semantic_layer:"] + [
+            child + f"{k}: {str(v).lower() if isinstance(v, bool) else v}" for k, v in SEMANTIC_GLOBAL.items()]
+        infl = key_line(lines, start, end, "inflation_layer", ind)
+        at = infl if infl is not None else end
+        lines[at:at] = block
+
+    def check(q):
+        assert "semantic_layer" in q["plugins"] and q["semantic_layer"] == SEMANTIC_GLOBAL, q.get("semantic_layer")
+    write_checked(path, lines, check)
     print("global plugins: " + ", ".join(plugins))
 
 elif cmd == "launch-patch":

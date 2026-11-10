@@ -1259,6 +1259,13 @@ if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then cam_src=--enable; else cam_src=--disab
 python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src}" \
     "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
 
+# 3D voxel obstacle layer only for wifi_3d_nav.sh --voxel (VOXEL_COSTMAP=1): VoxelLayer
+# on the self-filtered LiDAR (+ the camera source with --camera-obstacles); every other
+# session puts the ObstacleLayer back (nav2_voxel_layer.py restores the file exactly).
+if [ "${VOXEL_COSTMAP:-0}" = 1 ]; then vox=--enable; else vox=--disable; fi
+python3 "${SCRIPT_DIR}/../tools/nav2_voxel_layer.py" "${vox}" \
+    "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
+
 # Live camera, LiDAR-on-camera overlay and the RTAB-Map 3D map in RViz (once per file).
 python3 "${SCRIPT_DIR}/../tools/rviz_add_camera.py" \
     "${NAV2_WIFI_DIR}/go2_nav2/rviz/lidar3d_planning.rviz" \

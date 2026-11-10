@@ -47,12 +47,16 @@ def enable(lines):
         return lines, "already enabled"
     try:
         start = next(i for i, line in enumerate(lines) if line.strip() == "global_costmap:")
-        src = next(i for i in range(start, len(lines)) if re.match(r"\s*observation_sources:\s*lidar\s*$", lines[i]))
+        # Any source list that has lidar: other patches add sources too ("lidar yolo").
+        src = next(i for i in range(start, len(lines))
+                   if re.match(r"\s*observation_sources:\s*[\"']?(\w+\s+)*lidar(\s+\w+)*[\"']?\s*(#.*)?$", lines[i]))
     except StopIteration:
-        raise SystemExit("global_costmap obstacle_layer 'observation_sources: lidar' not found")
+        raise SystemExit("global_costmap obstacle_layer 'observation_sources: ... lidar ...' not found")
     indent = lines[src][: len(lines[src]) - len(lines[src].lstrip())]
     old = lines[src]
-    lines[src] = f"{indent}observation_sources: lidar camera{TAG} was: {old.strip()}"
+    m = re.match(r"\s*observation_sources:\s*([\"']?)([^\"'#]*?)\1\s*(#.*)?$", old)
+    q, names = m.group(1), m.group(2).split()
+    lines[src] = f"{indent}observation_sources: {q}{' '.join(names + ['camera'])}{q}{TAG} was: {old.strip()}"
     # Insert right after observation_sources, as a sibling of the lidar block.
     end = src + 1
     while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > len(indent)):

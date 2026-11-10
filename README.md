@@ -136,6 +136,7 @@ troubleshooting cover every area and sit at its top level.
 | | [Development](docs/setup/development.md) | Repository layout, lint hooks, legacy code, external projects |
 | Navigation | [Explorer](docs/navigation/explorer.md) | Frontier auto-explore: running it, goal choice, parameters, fixes and sim results, known issues |
 | | [Drive modes](docs/navigation/drive_modes.md) | **New:** `--drive hybrid` (default) / `diff` / `omni`: MPPI reverse + sidestep, stuck recovery |
+| | [Voxel costmap](docs/navigation/voxel_costmap.md) | **New:** `--voxel`: 3D `VoxelLayer` on the self-filtered LiDAR, with `--camera-obstacles` fusing the front camera's LiDAR-scaled depth |
 | | [Locomotion comparison](docs/navigation/locomotion_comparison.md) | `diff` vs `hybrid` vs `omni`: sim results with plots, how to test them in the sim and on the dog |
 | | [Drift and shudder](docs/navigation/drift-and-shudder.md) | Why the dog drifts or steps in place while standing, and the fixes |
 | | [Waypoint tour](docs/navigation/tour.md) | RViz waypoint mode |
