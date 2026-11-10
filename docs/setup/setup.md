@@ -114,6 +114,14 @@ That is all. The first `./scripts/runtime/wifi_3d_nav.sh` builds the
 `go2-3d` image (RTAB-Map, YOLO, web dashboard; ~3–4 GB) and pulls
 `llava:7b` (~4.7 GB). It also starts `ollama serve` when it isn't running.
 
+Optional costmap features, per session (each is undone by a session without it):
+
+- `--voxel`: 3D `VoxelLayer` obstacle layer; with `--camera-obstacles`, front
+  camera + LiDAR fusion ([voxel_costmap.md](../navigation/voxel_costmap.md)).
+- `--semantic` (`--hardware`, `--send-gait`): traversability layout for the
+  real dog; `./scripts/setup.sh --with-traversability` applies it once at setup.
+  Read [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md) first.
+
 Every session: dog standing at the dock, then
 `./scripts/runtime/wifi_3d_nav.sh` and open `http://localhost:3000` (from
 another device: `http://<host IP>:3000`). The page exists only while the

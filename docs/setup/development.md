@@ -40,16 +40,22 @@ Unitree_GO2_Agricultural/
 │   │   ├── drive_modes.md            # --drive hybrid | diff | omni, stuck recovery
 │   │   ├── locomotion_comparison.md  # drive-mode trials (sim), how to test on the dog
 │   │   ├── drift-and-shudder.md      # pose drift / shudder investigation
+│   │   ├── voxel_costmap.md          # --voxel: 3D VoxelLayer + front-camera fusion
 │   │   ├── tour.md                   # waypoint mode setup
 │   │   └── LAB-NAV-FIXES.md          # lab fixes for upstream go2-nav2-wifi
 │   ├── ai_and_vision/
 │   │   ├── 3d_nav.md                 # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
 │   │   ├── camera.md                 # live camera setup
-│   │   └── camera_lidar_fusion.md    # camera calibration + LiDAR overlay check, --fusion
+│   │   ├── camera_lidar_fusion.md    # camera calibration + LiDAR overlay check, --fusion
+│   │   └── realsense.md              # RealSense D435i on the Go2 (boot service, topics)
 │   ├── hardware/
 │   │   └── d1arm.md                  # D1 arm runbook: direct control, Wi-Fi, Teach & Playback, MoveIt 2
 │   ├── simulation/
 │   │   ├── gazebo.md                 # Gazebo Harmonic: Go2 + D1
+│   │   ├── lab_office.md             # furnished indoor lab: drive-mode trials
+│   │   ├── hydroponic_trial.md       # MoveIt 2 + Nav2 mission at a hydroponic rack
+│   │   ├── traversability_sim.md     # traversability: height bands, gait, backstop, semantic layer
+│   │   ├── HARDWARE_HANDOFF.md       # traversability on the real dog: checks, flags, rollout
 │   │   └── unity.md                  # CMU Unity sim: explorer + Nav2
 │   └── images/                       # figures used by the docs
 ├── scripts/
@@ -119,12 +125,19 @@ Unitree_GO2_Agricultural/
 │   ├── go2_explore_panel/            # RViz panel with Auto Explore toggle
 │   ├── d1_moveit_config/             # MoveIt 2 for the D1 on the Go2 (arm_moveit.sh), inspect_plant.py
 │   ├── go2_sim_bridge/               # CMU Unity sim adapter + launch (sim_explore.sh)
-│   └── go2_vlm/                      # VLM answers -> Nav2 keepout mask + speed limit
+│   ├── go2_vlm/                      # VLM answers -> Nav2 keepout mask + speed limit
+│   ├── d1_active_perception/         # orbit_scanner: camera sweep around a plant (MoveIt)
+│   ├── semantic_traversability_layer/ # Nav2 plugins: HeightBandLayer, SemanticCostmapLayer
+│   ├── go2_semantic_msgs/            # SemanticObstacle(Array) messages
+│   └── legged_mppi_critic/           # MPPI StepOverCritic (builds in the go2-3d image)
 └── tests/                            # manual tests and mocks
     ├── test_explore.sh / test_goal_cli.sh  # explorer and Nav2 goal checks
     ├── rgbd_test.py                  # RealSense depth + colour check
     ├── test_arm_tracker_pure.py      # RealSense -> YOLO -> D1 arm tracking experiment
-    └── mock_sim.py                   # fake robot + D1 arm for the dashboard (mock_arm_twin.sh)
+    ├── mock_sim.py                   # fake robot + D1 arm for the dashboard (mock_arm_twin.sh)
+    ├── test_*.py                     # unit tests (fusion, labeller, clusterer, gait backend, leg gait)
+    ├── traversability/               # Gazebo traversability trials and analysis (run_all.sh, analyze.py)
+    └── tools/                        # go2-nav2-wifi patch tests on a mock + live costmap checks
 ```
 
 Folders: [`config/`](../../config/) · [`docs/`](../) · [`scripts/`](../../scripts/) · [`twin/`](../../twin/) · [`src/go2_explore_panel/`](../../src/go2_explore_panel/) · [`scripts/debug/`](../../scripts/debug/) · [`tests/`](../../tests/)

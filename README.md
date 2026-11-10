@@ -71,6 +71,7 @@ Other entry points:
 | `./scripts/runtime/wifi_3d_nav.sh --resume` | Restart after a battery swap; continue the last map |
 | `./scripts/runtime/wifi_nav.sh --sim --arm` | Same stack against the Gazebo simulation |
 | `./scripts/runtime/wifi_3d_nav.sh --view` | Show saved 3D scans without the robot |
+| `./scripts/runtime/wifi_3d_nav.sh --voxel --camera-obstacles` | 3D voxel costmap with front camera + LiDAR fusion (`--sim` for Gazebo) |
 
 ## Core Features
 
@@ -86,6 +87,14 @@ Other entry points:
 - **Camera obstacles:** `--camera-obstacles` turns monocular depth, scaled by
   the LiDAR, into Nav2 obstacles (glass, table legs). `--fusion` colours the
   map from the calibrated camera.
+- **3D voxel costmap:** `--voxel` makes Nav2's obstacle layer a 3D `VoxelLayer`
+  on the self-filtered LiDAR; with `--camera-obstacles` the front camera and the
+  LiDAR fill the same voxel grid ([details](docs/navigation/voxel_costmap.md)).
+- **Traversability (step over, don't detour):** LiDAR height bands in the local
+  costmap, camera + LiDAR 3D boxes choosing the foot lift, a costmap backstop and
+  an optional VLM semantic layer. Validated in Gazebo at n = 10 per mode
+  ([results](docs/simulation/traversability_sim.md)); the real-dog path is written
+  but not yet run ([hardware handoff](docs/simulation/HARDWARE_HANDOFF.md)).
 - **YOLO / VLM AI:** YOLO11s obstacles feed the Nav2 costmap. A local
   `llava:7b` (Ollama) reads the camera and pauses + docks on a blocked path.
 - **Battery dock and auto-localization:** below 15 % the dog returns to the
@@ -169,8 +178,8 @@ troubleshooting cover every area and sit at its top level.
     clone in `~/files/go2-nav2-wifi`.
 - **Ollama** with `llava:7b`, for the VLM. `wifi_3d_nav.sh` starts `ollama serve` and pulls the model
   when needed. A host with a GPU is much faster.
-- **Hardware:** Unitree Go2 EDU (Jetson). D1-T arm and a RealSense camera are
-  optional.
+- **Hardware:** Unitree Go2 EDU (Jetson). D1-T arm and a RealSense D435i
+  ([setup](docs/ai_and_vision/realsense.md)) are optional.
 - **Viewer:** any modern browser with WebGL (Chrome, Edge, Firefox).
 
 ## What This Repo Adds Over Upstream
@@ -184,6 +193,8 @@ This repo adds:
   dashboard, click-to-go snapped to safe floor, presentation meshes, `--resume`.
 - **AI:** YOLO11s obstacles in the costmap, VLM scene reasoning, battery dock,
   auto-localization, named locations.
+- **Costmap:** 3D `VoxelLayer` with front camera + LiDAR fusion (`--voxel`), and
+  traversability layers (height bands, semantic labels) as Nav2 plugins.
 - **D1-T arm control:** chained DDS commands, fold / lift / sweep, offset
   calibration, Teach & Playback for plant scans, and control over Wi-Fi with
   the arm plugged into the Go2 (robot-side TCP bridge).

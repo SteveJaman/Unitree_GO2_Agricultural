@@ -206,7 +206,14 @@ costmaps (planner and controller), using
 go2-nav2-wifi's `lidar3d_planner.yaml`. It is **marking only**: LiDAR rays
 that pass through glass can't clear what the camera marked. In any session
 without `--camera-obstacles` the source is removed again, and the file
-returns byte-for-byte to how it was.
+returns byte-for-byte to how it was. The source is appended to whatever the
+obstacle layer already reads (e.g. `lidar yolo`); before 2026-11-09 the tool
+needed exactly `lidar`, so with the YOLO source present the camera source was
+not added.
+
+With `--voxel` the obstacle layer is a 3D `VoxelLayer`, and the camera points
+go into the same voxel grid as the LiDAR's: camera + LiDAR fusion in 3D
+([voxel_costmap.md](../navigation/voxel_costmap.md)).
 
 **Safety behaviour:**
 

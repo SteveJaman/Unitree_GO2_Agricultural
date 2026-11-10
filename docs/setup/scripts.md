@@ -17,14 +17,17 @@ Python packages (cyclonedds, ruckig, ikpy; `--with-extras` adds ultralytics and
 pyrealsense2), Ollama with `llava:7b`, and the images `go2-lidar3d:local` (build
 only: `wifi_nav.sh` creates the container for the current IPs) and `go2-3d:local`.
 Prints `[✓]` for what is there, `[...] Installing` for what it adds, and a list
-of anything left to fix (exit 1).
+of anything left to fix (exit 1). `--with-traversability` also applies the
+traversability costmap layout
+([`add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh)).
+
 
 ## Runtime ([`scripts/runtime/`](../../scripts/runtime/))
 
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](../../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm (`--arm-wifi`: arm plugged into the Go2) |
-| [`wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop` |
+| [`wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop`; `--voxel` (3D VoxelLayer, [voxel_costmap.md](../navigation/voxel_costmap.md)); `--semantic` / `--hardware` / `--send-gait` (traversability, [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md)) |
 | [`wifi_mapping.sh`](../../scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`sim_explore.sh`](../../scripts/runtime/sim_explore.sh) | **Unity simulation.** CMU Unity sim + real go2_nav2 config + explorer, on the host. See [unity.md](../simulation/unity.md). For the Gazebo sim use `wifi_nav.sh --sim` ([docs/simulation/gazebo.md](../simulation/gazebo.md)) |
 | [`start_rtabmap.sh`](../../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
@@ -57,6 +60,20 @@ of anything left to fix (exit 1).
 | [`d1_arm_calibration.py`](../../scripts/nodes/d1_arm_calibration.py) | `--read` current angles / `--move` to `FOLDED_ANGLES`, then release and power off |
 | [`direct_test_movement.py`](../../scripts/nodes/direct_test_movement.py) | Small, safe movement test for the arm (uses `d1_arm_control.py`) |
 
+### Traversability nodes ([traversability_sim.md](../simulation/traversability_sim.md))
+
+Run by the sim trials (`tests/traversability/run_all.sh`); not yet started by
+`wifi_3d_nav.sh` on the robot.
+
+| Node | What it does |
+|---|---|
+| [`object_box_fusion.py`](../../scripts/nodes/object_box_fusion.py) | Camera detections + LiDAR → world-fixed 3D boxes with a height (`/objects/boxes_json`); unknown, never low, when the points don't explain a detection; `floor_estimation: fixed \| histogram` |
+| [`low_object_clusterer.py`](../../scripts/nodes/low_object_clusterer.py) | LiDAR-only low-object clusters (no camera, no labels) → `/objects/low_clusters`, for the gait backstop; finds flat items such as a keyboard (ported from Yassine Salimi's `traversability_core.py`) |
+| [`gait_supervisor.py`](../../scripts/nodes/gait_supervisor.py) | Gait from the boxes ahead (`NORMAL` / `HIGH_STEP` / `CAREFUL` / `STOP`), raised by the costmap and cluster backstop and semantic labels; `CAREFUL` when its inputs go stale. `backend: gazebo` or `sport_client` (`FootRaiseHeight`, inert unless `dry_run: false` and `enable_hardware_backend: true`) |
+| [`vlm_heuristic_node.py`](../../scripts/nodes/vlm_heuristic_node.py) | VLM (`qwen2.5vl`, Ollama) labels each tracked object `STEP_OVER` / `CAUTION` / `AVOID`, fused with the LiDAR height ([`semantic_labeler.py`](../../scripts/nodes/semantic_labeler.py)) → `/semantic/obstacles` for `SemanticCostmapLayer` |
+| [`sim_box_detector.py`](../../scripts/nodes/sim_box_detector.py) | Sim only: ground-truth 2D detections for classes YOLO lacks (a stand-in, not a vision model) |
+| [`yolo_json_node.py`](../../scripts/nodes/yolo_json_node.py) | Sim: YOLO11s on the camera → `/objects/detections_json` for the fusion |
+
 ## Arm sweeps
 
 | Script | What it does |
@@ -80,7 +97,10 @@ of anything left to fix (exit 1).
 | [`calibrate_camera.sh`](../../scripts/tools/calibrate_camera.sh) | Headless checkerboard calibration of the front camera → `config/camera/front_camera.yaml` (`/camera/camera_info`) |
 | [`lidar_overlay.sh`](../../scripts/tools/lidar_overlay.sh) | Run the camera–LiDAR overlay check next to a session (`--sim` for Gazebo) |
 | [`rviz_add_camera.py`](../../scripts/tools/rviz_add_camera.py) | Adds Front camera / LiDAR on camera / 3D map displays to the session RViz layouts (run by `wifi_nav.sh`) |
-| [`nav2_camera_source.py`](../../scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`) |
+| [`nav2_camera_source.py`](../../scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`); works alongside other sources such as YOLO's |
+| [`nav2_voxel_layer.py`](../../scripts/tools/nav2_voxel_layer.py) | `--voxel`: switches the 3D stack's obstacle layer to a Nav2 `VoxelLayer` on the self-filtered LiDAR, and back (run by `wifi_nav.sh`; byte-exact undo). See [voxel_costmap.md](../navigation/voxel_costmap.md) |
+| [`add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh) | `--semantic`: height band in the local costmap, semantic layer in both, old global height band removed; edits go2-nav2-wifi's planner YAML, controller launch file and `setup.py` (`--undo`, `--check`; `TARGET_REPO` for a mock) |
+| [`check_self_points.py`](../../scripts/tools/check_self_points.py) | Pre-session check: counts the robot's own body points in `/lidar3d/registered` and `/lidar3d/obstacle_points` |
 | [`nav_compare/`](../../scripts/tools/nav_compare/) | Drive-mode trials: `sim_trial.sh` (one unattended Gazebo run), `record.sh start/stop` (record any session, sim or real dog), `run_analysis.sh` → `analyze.py` (table + plots). See [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | [`nav2_omni.py`](../../scripts/tools/nav2_omni.py) | Switches go2-nav2-wifi between forward-only RPP and MPPI Omni ([`config/nav2/go2_omni.yaml`](../../config/nav2/go2_omni.yaml); run by `wifi_nav.sh`) |
 | [`build_go2_model.py`](../../scripts/tools/build_go2_model.py) | Unitree's `go2_description` URDF + meshes → decimated `twin/webapp/public/go2/` (PLY + `go2.json`) for the dashboard's animated Go2; run once in the `go2-3d` image (command in the file) |

@@ -277,6 +277,8 @@ Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--camera` | Force camera mode (RTAB-Map waits for frames: no map until the camera works) |
 | `--fusion` | **Calibrated camera + LiDAR fusion** instead of `--camera`: the image is undistorted with the lens calibration, so colours line up; also publishes `/camera/lidar_overlay`. YOLO and the VLM run on it too. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
+| `--voxel` | **3D voxel costmap.** Nav2's obstacle layer becomes a `VoxelLayer` (0.1 m × 16 voxels) on the self-filtered LiDAR; with `--camera-obstacles` the front camera feeds the same grid. See [voxel_costmap.md](../navigation/voxel_costmap.md) |
+| `--semantic` / `--hardware` / `--send-gait` | **Traversability on the robot**, three safety gates: costmap layout (height band local, semantic both), then the `sport_client` gait backend armed, then gait commands sent. The traversability nodes are not launched by this script yet. See [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md) |
 | `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [drive_modes.md](../navigation/drive_modes.md) and [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |
@@ -794,10 +796,20 @@ costmap fill up with obstacles that are not there, so the dog would not move:
 `wifi_3d_nav.sh` start (`TWIN_RELAX_COSTMAP=0` skips it). It raises
 `raytrace_max_range` to `obstacle_max_range`, so the next scan through a spot
 clears it, and sets `cost_scaling_factor` to 5.0. **What counts as an
-obstacle is unchanged:** the same heights (0.12–1.5 m), footprint and
+obstacle is unchanged:** the same heights (0.15–1.6 m), footprint and
 inflation radius. Real obstacles are kept; obstacles that are only in the
 LiDAR's imagination are cleared by the next scan through them. Undo:
 `./scripts/tools/relax-costmap.sh --undo`.
+
+### Costmap: 3D voxel layer (`--voxel`)
+
+`--voxel` replaces the obstacle layer with Nav2's `VoxelLayer`: obstacles are
+kept in a 1.6 m tall grid of 0.1 m voxels and cleared by 3D raytracing, and the
+global costmap's LiDAR source moves from `/lidar3d/registered` (which still holds
+the robot's own legs and arm) to the self-filtered `/lidar3d/obstacle_points`. With
+`--camera-obstacles` the front camera's LiDAR-scaled depth feeds the same grid.
+Without `--voxel` the file is restored byte for byte. Details and checks:
+[voxel_costmap.md](../navigation/voxel_costmap.md).
 
 If the dog still sees walls that are not there, check the LiDAR stream first.
 In RViz, the white points should keep refreshing. `/lidar3d/obstacle_points`

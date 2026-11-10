@@ -102,7 +102,7 @@ body, nothing balances on the feet, and a foot strike is a real contact event
 but never trips the robot. The supervisor runs in `dry_run` with
 `backend: gazebo`; `backend: sport_client` raises `NotImplementedError`.
 
-### Height-band check
+### Height bands
 
 [`HeightBandLayer`](../../src/semantic_traversability_layer/src/height_band_layer.cpp)
 classifies LiDAR points by height in the local costmap, with bands set by the
@@ -135,14 +135,14 @@ bottle, chair, backpack, book, keyboard) and from a ground-truth stand-in for
 classes COCO lacks and the modelled laptop. **The stand-in is not a vision
 model**; a real detector will do worse.
 
-### Backstop pairs
+### Backstop
 
 With `backstop_enabled` (default), the gait is never lower than what the local
 costmap ahead calls for, so an object the camera missed still raises the feet.
 `/gait/status` reports `backstop_raised` whenever the costmap lifted the gait
 above the boxes' choice.
 
-### Semantic layer results
+### Semantic layer
 
 [`vlm_heuristic_node.py`](../../scripts/nodes/vlm_heuristic_node.py) crops each
 tracked object from its 2D detection and asks `qwen2.5vl` (Ollama on the
@@ -262,7 +262,7 @@ The clean baseline is worse, as expected for a 4 cm step (clearance 21/56 →
 
 ![Trajectories per mode](results/phase4/trajectories.png)
 
-### Backstop
+### Backstop pairs
 
 `traversability` with the backstop off and on, on the fixed route (about ten
 low items), three pairs in alternating order.
@@ -280,7 +280,7 @@ keyboard (0.024 m) is 4 mm above the 0.02 m ground tolerance and the book
 ("Starting point in lethal space!", a planner limitation; the gait does not
 steer) and reached 0/3.
 
-### Height bands
+### Height-band check
 
 Synthetic objects into a standalone costmap built from the trial config
 ([`height_band_check.py`](../../tests/traversability/height_band_check.py)), raw costs:
@@ -292,7 +292,7 @@ Synthetic objects into a standalone costmap built from the trial config
 | 0.20 m | 200 | 254 (obstacle layer above 0.15 m) |
 | 0.30 m | 254 | 254 |
 
-### Semantic layer
+### Semantic layer results
 
 #### What it does and does not establish
 
@@ -379,6 +379,29 @@ The 30–60 band also matched the inflation layer's falloff next to obstacles,
 hence 38–42. Neither route forced a step-over decision, so the critic's value is
 unmeasured: a null result.
 
+## Hardware integration
+
+After the trials, the stack was prepared for the real dog (2026-11-09). The
+first hardware session starts from [HARDWARE_HANDOFF.md](HARDWARE_HANDOFF.md).
+
+- **LiDAR-only low-object clusters** ([`low_object_clusterer.py`](../../scripts/nodes/low_object_clusterer.py),
+  ported from Yassine Salimi's branch) feed the gait backstop: any cluster ahead
+  means at least `CAREFUL`, one at 0.12 m or more `STOP`. One fixed-route trial:
+  the keyboard (0.024 m) was found in 126 cluster messages and the book (0.051 m)
+  in 115, with 552 cluster-sourced backstop samples. It also reports clusters at
+  the sim's 0.5 m arena walls and from floor noise (about 0.02 m); those only raise
+  the gait, and its thresholds need tuning on the real LiDAR.
+- **Histogram floor estimation** (`floor_estimation: histogram` in `HeightBandLayer`
+  and the fusion) for a body that pitches and rolls: on a flat floor it agrees with
+  the fixed floor (estimate −0.001 m); with the floor 5 cm off it keeps the four
+  test objects in the right band where the fixed floor puts two in the wrong one.
+- **Model re-evaluation:** `qwen2.5vl` stays the default (see
+  [Model re-evaluation](#model-re-evaluation-qwen25vl-vs-llava7b)).
+- **`sport_client` gait backend, launch flags and costmap patch:** written and tested
+  without the robot; see the handoff.
+
+These additions do not change the trial results above.
+
 ## What the sim validates, and what it does not
 
 **Validates**
@@ -407,8 +430,9 @@ unmeasured: a null result.
 - **Foothold landing.** The blue mug (0.095 m) was cleared on 0 of 3 `HIGH_STEP`
   passes in one check although 12 cm is enough: the foot landed inside the
   footprint. Foothold margin may need widening; deferred to the hardware trial.
-- **Flat items are unseen.** The keyboard (0.024 m) and book (0.051 m) are rarely
-  seen by either sensor, so neither the boxes nor the backstop react to them.
+- **Flat items are unseen** by the boxes and the costmap: the keyboard (0.024 m)
+  and book (0.051 m). The LiDAR-only clusterer added afterwards finds them
+  ([Hardware integration](#hardware-integration)), checked in one trial.
 - **Toolbox.** The 0.30 m toolbox was missed by every mode on one seed (1235):
   LiDAR never measured it.
 - **VLM accuracy.** 0.47–0.68 on small rendered crops; misnames (furniture,
