@@ -62,8 +62,10 @@ traversability costmap layout
 
 ### Traversability nodes ([traversability_sim.md](../simulation/traversability_sim.md))
 
-Run by the sim trials (`tests/traversability/run_all.sh`); not yet started by
-`wifi_3d_nav.sh` on the robot.
+Started by `wifi_3d_nav.sh --semantic` through
+[`traversability_nodes.sh`](../../scripts/runtime/traversability_nodes.sh) (in `go2-lidar3d`;
+logs `go2-nav2-wifi/ws/log/3d/traversability/`), and by the sim trials
+(`tests/traversability/run_all.sh`, `lab_semantic.sh`).
 
 | Node | What it does |
 |---|---|
@@ -100,6 +102,7 @@ Run by the sim trials (`tests/traversability/run_all.sh`); not yet started by
 | [`nav2_camera_source.py`](../../scripts/tools/nav2_camera_source.py) | Adds/removes the `camera` obstacle source in go2-nav2-wifi's `lidar3d_planner.yaml` (run by `wifi_nav.sh`); works alongside other sources such as YOLO's |
 | [`nav2_voxel_layer.py`](../../scripts/tools/nav2_voxel_layer.py) | `--voxel`: switches the 3D stack's obstacle layer to a Nav2 `VoxelLayer` on the self-filtered LiDAR, and back (run by `wifi_nav.sh`; byte-exact undo). See [voxel_costmap.md](../navigation/voxel_costmap.md) |
 | [`add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh) | `--semantic`: height band in the local costmap, semantic layer in both, old global height band removed; edits go2-nav2-wifi's planner YAML, controller launch file and `setup.py` (`--undo`, `--check`; `TARGET_REPO` for a mock) |
+| [`world_objects.py`](../../scripts/tools/world_objects.py) | A Gazebo world's object list (`cluttered_items`, `lab_office`) for the sim's ground-truth detector (`--sim --semantic`) |
 | [`check_self_points.py`](../../scripts/tools/check_self_points.py) | Pre-session check: counts the robot's own body points in `/lidar3d/registered` and `/lidar3d/obstacle_points` |
 | [`nav_compare/`](../../scripts/tools/nav_compare/) | Drive-mode trials: `sim_trial.sh` (one unattended Gazebo run), `record.sh start/stop` (record any session, sim or real dog), `run_analysis.sh` → `analyze.py` (table + plots). See [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | [`nav2_omni.py`](../../scripts/tools/nav2_omni.py) | Switches go2-nav2-wifi between forward-only RPP and MPPI Omni ([`config/nav2/go2_omni.yaml`](../../config/nav2/go2_omni.yaml); run by `wifi_nav.sh`) |

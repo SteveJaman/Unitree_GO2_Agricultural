@@ -24,8 +24,9 @@ Publishes:
 Parameters: ollama_url, model, timeout_s, confidence_min, reclassify_s,
 fallback_on_timeout ("geometry": a failed request leaves the LiDAR label;
 "unknown": the track is published UNKNOWN), dry_run (default true), backend
-(only "gazebo"; the sim and the robot differ only in where the camera comes from,
-and the robot path is Phase 2 hardware work).
+("gazebo" or "robot": both read the same topics, /camera/image_raw from the Gazebo
+camera or the Go2's front camera relay; "robot" is not yet validated on real crops,
+and the LiDAR height still bounds every label).
 """
 import json
 import os
@@ -83,9 +84,8 @@ class VlmHeuristicNode(Node):
         g = lambda k: self.get_parameter(k).value  # noqa: E731
 
         self.backend = g("backend")
-        if self.backend != "gazebo":
-            raise NotImplementedError(
-                f"vlm_heuristic_node backend '{self.backend}': only 'gazebo' is implemented in sim.")
+        if self.backend not in ("gazebo", "robot"):
+            raise ValueError(f"vlm_heuristic_node backend must be gazebo or robot, not '{self.backend}'")
         self.url, self.model = g("ollama_url"), g("model")
         self.timeout_s, self.conf_min = float(g("timeout_s")), float(g("confidence_min"))
         self.reclassify_s, self.fallback = float(g("reclassify_s")), g("fallback_on_timeout")

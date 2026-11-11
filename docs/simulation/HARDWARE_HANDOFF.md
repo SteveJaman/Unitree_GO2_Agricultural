@@ -73,7 +73,7 @@ the staged rollout still stands (on a stand, then open floor, then clutter).
 
 | Flag | Does | Requires |
 |---|---|---|
-| `--semantic` | Traversability costmap layout: height band in the local costmap, semantic layer in both (`add-traversability-layers.sh`, edits `go2-nav2-wifi`). The traversability nodes (fusion, clusterer, gait supervisor, VLM) are **not launched by `wifi_3d_nav.sh` yet** | the `semantic_traversability_layer` plugin built in `go2-nav2-wifi/ws` |
+| `--semantic` | Traversability costmap layout: height band in the local costmap, semantic layer in both (`add-traversability-layers.sh`, edits `go2-nav2-wifi`), and the traversability nodes in `go2-lidar3d` (`traversability_nodes.sh`): clusterer and gait supervisor always; YOLO, 3D box fusion (histogram floor) and the VLM labeller only with a camera calibration (`config/camera/front_camera.yaml`), LiDAR only without one. Without `--hardware` the gait is logged only | the `semantic_traversability_layer` plugin built in `go2-nav2-wifi/ws` |
 | `--hardware` | Gait supervisor uses `backend: sport_client` with [`scripts/config/hardware.yaml`](../../scripts/config/hardware.yaml): `enable_hardware_backend: true`, `dry_run` still true | `--semantic` (error otherwise) |
 | `--send-gait` | `dry_run: false`: gait commands reach `FootRaiseHeight` | `--hardware` (error otherwise) |
 
@@ -81,8 +81,13 @@ The script logs the combination at startup, e.g.
 `[wifi_3d_nav] semantic=true hardware=true dry_run=false`, and the session summary
 shows the costmap layout. Without `--semantic`, a session runs
 `add-traversability-layers.sh --undo` (a no-op when the layout is already standard).
-Until the nodes are launched, `--hardware` / `--send-gait` are validated and logged
-but have nothing to act on (the script says so).
+`--hardware` is refused with `--sim`. With `--hardware`, the `gait_supervisor` section of
+`hardware.yaml` (nominal foot height, heartbeat, rate) is applied, and the session warns when
+`unitree_sdk2py` with `FootRaiseHeight` is not importable in `go2-lidar3d`. On exit (Ctrl+C),
+`wifi_nav.sh` first calls `/gait_supervisor/override_normal` (NORMAL through the backend),
+then stops the nodes, before `go2-lidar3d` goes down. Node logs:
+`go2-nav2-wifi/ws/log/3d/traversability/` (`gait.log` has the `[DRY_RUN] would send` lines).
+`TRAV_SDK_IFACE` sets the SDK's network interface; `TRAV_CAMERA=0` forces LiDAR only.
 
 **Costmap patch: [`scripts/tools/add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh)**
 (apply, `--undo`, `--check`; `TARGET_REPO` selects the clone, default
@@ -201,14 +206,15 @@ nothing until the inputs return.
 - `scripts/nodes/gait_supervisor.py`: **done**, the `sport_client` backend (see
   [Hardware integration status](#hardware-integration-status)); still to be run on
   the robot. Speed is not commanded through the SDK (Nav2 drives, as in sim).
-- `scripts/runtime/wifi_3d_nav.sh`: **flags done** (`--semantic` applies the costmap
-  patch, `--hardware`, `--send-gait`); **still to do: launch the traversability
-  nodes** (fusion, clusterer, gait supervisor with `hardware.yaml`, VLM node) when
-  `--semantic` is given.
+- `scripts/runtime/wifi_3d_nav.sh`: **done**: `--semantic` applies the costmap patch
+  and starts the nodes (`traversability_nodes.sh`), `--hardware`, `--send-gait`.
+  Tested in Gazebo (`--sim --world lab_office`, 2026-11-11), not yet on the robot.
 - `scripts/tools/add-traversability-layers.sh`: **done, tested on a mock only**;
   first real run on the campus workstation (`--check` first, then apply).
-- `scripts/nodes/vlm_heuristic_node.py`: `backend` accepts only `gazebo`; the robot
-  camera path needs its own backend value.
+- `scripts/nodes/vlm_heuristic_node.py`: `backend: robot` reads the same topics as
+  `gazebo`; not yet validated on real camera crops (the LiDAR height still bounds every label).
+- `config/camera/front_camera.yaml`: **missing**; without it `--semantic` runs LiDAR only
+  (no 3D boxes or VLM labels). Calibrate first (`./scripts/tools/calibrate_camera.sh`).
 - Trial configs under `tests/traversability/` (`controller_traversability*.yaml`,
   `planner_traversability_semantic.yaml`) are sim configs; the robot uses the
   `go2_nav2` launch parameters.

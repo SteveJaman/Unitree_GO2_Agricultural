@@ -79,4 +79,11 @@ if [ -f "$T/start_extra_${MODE}.sh" ]; then
 fi
 
 sleep 20
+# INTERACTIVE=1 (lab_semantic.sh): no scripted goals; the stack runs until stopped,
+# goals come from RViz's 2D Goal Pose on /goal_pose.
+if [ "${INTERACTIVE:-0}" = 1 ]; then
+    echo "STACK READY" > "$OUT/ready"
+    wait
+    exit 0
+fi
 python3 "$T/nav_trial_runner.py" --mode "$MODE" --out "$OUT" "${@:3}" 2>&1 | tail -12

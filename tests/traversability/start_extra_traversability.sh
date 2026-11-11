@@ -2,8 +2,9 @@
 # Real YOLO runs in its own container (run_all.sh); the stand-in reports only classes COCO lacks,
 # plus laptop: the modelled laptop is boxes, which YOLO does not recognise as one.
 export PYTHONPATH="$T:$PYTHONPATH"
-bg python3 "$T/sim_box_detector.py" --ros-args -p world:="$T/cluttered_items.json" \
-    -p only_classes:="power_strip,plant_saucer,cable,plant_pot,shoe,toolbox,trash_bin,side_table,bookshelf,file_cabinet,laptop" \
+# WORLD_JSON: the world's object list (lab_semantic.sh passes the lab_office one).
+bg python3 "$T/sim_box_detector.py" --ros-args -p world:="${WORLD_JSON:-$T/cluttered_items.json}" \
+    -p only_classes:="${ONLY_CLASSES:-power_strip,plant_saucer,cable,plant_pot,shoe,toolbox,trash_bin,side_table,bookshelf,file_cabinet,laptop}" \
     > "$OUT/detector.log" 2>&1
 bg python3 "$T/object_box_fusion.py" --ros-args -p floor_z:=0.0 ${FUSION_ARGS:-} > "$OUT/fusion.log" 2>&1
 bg python3 "$T/gait_supervisor.py" --ros-args -p dry_run:=true -p backend:=gazebo ${GAIT_ARGS:-} > "$OUT/gait.log" 2>&1

@@ -34,13 +34,24 @@
 # only to get unstuck). --omni (MPPI: also reverses and sidesteps while
 # driving), --diff or --drive diff|hybrid|omni pick another, as in wifi_nav.sh.
 #
-# Traversability (docs/simulation/HARDWARE_HANDOFF.md): --semantic, --hardware
-# (requires --semantic: sport_client backend, scripts/config/hardware.yaml, still
-# dry_run) and --send-gait (requires --hardware: dry_run false). The dog's feet are
-# commanded only with all three. --semantic applies the traversability costmap layout
-# (scripts/tools/add-traversability-layers.sh, edits the external go2-nav2-wifi repo);
-# without it the script's --undo keeps the standard layout. The traversability nodes
-# are not launched by this script yet.
+# Traversability: step over low items instead of detouring
+# (docs/simulation/traversability_sim.md, docs/simulation/HARDWARE_HANDOFF.md).
+# Three gates; the dog's feet are commanded only with all three:
+#   --semantic   costmap layout (local: obstacle, height band 0.12/0.22 m, semantic;
+#                global: obstacle, semantic; add-traversability-layers.sh edits the
+#                external go2-nav2-wifi repo) and the traversability nodes in go2-lidar3d
+#                (traversability_nodes.sh): LiDAR low-object clusters, gait supervisor
+#                (/gait/command) and, with a camera calibration, YOLO -> 3D boxes ->
+#                VLM labels (qwen2.5vl, scripts/config/ollama.yaml) -> semantic layer.
+#                --sim: the Gazebo legs follow /gait/command (SIM_GAIT=1). Robot without
+#                --hardware: gait decisions are logged only. Without --semantic the
+#                layout is undone.
+#   --hardware   (requires --semantic, not with --sim) gait supervisor backend
+#                sport_client with scripts/config/hardware.yaml, still dry_run: logs
+#                "[DRY_RUN] would send FootRaiseHeight(...)"
+#   --send-gait  (requires --hardware) dry_run false: FootRaiseHeight reaches the legs.
+#                Pre-session checks and the staged rollout: HARDWARE_HANDOFF.md.
+# On exit the gait is set back to NORMAL before the nodes stop.
 #
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
 # it (--robot-ip, --sim, ...). RTAB-Map lives in its own container so the
@@ -68,6 +79,14 @@
 #                                                    #   coloured map, /camera/lidar_overlay check
 #   ./scripts/runtime/wifi_3d_nav.sh --camera-obstacles  # + camera depth (LiDAR-scaled)
 #                                                    #   as Nav2 obstacles: glass, legs
+#   ./scripts/runtime/wifi_3d_nav.sh --voxel         # 3D VoxelLayer obstacle layer (with
+#                                                    #   --camera-obstacles: camera + LiDAR voxels)
+#   ./scripts/runtime/wifi_3d_nav.sh --semantic      # traversability: height bands, gait, VLM labels
+#   ./scripts/runtime/wifi_3d_nav.sh --semantic --hardware               # + sport_client backend, dry_run
+#   ./scripts/runtime/wifi_3d_nav.sh --semantic --hardware --send-gait   # + foot lift sent to the dog
+#   ./scripts/runtime/wifi_3d_nav.sh --sim --world lab_office --semantic --manual
+#                                                    # Gazebo lab world, traversability, goals
+#                                                    #   from RViz 2D Goal Pose / dashboard
 #   ./scripts/runtime/wifi_3d_nav.sh --rgbd          # RealSense colour/depth instead
 #   ./scripts/runtime/wifi_3d_nav.sh --foxglove      # also foxglove_bridge :8765 (alternative viewer)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-web        # rosbridge only, no dashboard server
@@ -82,6 +101,9 @@
 #                                                    #   is in ws/log/3d/boot.log either way)
 #   ./scripts/runtime/wifi_3d_nav.sh --no-hub        # no go2_hub.py: go2-3d serves the dashboard
 #                                                    #   itself, without System / Settings
+#   ./scripts/runtime/wifi_3d_nav.sh --sim --world NAME  # Gazebo world (gazebo/worlds/NAME.sdf:
+#                                                    #   agri_rooms default, lab_office,
+#                                                    #   cluttered_items, ...); spawn from NAME.json
 #
 # The dashboard (go2_hub.py, port 3000) starts first, before the image check
 # and the session: Map, System (health, "why isn't it moving?", every log,
@@ -119,6 +141,15 @@
 #   TWIN_START_TIMEOUT=300   TWIN_STOP_TIMEOUT=60 (seconds RTAB-Map gets to save)
 #   TWIN_NODE_SETTLE=10      seconds the session's go2_odom_tf must be up before its
 #                            DDS settings are copied (it is restarted once at start)
+#   Traversability (--semantic):
+#   TRAV_CAMERA=1            0 = LiDAR only (clusters + costmap backstop; no YOLO, boxes, VLM).
+#                            The camera path needs the calibration (TWIN_CAMERA_INFO_FILE,
+#                            default config/camera/front_camera.yaml; --sim: sim_front_camera.yaml)
+#                            and is skipped without it
+#   TRAV_VLM=1               0 = no VLM labels (boxes and gait only)
+#   TRAV_OLLAMA_URL=http://localhost:11434 (WSL --sim: the Windows host, the default gateway)
+#   TRAV_SDK_IFACE=          network interface for unitree_sdk2py (--hardware)
+#   Logs: $NAV2_WIFI_DIR/ws/log/3d/traversability/ (gait.log, clusterer.log, fusion.log, vlm.log, ...)
 # ---------------------------------------------------------------------------
 set -eo pipefail
 
@@ -206,29 +237,44 @@ while [ $# -gt 0 ]; do
         --semantic)   TRAV_SEMANTIC="true" ;;
         --hardware)   TRAV_HARDWARE="true" ;;
         --send-gait)  TRAV_SEND_GAIT="true" ;;
+        --world)      SIM_WORLD_ARG="${2:-}"; [ $# -ge 2 ] && shift ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)            PASSTHRU+=("$1") ;;
     esac
     shift
 done
 
+# --- Gazebo world (--sim --world NAME) ------------------------------------------
+# run_sim.sh reads SIM_WORLD / SIM_SPAWN; the spawn comes from the world's truth file.
+if [ -n "${SIM_WORLD_ARG:-}" ]; then
+    [ "${SIM}" = "true" ] || { echo "[wifi_3d_nav] ERROR: --world needs --sim" >&2; exit 2; }
+    [ -f "${REPO_DIR}/gazebo/worlds/${SIM_WORLD_ARG}.sdf" ] || {
+        echo "[wifi_3d_nav] ERROR: --world ${SIM_WORLD_ARG}: gazebo/worlds/${SIM_WORLD_ARG}.sdf not found" >&2; exit 2; }
+    export SIM_WORLD="${SIM_WORLD_ARG}"
+    if [ -z "${SIM_SPAWN:-}" ] && [ -f "${REPO_DIR}/gazebo/worlds/${SIM_WORLD}.json" ]; then
+        SIM_SPAWN="$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("spawn"); print(*s) if s else None' \
+            "${REPO_DIR}/gazebo/worlds/${SIM_WORLD}.json" 2>/dev/null || true)"
+        [ -n "${SIM_SPAWN}" ] && export SIM_SPAWN || unset SIM_SPAWN
+    fi
+fi
+
 # --- Traversability flags (docs/simulation/HARDWARE_HANDOFF.md) ---------------
 # Three gates, each doing one thing; reaching the dog's legs needs all three:
-#   --semantic   traversability + semantic stack (height band local, semantic both
-#                costmaps, gait supervisor, VLM node)
+#   --semantic   costmap layout (scripts/tools/add-traversability-layers.sh on the external
+#                go2-nav2-wifi repo; a session without it runs the --undo) and the
+#                traversability nodes (traversability_nodes.sh in go2-lidar3d)
 #   --hardware   gait supervisor uses the sport_client backend with
 #                scripts/config/hardware.yaml: enable_hardware_backend true (requires --semantic)
 #   --send-gait  dry_run false: gait commands reach FootRaiseHeight (requires --hardware)
-# --semantic applies the traversability costmap layout to the external go2-nav2-wifi
-# repo (scripts/tools/add-traversability-layers.sh); a session without it runs the
-# script's --undo, so the costmap is the standard one. The traversability nodes (fusion,
-# clusterer, gait supervisor, VLM) are not launched by this script yet, so --hardware and
-# --send-gait are validated and logged but have nothing to act on until they are.
 TRAV_HW_CONFIG="${REPO_DIR}/scripts/config/hardware.yaml"
 GAIT_ENABLE_HARDWARE="false"
 GAIT_DRY_RUN="true"
 if [ "${TRAV_HARDWARE}" = "true" ] && [ "${TRAV_SEMANTIC}" != "true" ]; then
     echo "[wifi_3d_nav] ERROR: --hardware requires --semantic (the gait supervisor only runs with the traversability stack)" >&2
+    exit 2
+fi
+if [ "${TRAV_HARDWARE}" = "true" ] && [ "${SIM}" = "true" ]; then
+    echo "[wifi_3d_nav] ERROR: --hardware is for the real dog; in --sim the Gazebo legs follow /gait/command" >&2
     exit 2
 fi
 if [ "${TRAV_SEND_GAIT}" = "true" ] && [ "${TRAV_HARDWARE}" != "true" ]; then
@@ -243,10 +289,12 @@ fi
 export TRAV_HW_CONFIG GAIT_ENABLE_HARDWARE GAIT_DRY_RUN
 echo "[wifi_3d_nav] semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN}$( \
     [ "${TRAV_HARDWARE}" = "true" ] && echo " config=${TRAV_HW_CONFIG}")"
-if [ "${TRAV_HARDWARE}" = "true" ]; then
-    echo "[wifi_3d_nav] [WARN] --hardware/--send-gait: the gait supervisor is not launched by this script yet;" \
-         "nothing commands the legs this session." >&2
+if [ "${TRAV_SEND_GAIT}" = "true" ]; then
+    echo "[wifi_3d_nav] [WARN] --send-gait: the gait supervisor will command FootRaiseHeight on the dog." \
+         "First session: dog on a stand or held (docs/simulation/HARDWARE_HANDOFF.md)." >&2
 fi
+# The Gazebo legs follow /gait/command only with the sim's gait bridge.
+[ "${TRAV_SEMANTIC}" = "true" ] && [ "${SIM}" = "true" ] && export SIM_GAIT="${SIM_GAIT:-1}"
 
 # Drive: hybrid by default. Nav2 drives forward-facing like a differential
 # robot (the LiDAR looks where the dog walks); stepping back or sideways
@@ -581,6 +629,52 @@ node_dds_env() {   # $1 = pid, $2 = uid
         | grep -E '^(ROS_DOMAIN_ID|RMW_IMPLEMENTATION|CYCLONEDDS_URI|ROS_LOCALHOST_ONLY)=' || true
 }
 
+# --semantic: the traversability nodes in go2-lidar3d (traversability_nodes.sh, as root
+# like the battery manager), YOLO for them in its own container from the go2-3d image
+# (go2-lidar3d has no ultralytics). Called from start_twin_when_ready with its env_args
+# (DDS settings), mounts (CycloneDDS config) and net. Stopped by trav_stop_cmd.
+TRAV_D=/tmp/go2-trav
+TRAV_YOLO_CONTAINER="${TRAV_YOLO_CONTAINER:-go2-trav-yolo}"
+TRAV_LOG_IN=/ws/log/3d/traversability                 # = $NAV2_WIFI_DIR/ws/log/3d/traversability
+trav_stop_cmd() {
+    echo "docker exec -u root ${CONTAINER_NAME} bash -c '[ ! -f ${TRAV_D}/traversability_nodes.sh ] || bash ${TRAV_D}/traversability_nodes.sh stop' 2>/dev/null; docker rm -f ${TRAV_YOLO_CONTAINER} >/dev/null 2>&1; true"
+}
+start_traversability() {
+    [ "${TRAV_SEMANTIC}" = "true" ] || return 0
+    local f
+    echo "[3d] Starting the traversability nodes in ${CONTAINER_NAME} (logs ${NAV2_WIFI_DIR}/ws/log/3d/traversability)..."
+    docker exec -u root "${CONTAINER_NAME}" mkdir -p "${TRAV_D}" || return 1
+    for f in "${TRAV_NODE_FILES[@]}"; do
+        docker cp "${NODES_DIR}/${f}" "${CONTAINER_NAME}:${TRAV_D}/${f}" >/dev/null || return 1
+    done
+    docker cp "${SCRIPT_DIR}/traversability_nodes.sh" "${CONTAINER_NAME}:${TRAV_D}/traversability_nodes.sh" >/dev/null || return 1
+    docker cp "${REPO_DIR}/scripts/config/ollama.yaml" "${CONTAINER_NAME}:${TRAV_D}/ollama.yaml" >/dev/null || return 1
+    [ "${TRAV_HARDWARE}" = "true" ] && { docker cp "${TRAV_HW_CONFIG}" "${CONTAINER_NAME}:${TRAV_D}/hardware.yaml" >/dev/null || return 1; }
+    [ "${TRAV_CAMERA}" = 1 ] && { docker cp "${TRAV_CAMERA_INFO}" "${CONTAINER_NAME}:${TRAV_D}/camera.yaml" >/dev/null || return 1; }
+    [ -n "${TRAV_WORLD_FILE}" ] && { docker cp "${TRAV_WORLD_FILE}" "${CONTAINER_NAME}:${TRAV_D}/world_objects.json" >/dev/null || return 1; }
+    docker exec -u root "${CONTAINER_NAME}" bash -c "sed -i 's/\r\$//' ${TRAV_D}/*.sh"
+
+    if [ "${TRAV_CAMERA}" = 1 ]; then
+        docker rm -f "${TRAV_YOLO_CONTAINER}" >/dev/null 2>&1 || true
+        docker run -d --name "${TRAV_YOLO_CONTAINER}" "${net[@]}" --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            "${env_args[@]}" "${mounts[@]}" -v "${NODES_DIR}:/nodes:ro" --entrypoint bash "${TWIN_IMAGE}" \
+            -c "source /opt/ros/humble/setup.bash; exec python3 /nodes/yolo_json_node.py$( [ -n "${TWIN_YOLO_MODEL:-}" ] && echo " --ros-args -p model:=${TWIN_YOLO_MODEL}" )" \
+            >/dev/null || echo "[3d] WARN: ${TRAV_YOLO_CONTAINER} did not start: no 3D boxes (gait from costmap and clusters)"
+    fi
+
+    local stand_in=""
+    [ -n "${TRAV_WORLD_FILE}" ] && stand_in="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stand_in"])' "${TRAV_WORLD_FILE}")"
+    docker exec -u root "${env_args[@]}" \
+        -e TRAV_SIM="$( [ "${SIM}" = "true" ] && echo 1 || echo 0 )" -e TRAV_CAMERA="${TRAV_CAMERA}" -e TRAV_VLM="${TRAV_VLM}" \
+        -e TRAV_LOG="${TRAV_LOG_IN}" -e TRAV_CAMERA_INFO="${TRAV_D}/camera.yaml" \
+        -e TRAV_WORLD_JSON="$( [ -n "${TRAV_WORLD_FILE}" ] && echo "${TRAV_D}/world_objects.json" )" -e TRAV_STAND_IN="${stand_in}" \
+        -e TRAV_OLLAMA_URL="${TRAV_OLLAMA_URL:-}" -e TRAV_HW_CONFIG="${TRAV_D}/hardware.yaml" \
+        -e GAIT_ENABLE_HARDWARE="${GAIT_ENABLE_HARDWARE}" -e GAIT_DRY_RUN="${GAIT_DRY_RUN}" -e TRAV_SDK_IFACE="${TRAV_SDK_IFACE:-}" \
+        -e TRAV_HOST_UID="$(id -u)" -e TRAV_HOST_GID="$(id -g)" \
+        "${CONTAINER_NAME}" bash "${TRAV_D}/traversability_nodes.sh" start 2>&1 | sed 's/^/    /'
+    return "${PIPESTATUS[0]}"
+}
+
 # Start go2-3d on the same DDS settings (domain, RMW, CycloneDDS config) as the
 # session's own ROS nodes. Runs in the background while wifi_nav.sh runs.
 start_twin_when_ready() {
@@ -646,6 +740,16 @@ start_twin_when_ready() {
     else
         net=(--network "container:${CONTAINER_NAME}")
         echo "[3d] NOTE: ${CONTAINER_NAME} is not host-networked (${netmode}); sharing its network namespace."
+    fi
+
+    # --semantic: independent of go2-3d, so it starts first (and a failure never stops go2-3d).
+    if [ "${TRAV_SEMANTIC}" = "true" ]; then
+        if start_traversability; then
+            boot_say "Traversability nodes running (gait: /gait/command; logs ws/log/3d/traversability)"
+        else
+            echo "[3d] WARN: traversability nodes did not all start (see above); costmap layout still applied"
+            boot_say "WARN: traversability nodes did not all start (ws/log/3d/traversability)"
+        fi
     fi
 
     twin_exists && docker rm -f "${TWIN_CONTAINER}" >/dev/null 2>&1
@@ -750,7 +854,7 @@ case "${ACTION}" in
     build)  do_build; exit 0 ;;
     export) do_export; exit 0 ;;
     view)   do_view; exit 0 ;;
-    stop)   stop_twin; echo "[3d] Done."; exit 0 ;;
+    stop)   bash -c "$(trav_stop_cmd)" >/dev/null 2>&1 || true; stop_twin; echo "[3d] Done."; exit 0 ;;
     save-location)
         twin_running || die "${TWIN_CONTAINER} is not running: start a session first (wifi_3d_nav.sh), then run this in a second terminal."
         mkdir -p "${REPO_DIR}/config"
@@ -806,6 +910,60 @@ if [ "${TWIN_MODE}" = fusion ] || [ "${TWIN_CAMERA_OBSTACLES}" = 1 ]; then
     for f in go2_fusion_camera.py go2_lidar_overlay.py go2_camera_obstacles.py; do
         [ -f "${NODES_DIR}/${f}" ] || die "${NODES_DIR}/${f} not found."
     done
+fi
+
+# --semantic: what the traversability nodes get (traversability_nodes.sh starts them
+# once the session's DDS settings are known, in start_twin_when_ready).
+TRAV_NODE_FILES=(low_object_clusterer.py gait_supervisor.py object_box_fusion.py vlm_heuristic_node.py
+                 semantic_labeler.py sim_box_detector.py yolo_json_node.py)
+TRAV_CAMERA_NOTE="off"
+TRAV_WORLD_FILE=""
+if [ "${TRAV_SEMANTIC}" = "true" ]; then
+    for f in "${TRAV_NODE_FILES[@]}"; do
+        [ -f "${NODES_DIR}/${f}" ] || die "--semantic: ${NODES_DIR}/${f} not found."
+    done
+    [ -f "${SCRIPT_DIR}/traversability_nodes.sh" ] || die "--semantic: ${SCRIPT_DIR}/traversability_nodes.sh not found."
+    TRAV_CAMERA="${TRAV_CAMERA:-1}"
+    TRAV_VLM="${TRAV_VLM:-1}"
+    if [[ " ${PASSTHRU[*]} " == *" --no-camera "* ]] || [ "${TWIN_MODE}" = lidar ]; then
+        TRAV_CAMERA=0; TRAV_CAMERA_NOTE="off (no camera this session)"
+    elif [ "${TRAV_CAMERA}" = 1 ]; then
+        if [ "${SIM}" = "true" ]; then
+            TRAV_CAMERA_INFO="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/sim_front_camera.yaml}"
+        else
+            TRAV_CAMERA_INFO="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
+        fi
+        if [ ! -f "${TRAV_CAMERA_INFO}" ]; then
+            TRAV_CAMERA=0
+            TRAV_CAMERA_NOTE="off: no camera calibration (${TRAV_CAMERA_INFO}; ./scripts/tools/calibrate_camera.sh)"
+            echo "[3d] WARN: --semantic: ${TRAV_CAMERA_INFO} not found; traversability runs LiDAR only" \
+                 "(clusters + costmap backstop, no boxes or VLM labels)."
+        fi
+    else
+        TRAV_CAMERA_NOTE="off (TRAV_CAMERA=0)"
+    fi
+    if [ "${TRAV_CAMERA}" = 1 ]; then
+        TRAV_CAMERA_NOTE="YOLO -> 3D boxes$( [ "${TRAV_VLM}" = 1 ] && echo " -> VLM labels (qwen2.5vl)" ) ($(basename "${TRAV_CAMERA_INFO}"))"
+        # Ollama for the VLM labeller: on WSL the sim's Ollama is the Windows host (the
+        # default gateway, scripts/config/ollama.yaml); elsewhere TWIN_VLM_URL's server.
+        if [ -z "${TRAV_OLLAMA_URL:-}" ]; then
+            if [ "${SIM}" = "true" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+                TRAV_OLLAMA_URL="http://$(ip route | awk '/default/ {print $3; exit}'):11434"
+            else
+                TRAV_OLLAMA_URL="$(sed -E 's#^(https?://[^/]+).*#\1#' <<< "${TWIN_VLM_URL:-http://localhost:11434}")"
+            fi
+        fi
+        if [ "${TRAV_VLM}" = 1 ] && ! curl -fsS -m 5 "${TRAV_OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+            echo "[3d] WARN: --semantic: Ollama not reachable at ${TRAV_OLLAMA_URL}; objects keep their LiDAR labels"
+        fi
+        # Sim: ground-truth stand-in for the classes YOLO lacks, from the world's truth file.
+        if [ "${SIM}" = "true" ] && [ -f "${REPO_DIR}/gazebo/worlds/${SIM_WORLD:-agri_rooms}.json" ]; then
+            TRAV_WORLD_FILE="${TWIN_LOG_DIR}/trav_world_objects.json"
+            mkdir -p "${TWIN_LOG_DIR}"
+            python3 "${REPO_DIR}/scripts/tools/world_objects.py" "${REPO_DIR}/gazebo/worlds/${SIM_WORLD:-agri_rooms}.json" \
+                "${TRAV_WORLD_FILE}" >/dev/null 2>&1 || TRAV_WORLD_FILE=""
+        fi
+    fi
 fi
 
 boot_stage checks ok "Docker, files$( [ "${TWIN_VLM}" = 1 ] && echo ", Ollama checked" )"
@@ -911,7 +1069,24 @@ case "${DRIVE}" in
     diff)   echo "  Drive       : diff (forward arcs; recovery only steps back)" ;;
 esac
 echo "  Costmap     : ${TRAV_COSTMAP}"
-echo "  Gait        : semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} dry_run=${GAIT_DRY_RUN} (gait supervisor not launched by this script yet)"
+if [ "${TRAV_SEMANTIC}" = "true" ]; then
+    if [ "${SIM}" = "true" ]; then
+        TRAV_GAIT_NOTE="gazebo: the sim's legs follow /gait/command"
+    elif [ "${GAIT_ENABLE_HARDWARE}" != "true" ]; then
+        TRAV_GAIT_NOTE="decisions logged only (/gait/command; --hardware for the sport_client backend)"
+    elif [ "${GAIT_DRY_RUN}" = "true" ]; then
+        TRAV_GAIT_NOTE="sport_client, DRY RUN: logs FootRaiseHeight, sends nothing (--send-gait to send)"
+    else
+        TRAV_GAIT_NOTE="sport_client, ACTIVE: FootRaiseHeight sent to the dog"
+    fi
+    echo "  Traversal   : LiDAR clusters + costmap backstop; camera: ${TRAV_CAMERA_NOTE}"
+    echo "  Gait        : ${TRAV_GAIT_NOTE}; NORMAL again on exit"
+    # wifi_nav.sh runs this first in its cleanup, while go2-lidar3d still runs.
+    GO2_STOP_HOOK="$(trav_stop_cmd)"
+    export GO2_STOP_HOOK
+else
+    echo "  Gait        : off (--semantic for traversability)"
+fi
 echo "  wifi_nav.sh : ${PASSTHRU[*]:-(defaults)}"
 echo "  The 3D stack starts once the session's ROS nodes are up."
 echo
@@ -942,6 +1117,8 @@ cleanup() {
         kill "${WATCH_PID}" 2>/dev/null || true
         wait "${WATCH_PID}" 2>/dev/null || true
     fi
+    # Normally already done by wifi_nav.sh's GO2_STOP_HOOK; a no-op then.
+    [ "${TRAV_SEMANTIC}" = "true" ] && { bash -c "$(trav_stop_cmd)" >/dev/null 2>&1 || true; }
     kill_battery_manager
     if [ -n "${ARM_STATE_PID}" ]; then
         kill "${ARM_STATE_PID}" 2>/dev/null || true   # stops a running orbit scan first

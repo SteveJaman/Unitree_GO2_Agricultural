@@ -1032,6 +1032,11 @@ cleanup() {
     CLEANED_UP="true"
     echo
     echo "[wifi_nav] Shutting down..."
+    # First, while go2-lidar3d still runs: wifi_3d_nav.sh --semantic sets this to put the
+    # gait back to NORMAL and stop its traversability nodes (traversability_nodes.sh stop).
+    if [ -n "${GO2_STOP_HOOK:-}" ]; then
+        timeout -k 5 40 bash -c "${GO2_STOP_HOOK}" || echo "[wifi_nav] WARN: stop hook failed: ${GO2_STOP_HOOK}"
+    fi
     # The 3D twin saves its map meanwhile (wifi_3d_nav.sh sets GO2_STOP_EARLY;
     # on the robot mapping.sh's cleanup already started this, which is harmless).
     if [ -n "${GO2_STOP_EARLY:-}" ]; then

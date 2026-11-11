@@ -13,7 +13,7 @@ Last updated: 2026-11-09
 | `--voxel`: 3D `VoxelLayer` on the self-filtered LiDAR; `--camera-obstacles` fuses the front camera into the same grid ([voxel_costmap.md](navigation/voxel_costmap.md)) | Standalone costmap check and patch tests pass; **not yet run in a full Gazebo or robot session** |
 | `--camera-obstacles` could not add its costmap source once the YOLO source was present | **Fixed** (`nav2_camera_source.py`) |
 | Traversability simulation closed: height bands, gait, backstop, semantic layer ([traversability_sim.md](simulation/traversability_sim.md)) | n = 10 per mode: 0 unsafe labels on LiDAR-measured objects, 0 backstop failures, low-item foot clearance 53 % vs 26 % (p = 0.008); the semantic layer does not improve navigation (VLM accuracy) |
-| Traversability on the robot ([HARDWARE_HANDOFF.md](simulation/HARDWARE_HANDOFF.md)): `sport_client` gait backend, `--semantic` / `--hardware` / `--send-gait`, `add-traversability-layers.sh` | Written and tested without the robot (backend with a mock SDK, patch on a mock of go2-nav2-wifi); traversability nodes not launched by `wifi_3d_nav.sh` yet; **no hardware run** |
+| Traversability on the robot ([HARDWARE_HANDOFF.md](simulation/HARDWARE_HANDOFF.md)): `sport_client` gait backend, `--semantic` / `--hardware` / `--send-gait`, `add-traversability-layers.sh` | Written and tested without the robot (backend with a mock SDK, patch on a mock of go2-nav2-wifi); `--semantic` now starts the traversability nodes (tested in Gazebo, lab world, 2026-11-11); **no hardware run** |
 | RealSense D435i boot service on the Go2 ([realsense.md](ai_and_vision/realsense.md)) | Merged from the `test` branch |
 
 ## 2026-11-05: 180° orbit sweep

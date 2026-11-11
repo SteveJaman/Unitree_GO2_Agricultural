@@ -164,7 +164,8 @@ troubleshooting cover every area and sit at its top level.
 
 > **Traversability on the real Go2:** start from [HARDWARE_HANDOFF.md](docs/simulation/HARDWARE_HANDOFF.md), the single source for hardware sessions.
 > It lists what the sim proved, the pre-session checks (SDK `FootRaiseHeight`, self-body points), and `wifi_3d_nav.sh --semantic --hardware --send-gait`.
-> The legs are commanded only with all three flags; `--semantic` sets the costmap layout, but the traversability nodes are not launched by the script yet.
+> The legs are commanded only with all three flags. `--semantic` sets the costmap layout and starts the traversability nodes (LiDAR clusters, gait supervisor and, with a camera calibration, YOLO 3D boxes and VLM labels).
+> In the sim: `./scripts/runtime/wifi_3d_nav.sh --sim --world lab_office --semantic`.
 
 ## System Requirements
 
