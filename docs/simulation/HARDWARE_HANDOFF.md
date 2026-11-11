@@ -208,7 +208,10 @@ nothing until the inputs return.
   the robot. Speed is not commanded through the SDK (Nav2 drives, as in sim).
 - `scripts/runtime/wifi_3d_nav.sh`: **done**: `--semantic` applies the costmap patch
   and starts the nodes (`traversability_nodes.sh`), `--hardware`, `--send-gait`.
-  Tested in Gazebo (`--sim --world lab_office`, 2026-11-11), not yet on the robot.
+  Tested in a full Gazebo session with RViz (`--sim --world lab_office --semantic`,
+  2026-11-11): both costmap layouts loaded, goal reached, 7 semantic obstacles, gait
+  NORMAL/CAREFUL/STOP, and on Ctrl+C `[trav] stopped` before the rest of the teardown.
+  Not yet on the robot.
 - `scripts/tools/add-traversability-layers.sh`: **done, tested on a mock only**;
   first real run on the campus workstation (`--check` first, then apply).
 - `scripts/nodes/vlm_heuristic_node.py`: `backend: robot` reads the same topics as

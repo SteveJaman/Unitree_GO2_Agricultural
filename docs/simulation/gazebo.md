@@ -157,6 +157,7 @@ These are deliberate. They're listed so test results aren't over-read:
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
 | RViz dog tilted (~20°) and heading ~120° off in `--sim` | The sim and `go2_odom_tf` use different lidar mounts. Check that `./gazebo/run_sim.sh logs` says `sensor_from_base from /nav2_cfg/lidar3d_robot_viz.yaml`, then restart the sim (`./gazebo/run_sim.sh down`). `tf2_echo lidar3d_map base_link` should show roll and pitch at 0 |
 | Headless (`SIM_GUI=0`): camera image black, LiDAR points all at the sensor | `ogre2` headless rendering fails on software GL: `SIM_RENDER_ENGINE=ogre` |
+| `--sim` session stops right after start: `qt.qpa.xcb: could not connect to display :0`, then `lidar3d-viz: child exited` | `go2-lidar3d` was created without the X socket (`/tmp/.X11-unix` missing from `docker inspect go2-lidar3d`). Recreate it from its compose files: `docker rm -f go2-lidar3d`, then `cd ~/files/go2-nav2-wifi && GO2_HOST_IP=127.0.0.1 ./setup-lidar3d.sh --laptop` (or let the next session create it) |
 | RViz shows no robot or cloud | `./gazebo/test_sim.sh` shows which topic is missing. The sim and the session must use the same `GO2_HOST_IP` |
 | `D1 download checksum mismatch` | Unitree changed the file. Inspect it, then update `D1_SHA256` in `setup_gazebo.sh` |
 
