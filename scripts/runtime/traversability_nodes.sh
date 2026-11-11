@@ -63,6 +63,8 @@ hw_gait_args() {
     python3 - "$1" <<'EOF'
 import sys, yaml
 sec = (yaml.safe_load(open(sys.argv[1])) or {}).get("gait_supervisor", {}) or {}
+if "ros__parameters" in sec:
+    sec = sec["ros__parameters"] or {}
 for k, v in sec.items():
     if k in ("backend", "enable_hardware_backend", "dry_run"):
         continue
@@ -111,7 +113,15 @@ do_start() {
     local backend="gazebo" fx fy cx cy gait_args=() cam_args=()
     [ "${TRAV_SIM:-0}" = 1 ] || backend="robot"
 
-    bg clusterer python3 "${D}/low_object_clusterer.py" --ros-args -p dry_run:=false -p backend:="${backend}"
+    # Step-over height: TRAV_STEP_OVER from wifi_3d_nav.sh (robot 0.03 m, measured; sim 0.12 m).
+    local step="${TRAV_STEP_OVER:-0.12}"
+    # Robot: ignore floor below the step-over height (the dog walks over it anyway; at
+    # 1.2 cm the real LiDAR's floor read as a 0.67 m-wide object ahead) and tile long
+    # clusters so a cabinet line beside the dog is not a circle reaching into the corridor.
+    local cluster_robot=()
+    [ "${TRAV_SIM:-0}" = 1 ] || cluster_robot=(-p h_min_m:="${step}" -p tile_m:=0.24)
+    bg clusterer python3 "${D}/low_object_clusterer.py" --ros-args -p dry_run:=false -p backend:="${backend}" \
+        -p step_limit_m:="${step}" "${cluster_robot[@]}"
 
     if [ "${TRAV_CAMERA:-0}" = 1 ]; then
         read -r fx fy cx cy < <(intrinsics "${TRAV_CAMERA_INFO}") \
@@ -124,10 +134,12 @@ do_start() {
         # Sim: the fixed floor of the n = 10 trials. Robot: the floor from a height
         # histogram (the body pitches and rolls; HARDWARE_HANDOFF.md).
         bg fusion python3 "${D}/object_box_fusion.py" --ros-args "${cam_args[@]}" \
-            -p floor_estimation:="$([ "${TRAV_SIM:-0}" = 1 ] && echo fixed || echo histogram)"
+            -p floor_estimation:="$([ "${TRAV_SIM:-0}" = 1 ] && echo fixed || echo histogram)" \
+            -p step_over_height_max:="${step}"
         if [ "${TRAV_VLM:-1}" = 1 ]; then
             bg vlm python3 "${D}/vlm_heuristic_node.py" --ros-args --params-file "${D}/ollama.yaml" "${cam_args[@]}" \
-                -p ollama_url:="${TRAV_OLLAMA_URL}" -p dry_run:=false -p backend:="${backend}"
+                -p ollama_url:="${TRAV_OLLAMA_URL}" -p dry_run:=false -p backend:="${backend}" \
+                -p step_over_height_max:="${step}" ${TRAV_VLM_MODEL:+-p model:="${TRAV_VLM_MODEL}"}
             gait_args+=(-p use_semantic:=true)
         fi
     fi
@@ -144,6 +156,8 @@ do_start() {
         # topic, which nothing on the dog listens to (gait decisions logged only).
         gait_args+=(-p backend:=gazebo -p dry_run:=true)
     fi
+    # HIGH_STEP when an object + foot_margin (0.02) fits under the foot: clearance = step + margin.
+    gait_args+=(-p foot_clearance:="$(python3 -c "print(float('${step}') + 0.02)")")
     bg gait python3 "${D}/gait_supervisor.py" --ros-args "${gait_args[@]}"
 
     sleep 6

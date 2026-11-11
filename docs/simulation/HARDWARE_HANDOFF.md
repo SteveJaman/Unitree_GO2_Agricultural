@@ -20,6 +20,47 @@ the single simulation record. Simulation closed 2026-11-08 on branch
 | **Gait supervisor thresholds and interface.** `HIGH_STEP` ≤ 0.10 m (0.12 m lift minus 0.02 m margin), `CAREFUL` above, `STOP` ≥ 0.25 m; unmeasured height → `CAREFUL`. `backend: gazebo` in sim; `backend: sport_client` is written but inert by default (see [Hardware integration status](#hardware-integration-status)). 58 unit tests pass (labeller, fusion, leg gait, clusterer, decide reference, sport_client backend). | [Height bands](traversability_sim.md#height-band-check), `scripts/nodes/gait_supervisor.py` |
 | **MPPI step-over critic builds and runs** against `nav2_mppi_controller` 1.1.20 (in the `go2-3d` image). | [MPPI critic](traversability_sim.md#mppi-critic-trials) |
 
+## Measured on the dog (2026-11-11): no foot-lift control, 4–6 cm steps
+
+**The Go2's firmware has no FootRaiseHeight.** A FootRaiseHeight request sent on
+the dog's own internal network (API 1014, delta 0.0) came back **3203**,
+`RPC_ERR_SERVER_API_NOT_IMPL`. Firmware 1.1.6+ ("motion service V2.0") replaced the
+tunable calls (FootRaiseHeight, BodyHeight, SwitchGait) with fixed gait modes, and
+`sportmodestate.foot_raise_height` now reads 0.0. So the `sport_client` backend and the
+`HIGH_STEP` / `CAREFUL` 12 cm lift cannot work on this robot; the sim's step-over
+result (53 % vs 26 %) does not carry over. Two more problems the first sessions hit,
+for anyone who tries the SDK path again: the laptop does not reach the sport service
+over Wi-Fi (0 `rt/sportmodestate` messages; walking goes through the dog-side
+`robot_sport_bridge.py`), and in `go2-lidar3d` a stale `/tmp/cdds.LOG` owned by `go2`
+makes the SDK's channel init fail for root (`fs.protected_regular=2`).
+
+**Step clearance, measured** with [`step_height_probe.py`](../../scripts/robot/step_height_probe.py)
+(feet from the leg joint angles and IMU, run on the dog) while
+[`walk_onboard.py`](../../scripts/robot/walk_onboard.py) walked the dog straight at 0.15 m/s
+on a clear floor; clearance is how high the foot's lowest point rose over the floor it
+stood on:
+
+| Walk mode | Swings | Clearance | Notes |
+|---|---|---|---|
+| `ClassicWalk` (2049) | 46 (40 steady) | **4.1–6.5 cm**, median 5.5 | Regular trot; per leg FL 5.9–6.5, FR 5.5–6.1, RR 5.4–5.7, RL 4.1–4.4 |
+| `FreeWalk` (2045, the bridge's old default) | 14 | 1.2–8.2 cm, median 4.1 | Uneven (one diagonal pair 5–8 cm, the other 2–3 cm); paused about 6 s mid-walk |
+
+One run per mode, one speed, one floor; the kinematic model matched the standing pose
+but is not checked against video. The rear-left leg's lower values may be real or model
+error.
+
+**Applied:** robot `--semantic` sessions walk in `ClassicWalk` (`GO2_SPORT_WALK_MODE=classic`,
+passed by `mapping.sh` to the dog-side bridge) and use a **3 cm** step-over height
+(`hardware.yaml` `height_band_layer.step_over_height_max`, `TRAV_STEP_OVER`): the height
+band (step over ≤ 0.03 m, caution to 0.22 m, the obstacle layer lethal from 0.12 m), the
+clusterer's step limit, the fusion and VLM bands, and the gait supervisor's
+`foot_clearance` 0.05 m (`HIGH_STEP` ≤ 3 cm, `CAREFUL` above). The sim keeps 0.12 m. The
+gait supervisor's decisions are informational on the robot: nothing can change the
+step height.
+
+**Still to do:** walk over objects of known height (2, 3, 5 cm) in `ClassicWalk`, filmed
+from the side, to confirm the 3 cm limit.
+
 ## Before every hardware session: pre-session checks
 
 Run these with the robot's stack up and the legs idle. Do not continue past a

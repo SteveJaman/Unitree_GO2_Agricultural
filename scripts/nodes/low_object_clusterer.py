@@ -26,6 +26,7 @@ Publishes:   /objects/low_clusters       sensor_msgs/PointCloud2, map frame, one
 With dry_run (default true) clusters are logged, nothing is published.
 backend: "gazebo" and "robot" read the same topics; only the cloud source differs.
 """
+
 import json
 import math
 
@@ -50,8 +51,17 @@ def estimate_floor(pts, guess, window=0.15, bin_w=0.005, min_pts=20):
 
 
 # ----------------------------------------------------------------- clustering
-def cluster_low_objects(pts, floor_z, cell=0.08, h_min=0.012, h_tall=0.5, h_scan=2.0,
-                        min_cell_pts=2, max_cells=400):
+def cluster_low_objects(
+    pts,
+    floor_z,
+    cell=0.08,
+    h_min=0.012,
+    h_tall=0.5,
+    h_scan=2.0,
+    min_cell_pts=2,
+    max_cells=400,
+    tile=0.0,
+):
     """Low-object clusters in an Nx3 map-frame cloud (Yassine's find_candidates).
 
     Cells whose highest point exceeds h_tall (walls, furniture) and their 8
@@ -59,6 +69,12 @@ def cluster_low_objects(pts, floor_z, cell=0.08, h_min=0.012, h_tall=0.5, h_scan
     of more than max_cells cells are dropped (a floor error would otherwise make
     the whole floor one cluster). Returns dicts: x, y, height (95th percentile,
     or max under 8 points), n_pts, n_cells, radius, bbox.
+
+    tile > 0 splits every cluster into square tiles of that size, each returned as
+    its own cluster: a long object (a cabinet base, a desk's drawer unit) is then a
+    row of small footprints instead of one circle around its whole bounding box,
+    which on the robot reached into the gait corridor from 0.8 m to the side and
+    made the gait STOP in an empty aisle (2026-11-11).
     """
     if len(pts) == 0:
         return []
@@ -81,7 +97,9 @@ def cluster_low_objects(pts, floor_z, cell=0.08, h_min=0.012, h_tall=0.5, h_scan
             for da in (-1, 0, 1):
                 for db in (-1, 0, 1):
                     blocked.add((a + da, b + db))
-    cand = {key for key, k in index.items() if key not in blocked and cnt[k] >= min_cell_pts}
+    cand = {
+        key for key, k in index.items() if key not in blocked and cnt[k] >= min_cell_pts
+    }
 
     lab = np.full(len(uniq), -1, dtype=np.int64)
     clusters, seen = [], set()
@@ -103,6 +121,22 @@ def cluster_low_objects(pts, floor_z, cell=0.08, h_min=0.012, h_tall=0.5, h_scan
         clusters.append(members)
 
     plab = lab[inv]
+    if tile > 0:
+        per = max(1, int(round(tile / cell)))
+        tiled = []
+        for members in clusters:
+            if len(members) > max_cells:
+                tiled.append(members)  # dropped below, as before
+                continue
+            groups = {}
+            for a, b in members:
+                groups.setdefault((a // per, b // per), []).append((a, b))
+            tiled.extend(groups.values())
+        relabel = np.full(len(uniq), -1, dtype=np.int64)
+        for cid, members in enumerate(tiled):
+            for key in members:
+                relabel[index[key]] = cid
+        clusters, plab = tiled, relabel[inv]
     out = []
     for cid, members in enumerate(clusters):
         if len(members) > max_cells:
@@ -111,15 +145,26 @@ def cluster_low_objects(pts, floor_z, cell=0.08, h_min=0.012, h_tall=0.5, h_scan
         hs, xy = h[sel], pts[sel, :2]
         height = float(np.percentile(hs, 95)) if len(hs) >= 8 else float(hs.max())
         (x0, y0), (x1, y1) = xy.min(axis=0), xy.max(axis=0)
-        out.append({"x": float(xy[:, 0].mean()), "y": float(xy[:, 1].mean()), "height": height,
-                    "n_pts": int(sel.sum()), "n_cells": len(members),
-                    "radius": float(math.hypot(x1 - x0, y1 - y0) / 2 + cell / 2),
-                    "bbox": [[float(x0), float(y0)], [float(x1), float(y1)]]})
+        out.append(
+            {
+                "x": float(xy[:, 0].mean()),
+                "y": float(xy[:, 1].mean()),
+                "height": height,
+                "n_pts": int(sel.sum()),
+                "n_cells": len(members),
+                "radius": float(math.hypot(x1 - x0, y1 - y0) / 2 + cell / 2),
+                "bbox": [[float(x0), float(y0)], [float(x1), float(y1)]],
+            }
+        )
     return out
 
 
 def in_range(clusters, x, y, min_range, max_range):
-    return [c for c in clusters if min_range <= math.hypot(c["x"] - x, c["y"] - y) <= max_range]
+    return [
+        c
+        for c in clusters
+        if min_range <= math.hypot(c["x"] - x, c["y"] - y) <= max_range
+    ]
 
 
 def main():
@@ -137,8 +182,14 @@ def main():
 
     def cloud_xyz(msg):
         off = {f.name: f.offset for f in msg.fields}
-        dt = np.dtype({"names": ["x", "y", "z"], "formats": ["<f4"] * 3,
-                       "offsets": [off["x"], off["y"], off["z"]], "itemsize": msg.point_step})
+        dt = np.dtype(
+            {
+                "names": ["x", "y", "z"],
+                "formats": ["<f4"] * 3,
+                "offsets": [off["x"], off["y"], off["z"]],
+                "itemsize": msg.point_step,
+            }
+        )
         raw = np.frombuffer(bytes(msg.data), dtype=dt, count=msg.width * msg.height)
         p = np.stack([raw["x"], raw["y"], raw["z"]], axis=1).astype(np.float64)
         return p[np.isfinite(p).all(axis=1)]
@@ -151,15 +202,18 @@ def main():
             p("clusters_topic", "/objects/low_clusters")
             p("map_frame", "lidar3d_map")
             p("base_frame", "base_link")
-            p("base_height", 0.30)        # base_link above the floor: the floor guess
+            p("base_height", 0.30)  # base_link above the floor: the floor guess
             p("accum_s", 1.5)
             p("grid_m", 0.08)
             p("h_min_m", 0.012)
             p("h_tall_m", 0.5)
-            p("step_limit_m", 0.12)       # the real Go2 foot-lift ceiling; reported per cluster
+            p(
+                "step_limit_m", 0.12
+            )  # the real Go2 foot-lift ceiling; reported per cluster
             p("min_cell_points", 2)
             p("max_cells", 400)
-            p("min_range_m", 0.25)        # self-filter residue around the body
+            p("tile_m", 0.0)  # > 0: split clusters into tiles (robot: 0.24)
+            p("min_range_m", 0.25)  # self-filter residue around the body
             p("max_range_m", 5.0)
             p("rate_hz", 2.0)
             p("dry_run", True)
@@ -167,20 +221,40 @@ def main():
             g = lambda k: self.get_parameter(k).value  # noqa: E731
             if g("backend") not in ("gazebo", "robot"):
                 raise ValueError(f"backend must be gazebo or robot, not {g('backend')}")
-            self.cfg = {k: g(k) for k in ("map_frame", "base_frame", "base_height", "accum_s", "grid_m",
-                                          "h_min_m", "h_tall_m", "step_limit_m", "min_cell_points",
-                                          "max_cells", "min_range_m", "max_range_m")}
+            self.cfg = {
+                k: g(k)
+                for k in (
+                    "map_frame",
+                    "base_frame",
+                    "base_height",
+                    "accum_s",
+                    "grid_m",
+                    "h_min_m",
+                    "h_tall_m",
+                    "step_limit_m",
+                    "min_cell_points",
+                    "max_cells",
+                    "min_range_m",
+                    "max_range_m",
+                    "tile_m",
+                )
+            }
             self.dry_run = bool(g("dry_run"))
             self.clouds = deque()
             self.tf = Buffer()
             self.listener = TransformListener(self.tf, self)
-            self.create_subscription(PointCloud2, g("cloud_topic"), self.on_cloud, qos_profile_sensor_data)
+            self.create_subscription(
+                PointCloud2, g("cloud_topic"), self.on_cloud, qos_profile_sensor_data
+            )
             self.pub = self.create_publisher(PointCloud2, g("clusters_topic"), 10)
-            self.json_pub = self.create_publisher(String, g("clusters_topic") + "_json", 10)
+            self.json_pub = self.create_publisher(
+                String, g("clusters_topic") + "_json", 10
+            )
             self.create_timer(1.0 / float(g("rate_hz")), self.tick)
             self.get_logger().info(
                 f"low_object_clusterer dry_run={self.dry_run} backend={g('backend')} cloud={g('cloud_topic')} "
-                f"grid={self.cfg['grid_m']} h_min={self.cfg['h_min_m']} step_limit={self.cfg['step_limit_m']}")
+                f"grid={self.cfg['grid_m']} h_min={self.cfg['h_min_m']} step_limit={self.cfg['step_limit_m']}"
+            )
 
         def on_cloud(self, msg):
             now = time.monotonic()
@@ -197,35 +271,66 @@ def main():
             except TransformException as ex:
                 self.get_logger().warn(str(ex), throttle_duration_sec=5.0)
                 return
-            bx, by, bz = tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z
+            bx, by, bz = (
+                tf.transform.translation.x,
+                tf.transform.translation.y,
+                tf.transform.translation.z,
+            )
             pts = np.concatenate([p for _, p in self.clouds])
             pts = pts[np.hypot(pts[:, 0] - bx, pts[:, 1] - by) <= c["max_range_m"]]
             floor_z = estimate_floor(pts, bz - c["base_height"])
-            clusters = cluster_low_objects(pts, floor_z, cell=c["grid_m"], h_min=c["h_min_m"],
-                                           h_tall=c["h_tall_m"], min_cell_pts=c["min_cell_points"],
-                                           max_cells=c["max_cells"])
+            clusters = cluster_low_objects(
+                pts,
+                floor_z,
+                cell=c["grid_m"],
+                h_min=c["h_min_m"],
+                h_tall=c["h_tall_m"],
+                min_cell_pts=c["min_cell_points"],
+                max_cells=c["max_cells"],
+                tile=c["tile_m"],
+            )
             clusters = in_range(clusters, bx, by, c["min_range_m"], c["max_range_m"])
             for cl in clusters:
                 cl["above_step_limit"] = cl["height"] >= c["step_limit_m"]
             if self.dry_run:
-                self.get_logger().info(f"dry_run: floor_z={floor_z:.3f} clusters={len(clusters)}",
-                                       throttle_duration_sec=5.0)
+                self.get_logger().info(
+                    f"dry_run: floor_z={floor_z:.3f} clusters={len(clusters)}",
+                    throttle_duration_sec=5.0,
+                )
                 return
             msg = PointCloud2()
             msg.header.frame_id = c["map_frame"]
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.height, msg.width = 1, len(clusters)
-            msg.fields = [PointField(name=n, offset=4 * k, datatype=PointField.FLOAT32, count=1)
-                          for k, n in enumerate(("x", "y", "z", "radius"))]
+            msg.fields = [
+                PointField(name=n, offset=4 * k, datatype=PointField.FLOAT32, count=1)
+                for k, n in enumerate(("x", "y", "z", "radius"))
+            ]
             msg.point_step, msg.row_step = 16, 16 * len(clusters)
             msg.is_dense = True
-            msg.data = b"".join(struct.pack("<ffff", cl["x"], cl["y"], cl["height"], cl["radius"])
-                                for cl in clusters)
+            msg.data = b"".join(
+                struct.pack("<ffff", cl["x"], cl["y"], cl["height"], cl["radius"])
+                for cl in clusters
+            )
             self.pub.publish(msg)
-            self.json_pub.publish(String(data=json.dumps(
-                {"stamp": time.time(), "floor_z": round(floor_z, 4),
-                 "clusters": [{k: (round(v, 3) if isinstance(v, float) else v) for k, v in cl.items()
-                               if k != "bbox"} for cl in clusters]})))
+            self.json_pub.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "stamp": time.time(),
+                            "floor_z": round(floor_z, 4),
+                            "clusters": [
+                                {
+                                    k: (round(v, 3) if isinstance(v, float) else v)
+                                    for k, v in cl.items()
+                                    if k != "bbox"
+                                }
+                                for cl in clusters
+                            ],
+                        }
+                    )
+                )
+            )
 
     from rclpy.executors import ExternalShutdownException
 
@@ -233,7 +338,10 @@ def main():
     node = LowObjectClusterer()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):   # SIGINT / SIGTERM from the trial scripts
+    except (
+        KeyboardInterrupt,
+        ExternalShutdownException,
+    ):  # SIGINT / SIGTERM from the trial scripts
         pass
     finally:
         node.destroy_node()

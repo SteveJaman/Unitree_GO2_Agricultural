@@ -138,7 +138,7 @@
 #   TWIN_EXPORT_ARGS="--voxel 0.02"        extra rtabmap-export options (--export)
 #   TWIN_MESH_TRIANGLES=300000  TWIN_MESH_ARGS="--depth 10 --trim 0.08"   (--mesh)
 #   TWIN_DB_DIR=$NAV2_WIFI_DIR/ws/maps/rtabmap   TWIN_LOG_DIR=$NAV2_WIFI_DIR/ws/log/3d
-#   TWIN_START_TIMEOUT=300   TWIN_STOP_TIMEOUT=60 (seconds RTAB-Map gets to save)
+#   TWIN_START_TIMEOUT=600   TWIN_STOP_TIMEOUT=60 (seconds RTAB-Map gets to save)
 #   TWIN_NODE_SETTLE=10      seconds the session's go2_odom_tf must be up before its
 #                            DDS settings are copied (it is restarted once at start)
 #   Traversability (--semantic):
@@ -166,7 +166,7 @@ TWIN_CONTAINER="${TWIN_CONTAINER:-go2-3d}"
 TWIN_IMAGE="${TWIN_IMAGE:-go2-3d:local}"
 TWIN_DB_DIR="${TWIN_DB_DIR:-${NAV2_WIFI_DIR}/ws/maps/rtabmap}"
 TWIN_LOG_DIR="${TWIN_LOG_DIR:-${NAV2_WIFI_DIR}/ws/log/3d}"
-TWIN_START_TIMEOUT="${TWIN_START_TIMEOUT:-300}"
+TWIN_START_TIMEOUT="${TWIN_START_TIMEOUT:-600}"   # a session that rebuilds go2-lidar3d took 5 min (2026-11-11)
 TWIN_STOP_TIMEOUT="${TWIN_STOP_TIMEOUT:-60}"
 TWIN_NODE_SETTLE="${TWIN_NODE_SETTLE:-10}"
 TWIN_CLOUD_TOPIC="${TWIN_CLOUD_TOPIC:-/lidar3d/registered}"
@@ -668,7 +668,7 @@ start_traversability() {
         -e TRAV_SIM="$( [ "${SIM}" = "true" ] && echo 1 || echo 0 )" -e TRAV_CAMERA="${TRAV_CAMERA}" -e TRAV_VLM="${TRAV_VLM}" \
         -e TRAV_LOG="${TRAV_LOG_IN}" -e TRAV_CAMERA_INFO="${TRAV_D}/camera.yaml" \
         -e TRAV_WORLD_JSON="$( [ -n "${TRAV_WORLD_FILE}" ] && echo "${TRAV_D}/world_objects.json" )" -e TRAV_STAND_IN="${stand_in}" \
-        -e TRAV_OLLAMA_URL="${TRAV_OLLAMA_URL:-}" -e TRAV_HW_CONFIG="${TRAV_D}/hardware.yaml" \
+        -e TRAV_OLLAMA_URL="${TRAV_OLLAMA_URL:-}" -e TRAV_HW_CONFIG="${TRAV_D}/hardware.yaml" -e TRAV_STEP_OVER="${TRAV_STEP_OVER}" -e TRAV_VLM_MODEL="${TRAV_VLM_MODEL:-}" \
         -e GAIT_ENABLE_HARDWARE="${GAIT_ENABLE_HARDWARE}" -e GAIT_DRY_RUN="${GAIT_DRY_RUN}" -e TRAV_SDK_IFACE="${TRAV_SDK_IFACE:-}" \
         -e TRAV_HOST_UID="$(id -u)" -e TRAV_HOST_GID="$(id -g)" \
         "${CONTAINER_NAME}" bash "${TRAV_D}/traversability_nodes.sh" start 2>&1 | sed 's/^/    /'
@@ -681,11 +681,26 @@ start_twin_when_ready() {
     local deadline pid uid node env_lines line key val uri path netmode host_ip mode yolo vlm battery
     local env_args=() mounts=() net=()
 
-    deadline=$(( $(date +%s) + TWIN_START_TIMEOUT ))
+    local wait_from now started hard_end
+    wait_from=$(date +%s)
+    hard_end=$(( wait_from + 3 * TWIN_START_TIMEOUT ))
     boot_stage twin run "waiting for the navigation session"
     echo "[3d] Waiting for the wifi_nav.sh session's go2_odom_tf node (up to ${TWIN_START_TIMEOUT} s)..."
     env_lines=""
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while :; do
+        # A session that rebuilds the go2-lidar3d image restarts the container minutes
+        # later (2026-11-11: the 300 s ran out during a 5 min build, so go2-3d and the
+        # traversability nodes never started). Count from the container's (re)start, and
+        # not at all while it is down; at most 3x the timeout in total.
+        now=$(date +%s)
+        if [ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null)" = true ]; then
+            started=$(date -d "$(docker inspect -f '{{.State.StartedAt}}' "${CONTAINER_NAME}")" +%s 2>/dev/null || echo 0)
+        else
+            started=${now}
+        fi
+        [ "${started}" -gt "${wait_from}" ] || started=${wait_from}
+        deadline=$(( started + TWIN_START_TIMEOUT ))
+        [ "${now}" -lt "${deadline}" ] && [ "${now}" -lt "${hard_end}" ] || break
         node="$(session_ros_pid)"
         if [ -n "${node}" ]; then
             read -r pid uid <<< "${node}"
@@ -933,6 +948,15 @@ if [ "${TRAV_SEMANTIC}" = "true" ]; then
         else
             TRAV_CAMERA_INFO="${TWIN_CAMERA_INFO_FILE:-${REPO_DIR}/config/camera/front_camera.yaml}"
         fi
+        # No calibration yet: the 110 deg lens estimate (the field of view whose LiDAR fit was
+        # best on the dog) keeps the camera path running, with a warning. TWIN_CAMERA_INFO_FILE wins.
+        if [ ! -f "${TRAV_CAMERA_INFO}" ] && [ -z "${TWIN_CAMERA_INFO_FILE:-}" ] && [ "${SIM}" != "true" ] \
+           && [ -f "${REPO_DIR}/config/camera/front_camera_estimate_110deg.yaml" ]; then
+            TRAV_CAMERA_INFO="${REPO_DIR}/config/camera/front_camera_estimate_110deg.yaml"
+            echo "[3d] WARN: --semantic: no camera calibration; boxes and VLM crops use the 110 deg lens" \
+                 "ESTIMATE ($(basename "${TRAV_CAMERA_INFO}")): boxes may sit off their objects." \
+                 "Calibrate: ./scripts/tools/calibrate_camera.sh" >&2
+        fi
         if [ ! -f "${TRAV_CAMERA_INFO}" ]; then
             TRAV_CAMERA=0
             TRAV_CAMERA_NOTE="off: no camera calibration (${TRAV_CAMERA_INFO}; ./scripts/tools/calibrate_camera.sh)"
@@ -943,7 +967,12 @@ if [ "${TRAV_SEMANTIC}" = "true" ]; then
         TRAV_CAMERA_NOTE="off (TRAV_CAMERA=0)"
     fi
     if [ "${TRAV_CAMERA}" = 1 ]; then
-        TRAV_CAMERA_NOTE="YOLO -> 3D boxes$( [ "${TRAV_VLM}" = 1 ] && echo " -> VLM labels (qwen2.5vl)" ) ($(basename "${TRAV_CAMERA_INFO}"))"
+        # VLM model: the sim's trials ran qwen2.5vl (scripts/config/ollama.yaml); the robot
+        # uses hardware.yaml's (llava:7b, the model pulled on the workstation).
+        if [ "${SIM}" != "true" ] && [ -z "${TRAV_VLM_MODEL:-}" ]; then
+            TRAV_VLM_MODEL="$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["vlm_heuristic_node"]["ros__parameters"]["model"])' "${TRAV_HW_CONFIG}" 2>/dev/null || true)"
+        fi
+        TRAV_CAMERA_NOTE="YOLO -> 3D boxes$( [ "${TRAV_VLM}" = 1 ] && echo " -> VLM labels (${TRAV_VLM_MODEL:-qwen2.5vl})" ) ($(basename "${TRAV_CAMERA_INFO}"))"
         # Ollama for the VLM labeller: on WSL the sim's Ollama is the Windows host (the
         # default gateway, scripts/config/ollama.yaml); elsewhere TWIN_VLM_URL's server.
         if [ -z "${TRAV_OLLAMA_URL:-}" ]; then
@@ -955,6 +984,9 @@ if [ "${TRAV_SEMANTIC}" = "true" ]; then
         fi
         if [ "${TRAV_VLM}" = 1 ] && ! curl -fsS -m 5 "${TRAV_OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
             echo "[3d] WARN: --semantic: Ollama not reachable at ${TRAV_OLLAMA_URL}; objects keep their LiDAR labels"
+        elif [ "${TRAV_VLM}" = 1 ] && [ -n "${TRAV_VLM_MODEL:-}" ] \
+             && ! curl -fsS -m 5 "${TRAV_OLLAMA_URL}/api/tags" 2>/dev/null | grep -q "\"${TRAV_VLM_MODEL}"; then
+            echo "[3d] WARN: --semantic: ${TRAV_VLM_MODEL} is not pulled in Ollama (ollama pull ${TRAV_VLM_MODEL}); objects keep their LiDAR labels"
         fi
         # Sim: ground-truth stand-in for the classes YOLO lacks, from the world's truth file.
         if [ "${SIM}" = "true" ] && [ -f "${REPO_DIR}/gazebo/worlds/${SIM_WORLD:-agri_rooms}.json" ]; then
@@ -1010,13 +1042,26 @@ fi
 # layout (a no-op when it is already standard). Runs after the patches above, so its
 # backup holds their result.
 TRAV_ADD="${REPO_DIR}/scripts/tools/add-traversability-layers.sh"
+# Step-over height for the height band and the traversability nodes: the robot's value
+# is measured (hardware.yaml, ClassicWalk lifts 4-6.5 cm, 2026-11-11); the sim keeps the
+# 0.12 m its trials were validated with. TRAV_STEP_OVER in the environment wins.
+if [ "${SIM}" = "true" ]; then
+    TRAV_STEP_OVER="${TRAV_STEP_OVER:-0.12}"
+else
+    TRAV_STEP_OVER="${TRAV_STEP_OVER:-$(python3 -c 'import sys, yaml; print(float(yaml.safe_load(open(sys.argv[1]))["height_band_layer"]["ros__parameters"]["step_over_height_max"]))' "${TRAV_HW_CONFIG}" 2>/dev/null || echo 0.03)}"
+    # The dog's own steps are the only foot clearance there is (no FootRaiseHeight on its
+    # firmware): ClassicWalk steps evenly, FreeWalk did not (mapping.sh passes this to
+    # the dog-side robot_sport_bridge.py).
+    [ "${TRAV_SEMANTIC}" = "true" ] && export GO2_SPORT_WALK_MODE="${GO2_SPORT_WALK_MODE:-classic}"
+fi
+export TRAV_STEP_OVER
 if [ "${TRAV_SEMANTIC}" = "true" ]; then
     [ -d "${NAV2_WIFI_DIR}/ws/install/semantic_traversability_layer" ] || \
         die "--semantic: the semantic_traversability_layer plugin is not built in ${NAV2_WIFI_DIR}/ws (colcon build src/semantic_traversability_layer first)."
     echo "[3d] Traversability costmap layout (add-traversability-layers.sh, edits ${NAV2_WIFI_DIR})..."
     TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" 2>&1 | sed 's/^/    /' ||
         die "--semantic: add-traversability-layers.sh failed (see above); the costmap was not changed as asked."
-    TRAV_COSTMAP="traversability (local: obstacle, height band 0.12/0.22 m, semantic, inflation; global: obstacle, semantic, inflation)"
+    TRAV_COSTMAP="traversability (local: obstacle, height band ${TRAV_STEP_OVER}/0.22 m, semantic, inflation; global: obstacle, semantic, inflation)$( [ -n "${GO2_SPORT_WALK_MODE:-}" ] && echo "; dog walks ${GO2_SPORT_WALK_MODE}" )"
 else
     if TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" --undo 2>&1 | sed 's/^/    /'; then
         TRAV_COSTMAP="standard (no --semantic)"

@@ -309,7 +309,8 @@ elif cmd == "write-local":
             "plugin": "semantic_traversability_layer/HeightBandLayer",
             "enabled": True, "topic": "/lidar3d/obstacle_points",
             "ground_z": 0.0, "ground_tolerance": 0.02, "floor_estimation": "histogram",
-            "step_over_height_max": 0.12, "lethal_height_min": 0.22,
+            "step_over_height_max": float(os.environ.get("TRAV_STEP_OVER", "0.12")),
+            "lethal_height_min": 0.22,
             "min_range": 0.25, "max_range": 5.0, "step_over_cost": 40, "caution_cost": 200,
         },
         "semantic_layer": {
@@ -321,8 +322,8 @@ elif cmd == "write-local":
     with open(path, "w") as f:
         f.write(f"# Written by Unitree_GO2_Agricultural scripts/tools/{MARK}; removed by --undo.\n"
                 "# Local-costmap-only layers, merged by lidar3d_controller.launch.py on top of the\n"
-                "# copy of the global costmap. Bands from the sim: step over <= 0.12 m (the Go2's\n"
-                "# foot-lift ceiling, TODO: measure on the dog), lethal >= 0.22 m.\n")
+                "# copy of the global costmap. Step over <= TRAV_STEP_OVER (wifi_3d_nav.sh: 0.03 m\n"
+                "# on the robot, measured; 0.12 m in the sim), lethal >= 0.22 m.\n")
         yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
     print("wrote " + path)
 

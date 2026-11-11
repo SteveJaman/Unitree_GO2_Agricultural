@@ -1,21 +1,30 @@
 # Hardware configuration for the traversability stack on the real Go2.
-# Loaded only by `wifi_3d_nav.sh --semantic --hardware` (see docs/simulation/HARDWARE_HANDOFF.md).
+# Read by `wifi_3d_nav.sh --semantic` (step-over height and VLM model on the robot); the gait
+# section is passed to the gait supervisor with --hardware (see docs/simulation/HARDWARE_HANDOFF.md).
 # Defaults keep the robot's legs untouched: --hardware turns enable_hardware_backend on,
 # and only --send-gait turns dry_run off. The values below are the safe resting state.
 
 gait_supervisor:
-  backend: sport_client
-  enable_hardware_backend: false
-  dry_run: true
-  nominal_foot_height: 0.09  # TODO: measure on real dog
-  heartbeat_timeout_s: 2.0
-  max_command_rate_hz: 2.0
+  ros__parameters:
+    backend: sport_client
+    enable_hardware_backend: false
+    dry_run: true
+    nominal_foot_height: 0.09  # unused: the dog's firmware has no FootRaiseHeight (3203, 2026-11-11)
+    heartbeat_timeout_s: 2.0
+    max_command_rate_hz: 2.0
 
 height_band_layer:
-  step_over_height_max: 0.12  # TODO: update after measuring real lift
-  floor_estimation: histogram  # hardware config uses histogram
-  min_range: 0.25
+  ros__parameters:
+    # Measured on the dog 2026-11-11 (scripts/robot/step_height_probe.py, joint angles):
+    # ClassicWalk lifts each foot 4.1-6.5 cm over its floor (median 5.5, lowest leg 4.1),
+    # FreeWalk 1.2-8.2 cm with pauses. Step over only <= 3 cm, in ClassicWalk; the
+    # firmware has no foot-lift control. wifi_3d_nav.sh uses this on the robot for the
+    # height band, clusterer, fusion, VLM and gait supervisor (the sim keeps 0.12).
+    step_over_height_max: 0.03
+    floor_estimation: histogram  # hardware config uses histogram
+    min_range: 0.25
 
 vlm_heuristic_node:
-  model: qwen2.5vl  # or llava:7b if eval wins (re-evaluated 2026-11-09: qwen2.5vl kept)
-  ollama_url: http://172.30.160.1:11434  # TODO: verify on real dog network
+  ros__parameters:
+    model: llava:7b
+    ollama_url: http://localhost:11434  # Updated for local workstation Ollama

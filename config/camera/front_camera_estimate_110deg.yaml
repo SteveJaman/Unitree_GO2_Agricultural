@@ -1,0 +1,29 @@
+# ESTIMATE, NOT A CALIBRATION. Go2 front camera at 960x540 (CAMERA_WIDTH=960),
+# from a 110 deg horizontal field of view: the guess whose LiDAR fit was best
+# (median 7%; 90 deg: 31%, 130 deg: 16%) in docs/ai_and_vision/camera_lidar_fusion.md.
+# No lens distortion, so points near the image edges are less accurate.
+# Use it only until calibrate_camera.sh writes front_camera.yaml:
+#   TWIN_CAMERA_INFO_FILE=$PWD/config/camera/front_camera_estimate_110deg.yaml \
+#   CAMERA_CALIB=$PWD/config/camera/front_camera_estimate_110deg.yaml \
+#   ./scripts/runtime/wifi_3d_nav.sh --voxel --no-explore --camera-obstacles
+# fx = fy = 480 / tan(55 deg)
+image_width: 960
+image_height: 540
+camera_name: go2_front_camera_estimate
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [336.10, 0, 480.0, 0, 336.10, 270.0, 0, 0, 1]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0, 0, 0, 0, 0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [336.10, 0, 480.0, 0, 0, 336.10, 270.0, 0, 0, 0, 1, 0]

@@ -60,6 +60,9 @@ Parameters:
   scan_width:       lateral scan half-width (default 0.3m)
   check_rate_hz:    evaluation frequency (default 5.0)
   foot_margin:      clearance the raised foot must keep above an object (default 0.02m)
+  foot_clearance:   how high the walking foot rises over the floor (default 0.12 m, the sim's
+                    lift); HIGH_STEP for objects up to foot_clearance - foot_margin. The real
+                    Go2 has no lift control: 0.05 m there (ClassicWalk, measured 2026-11-11)
   lethal_height:    object height that means STOP (default 0.25m)
   backstop_enabled: gait is at least the costmap's and the clusters' (default true)
   cluster_stop_height: cluster height that means STOP (default 0.12 m, the foot-lift ceiling)
@@ -75,6 +78,7 @@ Parameters:
   timeout_default_gait: gait while inputs are lost (default CAREFUL)
   max_command_rate_hz: SDK call rate limit (default 2.0)
 """
+
 import json
 import math
 import struct
@@ -85,7 +89,10 @@ from std_srvs.srv import Trigger
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
-    QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy,
 )
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import PointCloud2
@@ -109,15 +116,18 @@ CAUTION_MIN = 60
 LETHAL_MIN = 100
 
 GAITS = {
-    "NORMAL":    {"foot_height": 0.04, "speed_scale": 1.0},
+    "NORMAL": {"foot_height": 0.04, "speed_scale": 1.0},
     "HIGH_STEP": {"foot_height": 0.12, "speed_scale": 0.7},
-    "CAREFUL":   {"foot_height": 0.12, "speed_scale": 0.4},
-    "STOP":      {"foot_height": 0.12, "speed_scale": 0.0},
+    "CAREFUL": {"foot_height": 0.12, "speed_scale": 0.4},
+    "STOP": {"foot_height": 0.12, "speed_scale": 0.0},
 }
 # Foot lift per gait on the robot: the same as the sim bridge (gazebo/sim/sim_robot_bridge.py
 # LIFT), which is what the trials validated. STOP keeps the feet high next to a tall object.
 HARDWARE_LIFT = {"NORMAL": 0.04, "HIGH_STEP": 0.12, "CAREFUL": 0.12, "STOP": 0.12}
-SDK_DELTA_MIN, SDK_DELTA_MAX = -0.06, 0.03   # FootRaiseHeight range around the nominal height
+SDK_DELTA_MIN, SDK_DELTA_MAX = (
+    -0.06,
+    0.03,
+)  # FootRaiseHeight range around the nominal height
 
 
 def inputs_stale(now, stamps, timeout_s):
@@ -132,31 +142,55 @@ class SportClientBackend:
     only in _init_sdk(), on the first command with both gates open.
     """
 
-    def __init__(self, log, dry_run, enable_hardware, network_interface="", channel="sport",
-                 nominal_foot_height=0.09, max_rate_hz=2.0, clock=time.monotonic):
+    def __init__(
+        self,
+        log,
+        dry_run,
+        enable_hardware,
+        network_interface="",
+        channel="sport",
+        nominal_foot_height=0.09,
+        max_rate_hz=2.0,
+        clock=time.monotonic,
+    ):
         self.log, self.clock = log, clock
         self.iface, self.channel = network_interface, channel
-        self.nominal, self.min_period = float(nominal_foot_height), 1.0 / float(max_rate_hz)
+        self.nominal, self.min_period = (
+            float(nominal_foot_height),
+            1.0 / float(max_rate_hz),
+        )
         self.active = (not dry_run) and bool(enable_hardware)
         self.client = None
-        self.sdk_failed = False      # import / FootRaiseHeight / channel init failed: stays inactive
+        self.sdk_failed = (
+            False  # import / FootRaiseHeight / channel init failed: stays inactive
+        )
         self.failures = 0
-        self.halted = False          # three consecutive SDK failures
-        self.paused_on = None        # gait at the time of an operator override
+        self.halted = False  # three consecutive SDK failures
+        self.paused_on = None  # gait at the time of an operator override
         self.last_gait, self.last_t = None, -1e9
         self.last_dry = None
         if not self.active:
-            missing = [n for n, ok in (("dry_run is true", not dry_run),
-                                       ("enable_hardware_backend is false", enable_hardware)) if not ok]
-            self.log.info("[DRY_RUN] sport_client backend inactive: " + " and ".join(missing))
+            missing = [
+                n
+                for n, ok in (
+                    ("dry_run is true", not dry_run),
+                    ("enable_hardware_backend is false", enable_hardware),
+                )
+                if not ok
+            ]
+            self.log.info(
+                "[DRY_RUN] sport_client backend inactive: " + " and ".join(missing)
+            )
 
     def delta_for(self, lift):
         """FootRaiseHeight delta for an absolute lift, clamped to the SDK range."""
         raw = lift - self.nominal
         d = min(SDK_DELTA_MAX, max(SDK_DELTA_MIN, raw))
         if abs(d - raw) > 1e-9:
-            self.log.warn(f"[WARN] foot delta clamped from {raw:+.3f} to {d:+.3f} m "
-                          f"(lift {lift:.3f} m, nominal {self.nominal:.3f} m)")
+            self.log.warn(
+                f"[WARN] foot delta clamped from {raw:+.3f} to {d:+.3f} m "
+                f"(lift {lift:.3f} m, nominal {self.nominal:.3f} m)"
+            )
         return d
 
     def _init_sdk(self):
@@ -165,12 +199,16 @@ class SportClientBackend:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize
             from unitree_sdk2py.go2.sport.sport_client import SportClient
         except ImportError as ex:
-            self.log.fatal(f"[FATAL] unitree_sdk2py not available; hardware backend inactive ({ex})")
+            self.log.fatal(
+                f"[FATAL] unitree_sdk2py not available; hardware backend inactive ({ex})"
+            )
             self.sdk_failed = True
             return False
         if not hasattr(SportClient, "FootRaiseHeight"):
-            self.log.fatal("[FATAL] this unitree_sdk2py SportClient has no FootRaiseHeight; hardware "
-                           "backend inactive (the newer API surface must be substituted)")
+            self.log.fatal(
+                "[FATAL] this unitree_sdk2py SportClient has no FootRaiseHeight; hardware "
+                "backend inactive (the newer API surface must be substituted)"
+            )
             self.sdk_failed = True
             return False
         try:
@@ -182,19 +220,25 @@ class SportClientBackend:
             client.SetTimeout(5.0)
             client.Init()
         except Exception as ex:  # noqa: BLE001 - any channel/DDS failure keeps us inert
-            self.log.fatal(f"[FATAL] SportClient channel init failed ({ex}); hardware backend inactive")
+            self.log.fatal(
+                f"[FATAL] SportClient channel init failed ({ex}); hardware backend inactive"
+            )
             self.sdk_failed = True
             return False
         self.client = client
-        self.log.info(f"sport_client backend ready (channel {self.channel}, interface "
-                      f"{self.iface or 'SDK default'}, nominal foot height {self.nominal:.3f} m)")
+        self.log.info(
+            f"sport_client backend ready (channel {self.channel}, interface "
+            f"{self.iface or 'SDK default'}, nominal foot height {self.nominal:.3f} m)"
+        )
         return True
 
     def override_normal(self, current_gait):
         """Operator override: NORMAL now, then paused until the supervisor's gait changes."""
         r = self.send("NORMAL", force=True)
         self.paused_on = current_gait
-        self.log.warn(f"[WARN] operator override: gait NORMAL, backend paused until the gait leaves {current_gait}")
+        self.log.warn(
+            f"[WARN] operator override: gait NORMAL, backend paused until the gait leaves {current_gait}"
+        )
         return r
 
     def send(self, gait, force=False):
@@ -209,15 +253,17 @@ class SportClientBackend:
         if not self.active or self.sdk_failed:
             if gait != self.last_dry:
                 self.last_dry = gait
-                self.log.info(f"[DRY_RUN] would send FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)")
+                self.log.info(
+                    f"[DRY_RUN] would send FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)"
+                )
             return "dry_run" if not self.sdk_failed else "inactive"
-        if self.halted:      # after 3 failures nothing more goes to the SDK, forced or not
+        if self.halted:  # after 3 failures nothing more goes to the SDK, forced or not
             return "halted"
         now = self.clock()
         if gait == self.last_gait and not force:
             return "unchanged"
         if now - self.last_t < self.min_period and not force:
-            return "rate_limited"     # the supervisor calls again next cycle
+            return "rate_limited"  # the supervisor calls again next cycle
         if self.client is None and not self._init_sdk():
             return "inactive"
         self.last_t = now
@@ -227,11 +273,15 @@ class SportClientBackend:
                 raise RuntimeError(f"FootRaiseHeight returned {code}")
         except Exception as ex:  # noqa: BLE001 - logged, counted, no aggressive retry
             self.failures += 1
-            self.log.error(f"[ERROR] FootRaiseHeight({delta:+.3f}) for {gait} failed ({ex}); "
-                           f"{self.failures} in a row")
+            self.log.error(
+                f"[ERROR] FootRaiseHeight({delta:+.3f}) for {gait} failed ({ex}); "
+                f"{self.failures} in a row"
+            )
             if self.failures >= 3 and not self.halted:
                 self.halted = True
-                self.log.error("[ERROR] 3 consecutive SDK failures: sending NORMAL once and stopping")
+                self.log.error(
+                    "[ERROR] 3 consecutive SDK failures: sending NORMAL once and stopping"
+                )
                 try:
                     self.client.FootRaiseHeight(self.delta_for(HARDWARE_LIFT["NORMAL"]))
                 except Exception as ex2:  # noqa: BLE001
@@ -239,7 +289,9 @@ class SportClientBackend:
             return "failed"
         self.failures = 0
         self.last_gait = gait
-        self.log.info(f"sport_client: FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)")
+        self.log.info(
+            f"sport_client: FootRaiseHeight({delta:+.3f}) for {gait} (lift {lift:.3f} m)"
+        )
         return "sent"
 
 
@@ -252,9 +304,9 @@ def worst(*gaits):
 
 
 def gait_for_height(height, foot_height, margin, lethal_height):
-    if height is None:      # seen, but not measured: never treat it as low
+    if height is None:  # seen, but not measured: never treat it as low
         return "CAREFUL"
-    if height + margin <= foot_height + 1e-6:   # 0.10 + 0.02 is 0.12000000000000001
+    if height + margin <= foot_height + 1e-6:  # 0.10 + 0.02 is 0.12000000000000001
         return "HIGH_STEP"
     return "CAREFUL" if height < lethal_height else "STOP"
 
@@ -264,7 +316,11 @@ def cluster_gait_for(clusters, stop_height):
     (unlabelled, so never assumed clearable), STOP at or above stop_height."""
     if not clusters:
         return None
-    return "STOP" if max(c["height"] for c in clusters) >= stop_height - 1e-9 else "CAREFUL"
+    return (
+        "STOP"
+        if max(c["height"] for c in clusters) >= stop_height - 1e-9
+        else "CAREFUL"
+    )
 
 
 def parse_clusters(msg):
@@ -273,8 +329,15 @@ def parse_clusters(msg):
     out = []
     for k in range(msg.width * msg.height):
         base = k * msg.point_step
-        x, y, h = (struct.unpack_from("<f", msg.data, base + off[n])[0] for n in ("x", "y", "z"))
-        r = struct.unpack_from("<f", msg.data, base + off["radius"])[0] if "radius" in off else 0.1
+        x, y, h = (
+            struct.unpack_from("<f", msg.data, base + off[n])[0]
+            for n in ("x", "y", "z")
+        )
+        r = (
+            struct.unpack_from("<f", msg.data, base + off["radius"])[0]
+            if "radius" in off
+            else 0.1
+        )
         out.append({"x": x, "y": y, "height": h, "sx": 2 * r, "sy": 2 * r})
     return out
 
@@ -288,7 +351,10 @@ def objects_ahead(boxes, x, y, yaw, scan_distance, scan_width):
         forward = c * dx + s * dy
         lateral = -s * dx + c * dy
         reach = max(b["sx"], b["sy"]) / 2
-        if -0.45 - reach < forward < scan_distance + reach and abs(lateral) < scan_width + reach:
+        if (
+            -0.45 - reach < forward < scan_distance + reach
+            and abs(lateral) < scan_width + reach
+        ):
             hits.append(b)
     return hits
 
@@ -301,6 +367,7 @@ class GaitSupervisor(Node):
         self.declare_parameter("scan_width", 0.3)
         self.declare_parameter("check_rate_hz", 5.0)
         self.declare_parameter("foot_margin", 0.02)
+        self.declare_parameter("foot_clearance", GAITS["HIGH_STEP"]["foot_height"])
         self.declare_parameter("lethal_height", 0.25)
         self.declare_parameter("dry_run", True)
         self.declare_parameter("backend", "gazebo")
@@ -325,10 +392,14 @@ class GaitSupervisor(Node):
 
         self.backend = self.get_parameter("backend").value
         if self.backend not in ("gazebo", "sport_client"):
-            raise ValueError(f"backend must be gazebo or sport_client, not {self.backend}")
+            raise ValueError(
+                f"backend must be gazebo or sport_client, not {self.backend}"
+            )
         self.timeout_gait = self.get_parameter("timeout_default_gait").value
         if self.timeout_gait not in ORDER:
-            raise ValueError(f"timeout_default_gait must be one of {ORDER}, not {self.timeout_gait}")
+            raise ValueError(
+                f"timeout_default_gait must be one of {ORDER}, not {self.timeout_gait}"
+            )
         self.heartbeat = float(self.get_parameter("heartbeat_timeout_s").value)
         self.timed_out, self.timeout_sent = False, False
         self.odom_t = self.costmap_t = None
@@ -340,6 +411,7 @@ class GaitSupervisor(Node):
         self.cluster_max_age = float(self.get_parameter("cluster_max_age_s").value)
 
         self.foot_margin = self.get_parameter("foot_margin").value
+        self.foot_clearance = float(self.get_parameter("foot_clearance").value)
         self.lethal_height = self.get_parameter("lethal_height").value
         self.boxes = []
         self.scan_dist = self.get_parameter("scan_distance").value
@@ -349,11 +421,16 @@ class GaitSupervisor(Node):
         self.sport = None
         if self.backend == "sport_client":
             self.sport = SportClientBackend(
-                self.get_logger(), bool(self.dry_run), bool(self.get_parameter("enable_hardware_backend").value),
+                self.get_logger(),
+                bool(self.dry_run),
+                bool(self.get_parameter("enable_hardware_backend").value),
                 network_interface=self.get_parameter("sdk_network_interface").value,
                 channel=self.get_parameter("sdk_channel").value,
-                nominal_foot_height=float(self.get_parameter("nominal_foot_height").value),
-                max_rate_hz=float(self.get_parameter("max_command_rate_hz").value))
+                nominal_foot_height=float(
+                    self.get_parameter("nominal_foot_height").value
+                ),
+                max_rate_hz=float(self.get_parameter("max_command_rate_hz").value),
+            )
         self.create_service(Trigger, "~/override_normal", self._override_normal)
 
         self.costmap = None
@@ -361,13 +438,17 @@ class GaitSupervisor(Node):
         self.current_gait = "NORMAL"
 
         g = lambda k: self.get_parameter(k).value  # noqa: E731
-        self.create_subscription(OccupancyGrid, g("costmap_topic"), self._cm_cb, COSTMAP_QOS)
+        self.create_subscription(
+            OccupancyGrid, g("costmap_topic"), self._cm_cb, COSTMAP_QOS
+        )
         self.create_subscription(Odometry, g("odom_topic"), self._odom_cb, SENSOR_QOS)
         self.create_subscription(String, g("boxes_topic"), self._boxes_cb, 10)
         if self.use_semantic:
             self.create_subscription(String, g("semantic_topic"), self._semantic_cb, 10)
         if self.backstop:
-            self.create_subscription(PointCloud2, g("clusters_topic"), self._clusters_cb, 10)
+            self.create_subscription(
+                PointCloud2, g("clusters_topic"), self._clusters_cb, 10
+            )
 
         self.cmd_pub = self.create_publisher(String, g("command_topic"), 10)
         self.status_pub = self.create_publisher(String, g("status_topic"), 10)
@@ -377,8 +458,18 @@ class GaitSupervisor(Node):
         self.get_logger().info(
             "gait_supervisor [%s]: backend=%s enable_hardware_backend=%s scan=%.1fm width=%.1fm "
             "backstop=%s semantic=%s heartbeat=%.1fs timeout_gait=%s"
-            % (mode, self.backend, self.get_parameter("enable_hardware_backend").value, self.scan_dist,
-               self.scan_width, self.backstop, self.use_semantic, self.heartbeat, self.timeout_gait))
+            % (
+                mode,
+                self.backend,
+                self.get_parameter("enable_hardware_backend").value,
+                self.scan_dist,
+                self.scan_width,
+                self.backstop,
+                self.use_semantic,
+                self.heartbeat,
+                self.timeout_gait,
+            )
+        )
 
     def _cm_cb(self, msg):
         self.costmap, self.costmap_t = msg, time.monotonic()
@@ -400,8 +491,10 @@ class GaitSupervisor(Node):
         self.boxes = json.loads(msg.data)["boxes"]
 
     def _semantic_cb(self, msg):
-        self.semantic = {o["track_id"]: (o["label"], bool(o.get("low_confidence")))
-                         for o in json.loads(msg.data).get("objects", [])}
+        self.semantic = {
+            o["track_id"]: (o["label"], bool(o.get("low_confidence")))
+            for o in json.loads(msg.data).get("objects", [])
+        }
 
     def _clusters_cb(self, msg):
         self.clusters, self.clusters_t = parse_clusters(msg), time.monotonic()
@@ -411,8 +504,8 @@ class GaitSupervisor(Node):
             return 0.0
         q = self.odom.pose.pose.orientation
         return math.atan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+            2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        )
 
     def _scan_ahead(self):
         if self.costmap is None or self.odom is None:
@@ -459,25 +552,47 @@ class GaitSupervisor(Node):
             costmap_gait = "NORMAL"
 
         desired = costmap_gait
-        hits, box_gait, semantic_gait, cluster_gait, n_clusters = [], None, None, None, 0
+        hits, box_gait, semantic_gait, cluster_gait, n_clusters = (
+            [],
+            None,
+            None,
+            None,
+            0,
+        )
         # With odometry the gait comes from the boxes (NORMAL when none are ahead,
         # including before the first box); the costmap only enters as the backstop.
         if self.odom is not None:
             p = self.odom.pose.pose.position
-            hits = objects_ahead(self.boxes, p.x, p.y, self._get_yaw(),
-                                 self.scan_dist, self.scan_width) if self.boxes else []
+            hits = (
+                objects_ahead(
+                    self.boxes,
+                    p.x,
+                    p.y,
+                    self._get_yaw(),
+                    self.scan_dist,
+                    self.scan_width,
+                )
+                if self.boxes
+                else []
+            )
             desired = "NORMAL"
             if hits:
-                gaits = [gait_for_height(b["height"] if b["traverse"] != "unknown" else None,
-                                         GAITS["HIGH_STEP"]["foot_height"],
-                                         self.foot_margin, self.lethal_height) for b in hits]
+                gaits = [
+                    gait_for_height(
+                        b["height"] if b["traverse"] != "unknown" else None,
+                        self.foot_clearance,
+                        self.foot_margin,
+                        self.lethal_height,
+                    )
+                    for b in hits
+                ]
                 desired = worst(*gaits)
                 sem = []
                 for b in hits if self.use_semantic else []:
                     label, low = self.semantic.get(b.get("id"), (None, False))
                     if label in SEMANTIC_GAIT:
                         sem.append(SEMANTIC_GAIT[label])
-                    if low:   # no LiDAR height for it: never less than CAREFUL
+                    if low:  # no LiDAR height for it: never less than CAREFUL
                         sem.append("CAREFUL")
                 if sem:
                     semantic_gait = worst(*sem)
@@ -485,21 +600,38 @@ class GaitSupervisor(Node):
             box_gait = desired
             if self.backstop:
                 fresh = time.monotonic() - self.clusters_t <= self.cluster_max_age
-                ahead = objects_ahead(self.clusters, p.x, p.y, self._get_yaw(), self.scan_dist,
-                                      self.scan_width) if fresh else []
+                ahead = (
+                    objects_ahead(
+                        self.clusters,
+                        p.x,
+                        p.y,
+                        self._get_yaw(),
+                        self.scan_dist,
+                        self.scan_width,
+                    )
+                    if fresh
+                    else []
+                )
                 n_clusters = len(ahead)
                 cluster_gait = cluster_gait_for(ahead, self.cluster_stop)
-                desired = worst(desired, costmap_gait, *([cluster_gait] if cluster_gait else []))
+                desired = worst(
+                    desired, costmap_gait, *([cluster_gait] if cluster_gait else [])
+                )
         # Lost sight of what is ahead: walk carefully, never NORMAL blind.
-        stale = inputs_stale(time.monotonic(), (self.odom_t, self.costmap_t), self.heartbeat)
+        stale = inputs_stale(
+            time.monotonic(), (self.odom_t, self.costmap_t), self.heartbeat
+        )
         if stale:
             desired, box_gait = self.timeout_gait, None
             if not self.timed_out:
                 self.get_logger().warn(
                     f"[WARN] inputs lost (odometry or costmap older than {self.heartbeat:.1f} s): "
-                    f"gait {self.timeout_gait} (timeout_default_gait)")
+                    f"gait {self.timeout_gait} (timeout_default_gait)"
+                )
         elif self.timed_out:
-            self.get_logger().info("inputs back: gait from the boxes and backstop again")
+            self.get_logger().info(
+                "inputs back: gait from the boxes and backstop again"
+            )
             self.timeout_sent = False
         self.timed_out = stale
         # The backstop raised the gait above what the boxes (and labels) asked for:
@@ -507,19 +639,31 @@ class GaitSupervisor(Node):
         backstop_raised = box_gait is not None and desired != box_gait
         source = None
         if backstop_raised:
-            source = "+".join(n for n, g in (("costmap", costmap_gait), ("cluster", cluster_gait))
-                              if g and ORDER.index(g) > ORDER.index(box_gait)) or None
+            source = (
+                "+".join(
+                    n
+                    for n, g in (("costmap", costmap_gait), ("cluster", cluster_gait))
+                    if g and ORDER.index(g) > ORDER.index(box_gait)
+                )
+                or None
+            )
 
         if desired != self.current_gait:
             self.current_gait = desired
             self.get_logger().info(
                 "gait -> %s (max_cost=%d source=%s dry_run=%s)"
-                % (desired, max_cost, "timeout" if stale else (source or "boxes"), self.dry_run))
+                % (
+                    desired,
+                    max_cost,
+                    "timeout" if stale else (source or "boxes"),
+                    self.dry_run,
+                )
+            )
 
         backend_state = None
         if self.sport is not None:
             if stale:
-                if not self.timeout_sent:          # once, then silence until inputs return
+                if not self.timeout_sent:  # once, then silence until inputs return
                     backend_state = self.sport.send(desired, force=True)
                     self.timeout_sent = True
                 else:
@@ -528,15 +672,30 @@ class GaitSupervisor(Node):
                 backend_state = self.sport.send(desired)
 
         self.cmd_pub.publish(String(data=desired))
-        self.status_pub.publish(String(data=json.dumps({
-            "gait": desired, "costmap_gait": costmap_gait, "box_gait": box_gait,
-            "semantic_gait": semantic_gait, "backstop": self.backstop,
-            "backstop_raised": backstop_raised, "backstop_source": source,
-            "cluster_gait": cluster_gait, "clusters_ahead": n_clusters, "cost": max_cost,
-            "inputs_stale": stale, "backend": self.backend, "backend_state": backend_state,
-            "objects": [b["class"] for b in hits],
-            "foot": GAITS[desired]["foot_height"],
-            "speed_pct": GAITS[desired]["speed_scale"] * 100})))
+        self.status_pub.publish(
+            String(
+                data=json.dumps(
+                    {
+                        "gait": desired,
+                        "costmap_gait": costmap_gait,
+                        "box_gait": box_gait,
+                        "semantic_gait": semantic_gait,
+                        "backstop": self.backstop,
+                        "backstop_raised": backstop_raised,
+                        "backstop_source": source,
+                        "cluster_gait": cluster_gait,
+                        "clusters_ahead": n_clusters,
+                        "cost": max_cost,
+                        "inputs_stale": stale,
+                        "backend": self.backend,
+                        "backend_state": backend_state,
+                        "objects": [b["class"] for b in hits],
+                        "foot": GAITS[desired]["foot_height"],
+                        "speed_pct": GAITS[desired]["speed_scale"] * 100,
+                    }
+                )
+            )
+        )
 
 
 def main(args=None):
@@ -546,7 +705,7 @@ def main(args=None):
     node = GaitSupervisor()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):   # SIGINT / SIGTERM
+    except (KeyboardInterrupt, ExternalShutdownException):  # SIGINT / SIGTERM
         pass
     finally:
         node.destroy_node()
