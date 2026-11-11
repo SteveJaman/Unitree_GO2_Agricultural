@@ -20,10 +20,11 @@ What changes, in global_costmap's obstacle_layer:
   * publish_voxel_map true: nav2_msgs/VoxelGrid on /<costmap>/voxel_grid (for RViz,
     `ros2 run nav2_costmap_2d nav2_costmap_2d_cloud --ros-args -r voxel_grid:=/local_costmap/voxel_grid`
     turns it into the PointCloud2 voxel_marked_cloud);
-  * the lidar source reads the self-filtered /lidar3d/obstacle_points instead of
-    /lidar3d/registered, which still contains the robot's own legs and arm (the
-    local costmap already used it; the global one did not), and its
-    max_obstacle_height becomes 1.5 to match the grid.
+  * the lidar source's topic becomes the self-filtered /lidar3d/obstacle_points in
+    the file: that is what already runs (lidar3d_planning.launch.py and
+    lidar3d_controller.launch.py override the topic at launch), so the file matches
+    the running costmaps; /lidar3d/registered still contains the robot's own legs
+    and arm. Its max_obstacle_height becomes 1.5 to match the grid.
 The other sources stay as they are: "yolo" (add-yolo-costmap-source.sh) and the
 front-camera source "camera" (nav2_camera_source.py, wifi_3d_nav.sh
 --camera-obstacles) feed the voxel grid the same way they fed the obstacle layer.

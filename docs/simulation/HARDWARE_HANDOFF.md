@@ -40,21 +40,24 @@ failed check.
    (0.09 m), so the lift ranges 0.03–0.12 m: `NORMAL` at 4 cm is reachable, zero
    lift is not, and anything above 0.12 m is clamped with a `[WARN]`.
 
-2. **No self-body points in the clouds the costmap reads.** The robot's obstacle
-   layer reads `/lidar3d/registered` (the sim reads the self-filtered
-   `/lidar3d/obstacle_points`); the height band layer reads `/lidar3d/obstacle_points`.
-   If either contains the robot's own legs, the costmap marks them. The operator
-   must verify that `/lidar3d/registered` is filtered of self-body points before
-   running; `check_self_points.py` is the official pre-check for this.
+2. **No self-body points in the clouds the costmap reads.** Both costmaps and the
+   height band layer read the self-filtered `/lidar3d/obstacle_points` (the
+   `go2_nav2` launch files set that topic at launch, whatever `lidar3d_planner.yaml`
+   says); `/lidar3d/registered` feeds RTAB-Map and the camera fusion. If a cloud
+   contains the robot's own legs, the costmap marks them. The operator must verify
+   that the self filter works on the robot before running; `check_self_points.py` is
+   the official pre-check for this.
 
    ```bash
    python3 scripts/tools/check_self_points.py 10 /lidar3d/registered /lidar3d/obstacle_points
    ```
 
-   Each topic must report `OK (no self-body points)`. In sim, `/lidar3d/registered`
-   reports 643 body points per cloud (SELF-BODY POINTS PRESENT) and
-   `/lidar3d/obstacle_points` 0: if the robot matches, point the obstacle layer at
-   the self-filtered cloud before running.
+   `/lidar3d/obstacle_points` must report `OK (no self-body points)`. In sim,
+   `/lidar3d/registered` reports 643 body points per cloud (SELF-BODY POINTS PRESENT,
+   expected: it is unfiltered) and `/lidar3d/obstacle_points` 0. If
+   `/lidar3d/obstacle_points` reports body points on the robot, the URDF self filter
+   is not working (`go2_urdf_self_filter`, "scans passed unfiltered" in the session
+   log): fix that before running.
 
 3. **First session only: measure the real foot lift** before trusting any band.
    - `--semantic --hardware` (backend armed, `dry_run` still true): check the

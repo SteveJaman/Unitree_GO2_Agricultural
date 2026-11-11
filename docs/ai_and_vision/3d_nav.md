@@ -804,9 +804,9 @@ LiDAR's imagination are cleared by the next scan through them. Undo:
 ### Costmap: 3D voxel layer (`--voxel`)
 
 `--voxel` replaces the obstacle layer with Nav2's `VoxelLayer`: obstacles are
-kept in a 1.6 m tall grid of 0.1 m voxels and cleared by 3D raytracing, and the
-global costmap's LiDAR source moves from `/lidar3d/registered` (which still holds
-the robot's own legs and arm) to the self-filtered `/lidar3d/obstacle_points`. With
+kept in a 1.6 m tall grid of 0.1 m voxels and cleared by 3D raytracing, on the
+self-filtered `/lidar3d/obstacle_points` (both costmaps already read it; the patch
+only makes the file say so). With
 `--camera-obstacles` the front camera's LiDAR-scaled depth feeds the same grid.
 Without `--voxel` the file is restored byte for byte. Details and checks:
 [voxel_costmap.md](../navigation/voxel_costmap.md).

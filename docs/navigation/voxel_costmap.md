@@ -25,7 +25,7 @@ of that global costmap, so both change. Every edited line is tagged
 | `max_obstacle_height` | 1.5 m | Tables, shelves and doorframes count; the ceiling does not |
 | `mark_threshold` | 0 | A column is marked as soon as one voxel is occupied (the layer marks when the count exceeds the threshold) |
 | `publish_voxel_map` | true | `nav2_msgs/VoxelGrid` on `/global_costmap/voxel_grid` and `/local_costmap/voxel_grid` |
-| LiDAR source topic | `/lidar3d/obstacle_points` (was `/lidar3d/registered` in the global costmap) | `/lidar3d/registered` still contains the robot's own body (about 640 points per scan in sim), a likely source of phantom obstacles; the local costmap already used the self-filtered cloud |
+| LiDAR source topic | `/lidar3d/obstacle_points` in the file (the YAML said `/lidar3d/registered`) | Makes the file say what runs: `lidar3d_planning.launch.py` and `lidar3d_controller.launch.py` already override the global and local costmaps' LiDAR topic to the self-filtered `/lidar3d/obstacle_points` at launch, so this changes nothing at runtime. `/lidar3d/registered` still contains the robot's own body (about 640 points per scan in sim) |
 | LiDAR `min_obstacle_height` | 0.15 m (unchanged) | Keeps the floor out |
 
 The other sources keep their own settings: `yolo` (YOLO boxes) and, with
