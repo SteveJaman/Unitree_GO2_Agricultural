@@ -1260,8 +1260,14 @@ python3 "${SCRIPT_DIR}/../tools/nav2_omni.py" "${omni_arg}" "${NAV2_WIFI_DIR}" |
 
 # Camera obstacles in the Nav2 costmaps only for wifi_3d_nav.sh --camera-obstacles:
 # the source makes Nav2 stop when camera data stops, so every other session removes it.
-if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then cam_src=--enable; else cam_src=--disable; fi
-python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src}" \
+# With --voxel the camera source gets the LiDAR's 0.15 m floor cut: the VoxelLayer clears
+# per height and nothing ray-traces below 0.15 m, so lower camera marks would never clear.
+cam_src=(--disable)
+if [ "${CAMERA_OBSTACLES:-0}" = 1 ]; then
+    cam_src=(--enable)
+    [ "${VOXEL_COSTMAP:-0}" = 1 ] && cam_src+=(--min-height 0.15)
+fi
+python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src[@]}" \
     "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
 
 # 3D voxel obstacle layer only for wifi_3d_nav.sh --voxel (VOXEL_COSTMAP=1): VoxelLayer

@@ -129,7 +129,7 @@ The pipeline that produces the dense 3D tour.
 | 4.12b | Calibrated camera-coloured map, undistorted, with overlay check (`wifi_3d_nav.sh --fusion`) | ✅ verified in `--sim`, ⏳ needs the camera calibration on the robot |
 | 4.13 | YOLO obstacles in the Nav2 costmap | ✅ [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), run automatically with `--ai`, ⏳ verify |
 | 4.13b | Camera obstacles in the Nav2 costmap: monocular depth scaled by the LiDAR (`wifi_3d_nav.sh --camera-obstacles`) | ✅ pipeline verified on the dog, ⏳ calibration + drive test |
-| 4.13c | 3D voxel costmap (`--voxel`), front camera + LiDAR fused in one grid | ✅ written, standalone costmap check, ⏳ Gazebo session + drive test |
+| 4.13c | 3D voxel costmap (`--voxel`), front camera + LiDAR fused in one grid | ✅ written, ✅ Gazebo sessions (works, no collisions), ⚠️ explores worse than 2D (rooms behind doorways stay unknown), ⏳ find the clearing cause, re-run with camera |
 | 4.13d | Traversability: step over low items, gait by object height, costmap backstop ([sim](simulation/traversability_sim.md), [hardware handoff](simulation/HARDWARE_HANDOFF.md)) | ✅ validated in sim (n = 10), backend + flags written, nodes launched by `wifi_3d_nav.sh --semantic` (sim-tested 2026-11-11), ⏳ first hardware session |
 | 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ (`--camera-obstacles` already sees glass as depth) |
 | 4.14b | Full mobility: MPPI Omni (reverse + sidestep), omni lattice, stuck recovery (`--omni`) | ✅ verified in sim, loads on the robot, ⏳ drive test on the dog |

@@ -5,8 +5,10 @@
 `wifi_3d_nav.sh --voxel` replaces the 3D stack's 2D `ObstacleLayer` with Nav2's
 3D `VoxelLayer`; adding `--camera-obstacles` feeds the Go2 front camera's
 LiDAR-scaled depth into the same voxel grid. Without `--voxel` the costmap is the
-standard one. Added 2026-11-09; checked on a standalone costmap, not yet in a
-full Gazebo or robot session.
+standard one. Added 2026-11-09; run in full Gazebo sessions on 2026-11-11
+([Sim sessions](#sim-sessions-2026-11-11)): it works, but **in the sim it explores worse
+than the 2D layer** (rooms seen only through a doorway stay unknown), so the 2D layer stays
+the default. Not yet run on the robot.
 
 ## What changes
 
@@ -38,6 +40,17 @@ depth sensor of its own; the RealSense D435i point cloud is not used here.
 exactly `lidar`, so with the YOLO source present (`lidar yolo`) the camera source
 could not be added.
 
+**Camera floor cut with `--voxel`** (fixed 2026-11-11): the camera source marks from
+the camera node's 0.08 m floor cut up, and never clears. With the 2D layer every LiDAR
+ray clears the whole column, so stray low marks disappear. The `VoxelLayer` clears per
+height, and the LiDAR source drops points below 0.15 m before ray-tracing, so camera
+marks between 0.08 and 0.15 m were never cleared: in the first sim session they piled
+up into a phantom wall across the corridor ("RegulatedPurePursuitController detected
+collision ahead!", then no valid path). `wifi_nav.sh` now passes
+`nav2_camera_source.py --enable --min-height 0.15` with `--voxel`, the LiDAR's floor cut;
+the 2D mode keeps `-10.0`. Covered by the patch tests; **not yet re-run in a sim
+session.**
+
 ## Checked
 
 - [`tests/tools/test_costmap_patches.py`](../../tests/tools/test_costmap_patches.py):
@@ -58,6 +71,42 @@ could not be added.
 
   173 voxels marked in `/costmap/voxel_grid`. Marking is the same as before; what the
   voxel layer adds is clearing per height, which this static check does not exercise.
+
+## Sim sessions (2026-11-11)
+
+`wifi_3d_nav.sh --sim --world lab_office` with RViz, Gazebo at about 0.55x real time.
+
+**Configuration, live** (`ros2 param get` on the running costmaps, `--voxel --camera-obstacles`):
+both the global and the local costmap run `nav2_costmap_2d::VoxelLayer` with
+`z_resolution` 0.1, `z_voxels` 16, `mark_threshold` 0, `publish_voxel_map` true,
+sources `lidar yolo camera`, LiDAR on `/lidar3d/obstacle_points`, camera marking only.
+`/global_costmap/voxel_grid` 4 Hz, `/local_costmap/voxel_grid` 5 Hz,
+`/camera/obstacle_points` 3.2 Hz. The RViz converter command above works: 1203 marked
+voxels from 0.05 to 1.45 m. After the sessions, a session without the flags restored
+`lidar3d_planner.yaml` byte for byte (same SHA-256 as before the tests).
+
+**Driving and exploring** (`tests/sim_benchmark.py`: unattended exploration of the lab,
+-10 per collision, -5 per room under 90 % mapped; LiDAR only, no camera):
+
+| Layer | Runs | Scores | Collisions | Floor known | Rooms under 90 % |
+|---|---|---|---|---|---|
+| 2D `ObstacleLayer` | 1 (2026-11-11) + 3 (2026-11-01) | 100; 100, 100, 100 | 0 | 99.8 % | none |
+| `VoxelLayer` (`VOXEL_COSTMAP=1`) | 3 | 90, 90, 90 | 0 | 87.5-88.6 % | N3 conference (44-48 %), S4 office (28-39 %) in every run |
+
+With the voxel layer the robot never collided and drove goals down the corridor (4.3 m
+in 30 s), but the two rooms the explorer sees only through their doorways stay
+unknown in the global costmap (51 % and 72 % unknown, against 0 % and 2 % with the 2D
+layer from the same doorways), so the explorer finds no frontier there and reports
+"complete" early. The cause is not established yet: a standalone clearing experiment
+(rolling global costmap, sensor at 0.4 m, a room behind a 1 m doorway) was started and
+not finished. Likely suspects are how `VoxelLayer` ray-traces from the sensor into
+unknown space (per-height clearing, the 0.15 m floor cut of the clearing rays) compared
+to the 2D layer's column clearing.
+
+**Conclusion so far:** `--voxel` runs, marks in 3D and does not collide, but it maps
+less of the lab than the 2D layer, so do not use it for exploration until the clearing
+difference is understood. `--voxel --camera-obstacles` needs a re-run with the camera
+floor cut fix.
 
 ## Use it
 

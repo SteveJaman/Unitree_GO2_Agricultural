@@ -25,8 +25,8 @@ TOOLS = os.path.join(T.REPO, "scripts", "tools")
 PLANNER = "go2_nav2/config/lidar3d_planner.yaml"
 
 
-def tool(name, mode, target):
-    r = subprocess.run([sys.executable, os.path.join(TOOLS, name), mode, os.path.join(target, PLANNER)],
+def tool(name, mode, target, *extra):
+    r = subprocess.run([sys.executable, os.path.join(TOOLS, name), mode, *extra, os.path.join(target, PLANNER)],
                        capture_output=True, text=True)
     assert r.returncode == 0, f"{name} {mode}: {r.stdout}{r.stderr}"
     return r.stdout
@@ -36,8 +36,8 @@ def voxel(mode, target):
     return tool("nav2_voxel_layer.py", mode, target)
 
 
-def camera(mode, target):
-    return tool("nav2_camera_source.py", mode, target)
+def camera(mode, target, *extra):
+    return tool("nav2_camera_source.py", mode, target, *extra)
 
 
 def text(target):
@@ -51,7 +51,10 @@ def obstacle(target):
 def session(target, semantic, cam, vox):
     """One wifi_3d_nav.sh start: traversability step, then camera, then voxel."""
     T.run(target, *([] if semantic else ["--undo"]))
-    camera("--enable" if cam else "--disable", target)
+    if cam:   # as wifi_nav.sh: with --voxel the camera source gets the 0.15 m floor cut
+        camera("--enable", target, *(["--min-height", "0.15"] if vox else []))
+    else:
+        camera("--disable", target)
     voxel("--enable" if vox else "--disable", target)
 
 
@@ -92,6 +95,25 @@ def test_camera_source_with_yolo_source_present():
     assert o["observation_sources"].split() == ["lidar", "yolo", "camera"]
     assert o["camera"]["topic"] == "/camera/obstacle_points" and o["camera"]["clearing"] is False
     camera("--disable", d)
+    assert text(d) == before
+
+
+def test_camera_floor_cut_for_voxel():
+    # VoxelLayer clears per height and the LiDAR never ray-traces below 0.15 m: camera
+    # marks lower than that would never clear (phantom walls in the 2026-11-11 sim run).
+    d, _ = T.mock()
+    before = text(d)
+    camera("--enable", d)
+    assert obstacle(d)["camera"]["min_obstacle_height"] == -10.0     # 2D default unchanged
+    out = camera("--enable", d, "--min-height", "0.15")              # rebuilds with the cut
+    assert "0.15" in out and obstacle(d)["camera"]["min_obstacle_height"] == 0.15
+    once = text(d)
+    assert "already enabled" in camera("--enable", d, "--min-height", "0.15")
+    assert text(d) == once
+    assert once.count("camera:") == 1 and obstacle(d)["observation_sources"].split() == ["lidar", "yolo", "camera"]
+    voxel("--enable", d)
+    camera("--disable", d)
+    voxel("--disable", d)
     assert text(d) == before
 
 
@@ -155,6 +177,7 @@ def test_local_costmap_nav2_would_build():
     assert o["plugin"] == "nav2_costmap_2d::VoxelLayer"
     assert o["lidar"]["topic"] == "/lidar3d/obstacle_points"
     assert o["observation_sources"].split() == ["lidar", "yolo", "camera"]
+    assert o["camera"]["min_obstacle_height"] == 0.15
     assert (o["z_resolution"], o["z_voxels"], o["publish_voxel_map"]) == (0.1, 16, True)
 
 
