@@ -352,6 +352,40 @@ def test_a_real_block_is_reported_with_its_joint():
     node.destroy_node()
 
 
+def test_offsets_shift_the_firmware_and_come_back():
+    # The real wrist roll reads 90 deg off the model (2026-11-11): firmware = sign x (MoveIt + offset).
+    arm = FakeArm(angles=(0, 0, 0, 0, 0, 90))
+    node = bridge.MoveItD1Bridge([1, 1, 1, 1, 1, -1], arm=arm, offsets=[0, 0, 0, 0, 0, -90])
+    time.sleep(0.06)
+    node.poll_angles()
+    published = []
+    node.js_pub.publish = lambda msg: published.append(list(msg.position))
+    node.publish_joint_states()
+    assert abs(math.degrees(published[-1][5])) < 0.5  # firmware 90 is MoveIt 0
+    goal = FakeGoal(trajectory([0] * 6, [0, 0, 0, 0, 0, 20], 2.0))
+    node.run_goal(goal)
+    assert goal.state == "succeeded"
+    assert abs(arm.pos[5] - 70.0) < 1.0  # -1 x (20 - 90)
+    node.destroy_node()
+
+
+def test_start_stow_with_a_wrist_offset():
+    # Stow is 90 deg of wrist roll away from the fold then: roll joints don't count as too far.
+    arm = FakeArm(angles=FOLD)
+    node = bridge.MoveItD1Bridge([1, 1, 1, 1, 1, -1], arm=arm, start_stow=True, offsets=[0, 0, 0, 0, 0, -90])
+    stow = (np.array(bridge.STOW_RAD) * bridge.RAD2DEG + node.offsets) * node.signs
+    assert np.abs(np.array(arm.pos) - stow).max() < 3.0
+    node.destroy_node()
+
+
+def test_offsets_must_be_six_angles():
+    assert bridge.parse_offsets("") == [0.0] * 6
+    assert bridge.parse_offsets("0 0 0 0 0 -90")[5] == -90.0
+    for bad in ("0 0 0", "a b c d e f", "0 0 0 0 0 200"):
+        with pytest.raises(ValueError):
+            bridge.parse_offsets(bad)
+
+
 def test_arm_a_second_late_is_not_blocked():
     # Seen on the real arm over Wi-Fi at wrist speed.
     node, arm = make()

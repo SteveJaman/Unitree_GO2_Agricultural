@@ -2,9 +2,34 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-11-09
+Last updated: 2026-11-11
 
 ---
+
+## 2026-11-11: arm signs, moving obstacles, session fixes
+
+**To do next (2026-11-12): localization drift.** On the real dog the robot sinks below the
+floor in RViz and in the web app while it walks: the 3D pose (Point-LIO / `lidar3d_map`)
+drifts downward. Check: the z of `base_link` in `lidar3d_map` over a walk; whether the map
+tilts (`scripts/tools/check_map_tilt.sh`); the gravity alignment at start-up (Point-LIO lost
+its gravity direction in a fast turn before, 2026-10-29); and whether the dashboard and RViz
+use the same frame. A fix may need gravity/roll-pitch correction or a floor constraint.
+
+- **Arm signs measured:** `ARM_JOINT_SIGNS="-1 1 1 1 1 -1"` makes the real D1 follow RViz
+  (d1arm.md, "Joint signs"). `moveit_d1_bridge.py` gained `ARM_JOINT_OFFSETS` (default 0;
+  not needed on this arm). `inspect_plant.py` (Front / Left / Right) gained `roll_deg`
+  (default 0); the gripper roll the operator calls flat is **not settled**.
+- **Moving obstacles stayed in the costmap** with `--voxel`: in the sim a removed box stayed
+  lethal for 40 s+ (Nav2's VoxelLayer clears only voxels a ray crosses).
+  `VOXEL_PLUGIN=stvl` (Spatio-Temporal Voxel Layer, 3 s decay) is the candidate fix:
+  opt-in, **not yet run in a live session**. With `--semantic` the box fusion now forgets
+  objects that moved (robot: unmatched in view 3 s, any 60 s).
+- **Session fixes:** `--sim --semantic` died at start (a `set -e` substitution); fixed. An
+  RViz crash (about 5 % of sessions) no longer ends the session: RViz restarts
+  (`session_rviz_respawn.py` patches go2-nav2-wifi). ClassicWalk on fresh clones of
+  go2-nav2-wifi: `mapping_stop_timeouts.py` applies the walk-mode edit.
+- **Still to verify on the dog:** a person walking past clears (STVL), a Nav2 goal past
+  objects, the 3 cm step limit with real objects, a real camera calibration.
 
 ## 2026-11-09: voxel costmap, traversability hardware prep
 

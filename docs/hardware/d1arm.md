@@ -911,7 +911,16 @@ $A joint 5 0 sleep 3 joint 0 0 # back
 | `joint 5 30` | behind the wrist, looking along the arm toward the gripper | clockwise | `1` if it turned clockwise, else `-1` |
 
 Set the other four to `1`, for example `ARM_JOINT_SIGNS="-1 1 1 1 1 -1"` if both
-are reversed. Check the mount at the same time: at `home` (all zeros) the forearm
+are reversed.
+
+**Measured on this arm (2026-11-11): `ARM_JOINT_SIGNS="-1 1 1 1 1 -1"`.** With `1` on
+Joint1 the real arm went the opposite way to RViz for `inspect_plant.py`'s Left and Right
+poses (Front, base near 0, looked right); with `-1` it follows RViz. Joint4 (forearm roll)
+and Joint6 (wrist roll) were each rolled alone through the bridge and turned the same way
+as RViz. `moveit_d1_bridge.py` also takes `ARM_JOINT_OFFSETS` (six degrees, firmware =
+sign x (MoveIt + offset)); it is not needed on this arm: RViz and the real gripper agree
+with all zeros. Still open: the gripper roll the operator calls flat at Front
+(`inspect_plant.py` `roll_deg`, default 0). Check the mount at the same time: at `home` (all zeros) the forearm
 must point over the dog's **tail**, as in `d1_go2.urdf.xacro` (yaw 180°). The
 dashboard, `twin/d1_tf_urdf.py` and `arm_ik_scanner.py` still assume it points
 forward.

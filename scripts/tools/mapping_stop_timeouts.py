@@ -28,6 +28,8 @@ Edits (each tagged with TAG, original kept as mapping.sh.pre-timeouts):
     it), the end of the SLAM or motion link no longer ends the whole run:
     scripts/runtime/session_keepalive.sh halts the robot, prints the cause
     and the fix, and waits for Ctrl+C. Without it, mapping.sh is unchanged.
+  * walk mode (WALK_TAG): GO2_SPORT_WALK_MODE reaches the dog-side
+    robot_sport_bridge.py (ssh does not pass the environment); default free.
 Run by wifi_nav.sh before every session.
 """
 
@@ -37,6 +39,7 @@ import sys
 
 TAG = "  # go2-agri: stop timeouts"
 KEEP_TAG = "  # go2-agri: keep session"
+WALK_TAG = "  # go2-agri: walk mode (wifi_3d_nav.sh --semantic: classic)"
 FILE = "mapping.sh"
 
 LOCAL_STOP = 'docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1'
@@ -105,6 +108,13 @@ EDITS = [
         '      source "$GO2_KEEPALIVE"; go2_keepalive_wait' + KEEP_TAG + '\n'
         '    elif [[ -n "$motion_pid" ]]; then\n'
         '      wait -n "$mapping_pid" "$viz_pid" "$motion_pid"\n',
+    ),
+    # The dog-side sport bridge's walk mode: wifi_3d_nav.sh --semantic sets ClassicWalk on
+    # the robot (FreeWalk's steps were uneven, measured 2026-11-11); free otherwise, as before.
+    (
+        """        'exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh' >"$log_dir/motion.log" 2>&1 &""",
+        """        "GO2_SPORT_WALK_MODE=${GO2_SPORT_WALK_MODE:-free} exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh" >"$log_dir/motion.log" 2>&1 &"""
+        + WALK_TAG,
     ),
 ]
 

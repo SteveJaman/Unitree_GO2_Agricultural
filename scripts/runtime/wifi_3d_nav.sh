@@ -972,7 +972,7 @@ if [ "${TRAV_SEMANTIC}" = "true" ]; then
         if [ "${SIM}" != "true" ] && [ -z "${TRAV_VLM_MODEL:-}" ]; then
             TRAV_VLM_MODEL="$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["vlm_heuristic_node"]["ros__parameters"]["model"])' "${TRAV_HW_CONFIG}" 2>/dev/null || true)"
         fi
-        TRAV_CAMERA_NOTE="YOLO -> 3D boxes$( [ "${TRAV_VLM}" = 1 ] && echo " -> VLM labels (${TRAV_VLM_MODEL:-qwen2.5vl})" ) ($(basename "${TRAV_CAMERA_INFO}"))"
+        TRAV_CAMERA_NOTE="YOLO -> 3D boxes$( [ "${TRAV_VLM}" != 1 ] || echo " -> VLM labels (${TRAV_VLM_MODEL:-qwen2.5vl})" ) ($(basename "${TRAV_CAMERA_INFO}"))"
         # Ollama for the VLM labeller: on WSL the sim's Ollama is the Windows host (the
         # default gateway, scripts/config/ollama.yaml); elsewhere TWIN_VLM_URL's server.
         if [ -z "${TRAV_OLLAMA_URL:-}" ]; then
@@ -1061,7 +1061,7 @@ if [ "${TRAV_SEMANTIC}" = "true" ]; then
     echo "[3d] Traversability costmap layout (add-traversability-layers.sh, edits ${NAV2_WIFI_DIR})..."
     TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" 2>&1 | sed 's/^/    /' ||
         die "--semantic: add-traversability-layers.sh failed (see above); the costmap was not changed as asked."
-    TRAV_COSTMAP="traversability (local: obstacle, height band ${TRAV_STEP_OVER}/0.22 m, semantic, inflation; global: obstacle, semantic, inflation)$( [ -n "${GO2_SPORT_WALK_MODE:-}" ] && echo "; dog walks ${GO2_SPORT_WALK_MODE}" )"
+    TRAV_COSTMAP="traversability (local: obstacle, height band ${TRAV_STEP_OVER}/0.22 m, semantic, inflation; global: obstacle, semantic, inflation)$( [ -z "${GO2_SPORT_WALK_MODE:-}" ] || echo "; dog walks ${GO2_SPORT_WALK_MODE}" )"
 else
     if TARGET_REPO="${NAV2_WIFI_DIR}" GO2_CONTAINER="${CONTAINER_NAME}" bash "${TRAV_ADD}" --undo 2>&1 | sed 's/^/    /'; then
         TRAV_COSTMAP="standard (no --semantic)"

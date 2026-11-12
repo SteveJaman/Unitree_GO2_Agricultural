@@ -1249,6 +1249,9 @@ fi
 if [ "${SIM}" != "true" ]; then
     python3 "${SCRIPT_DIR}/../tools/mapping_stop_timeouts.py" "${NAV2_WIFI_DIR}" || true
 fi
+# An RViz crash (RViz 2 segfaults now and then) restarts RViz instead of ending the
+# session (go2-nav2-wifi's go2_session.py; idempotent). Robot and sim.
+python3 "${SCRIPT_DIR}/../tools/session_rviz_respawn.py" "${NAV2_WIFI_DIR}" || true
 
 # Full mobility (--omni): MPPI Omni + omni lattice, else the forward-only default.
 if [ "${OMNI}" = "true" ] && ! ensure_mppi; then
@@ -1273,7 +1276,27 @@ python3 "${SCRIPT_DIR}/../tools/nav2_camera_source.py" "${cam_src[@]}" \
 # 3D voxel obstacle layer only for wifi_3d_nav.sh --voxel (VOXEL_COSTMAP=1): VoxelLayer
 # on the self-filtered LiDAR (+ the camera source with --camera-obstacles); every other
 # session puts the ObstacleLayer back (nav2_voxel_layer.py restores the file exactly).
-if [ "${VOXEL_COSTMAP:-0}" = 1 ]; then vox=--enable; else vox=--disable; fi
+# --voxel: Nav2's VoxelLayer by default. VOXEL_PLUGIN=stvl uses the Spatio-Temporal Voxel
+# Layer instead (voxels expire VOXEL_DECAY s after last seen, so people and moved chairs leave
+# the costmap; the VoxelLayer kept a removed box lethal in the sim, 2026-11-11). Opt-in until
+# it has run in a live session; installed in the container when asked for and missing.
+if [ "${VOXEL_COSTMAP:-0}" = 1 ]; then
+    vox=--enable
+    if [ "${VOXEL_PLUGIN:-}" = stvl ]; then
+        if docker exec "${CONTAINER_NAME}" test -d /opt/ros/humble/share/spatio_temporal_voxel_layer 2>/dev/null || {
+            echo "[voxel] Installing ros-humble-spatio-temporal-voxel-layer in ${CONTAINER_NAME} (needs internet)..."
+            docker exec -u root "${CONTAINER_NAME}" bash -c \
+                'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ros-humble-spatio-temporal-voxel-layer' \
+                >/dev/null 2>&1; }; then
+            export VOXEL_PLUGIN=stvl
+        else
+            echo "[voxel] WARN: STVL not available; plain VoxelLayer (moved obstacles may linger)"
+            export VOXEL_PLUGIN=voxel
+        fi
+    fi
+else
+    vox=--disable
+fi
 python3 "${SCRIPT_DIR}/../tools/nav2_voxel_layer.py" "${vox}" \
     "${NAV2_WIFI_DIR}/go2_nav2/config/lidar3d_planner.yaml" || true
 

@@ -133,9 +133,12 @@ do_start() {
         fi
         # Sim: the fixed floor of the n = 10 trials. Robot: the floor from a height
         # histogram (the body pitches and rolls; HARDWARE_HANDOFF.md).
+        # Robot: forget objects that moved (in view, unmatched 3 s; any, unseen 60 s).
+        local fusion_robot=()
+        [ "${TRAV_SIM:-0}" = 1 ] || fusion_robot=(-p track_view_timeout_s:=3.0 -p track_max_age_s:=60.0)
         bg fusion python3 "${D}/object_box_fusion.py" --ros-args "${cam_args[@]}" \
             -p floor_estimation:="$([ "${TRAV_SIM:-0}" = 1 ] && echo fixed || echo histogram)" \
-            -p step_over_height_max:="${step}"
+            -p step_over_height_max:="${step}" "${fusion_robot[@]}"
         if [ "${TRAV_VLM:-1}" = 1 ]; then
             bg vlm python3 "${D}/vlm_heuristic_node.py" --ros-args --params-file "${D}/ollama.yaml" "${cam_args[@]}" \
                 -p ollama_url:="${TRAV_OLLAMA_URL}" -p dry_run:=false -p backend:="${backend}" \
@@ -147,7 +150,7 @@ do_start() {
     if [ "${GAIT_ENABLE_HARDWARE:-false}" = true ]; then
         # shellcheck disable=SC2207
         gait_args+=(-p backend:=sport_client -p enable_hardware_backend:=true -p dry_run:="${GAIT_DRY_RUN:-true}"
-                    -p sdk_network_interface:="${TRAV_SDK_IFACE:-}" $(hw_gait_args "${TRAV_HW_CONFIG}"))
+                    -p sdk_network_interface:="${TRAV_SDK_IFACE:-wlan0}" $(hw_gait_args "${TRAV_HW_CONFIG}"))
         python3 -c "from unitree_sdk2py.go2.sport.sport_client import SportClient as S; assert hasattr(S, 'FootRaiseHeight')" \
             2>/dev/null || echo "[trav] WARN: unitree_sdk2py with SportClient.FootRaiseHeight is not importable here;" \
                                 "the sport_client backend will log [FATAL] and stay inactive (HARDWARE_HANDOFF.md check 1)"

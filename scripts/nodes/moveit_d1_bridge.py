@@ -42,6 +42,10 @@ Environment:
                     = sign x MoveIt angle. The D1-550 URDF and Unitree's own
                     d1_description disagree on Joint1 and Joint6: test on the
                     arm (d1arm.md, "Joint signs") before setting this.
+    ARM_JOINT_OFFSETS Optional: six angles in degrees (default all 0), the real
+                    joint minus the model's in MoveIt's sense: firmware angle =
+                    sign x (MoveIt angle + offset). The wrist roll reads 90 deg off the
+                    model on this arm: "0 0 0 0 0 -90" (2026-11-11, d1arm.md).
     ARM_IFACE       Arm network interface (default: d1_arm_control's auto-detect)
     ARM_ROBOT       Go2 Wi-Fi IP, for an arm plugged into the Go2
     BRIDGE_RATE     Trajectory rate in Hz (default: 50)
@@ -127,6 +131,19 @@ STOW_MAX_MOVE_DEG = 65.0  # fold to stow is 57 at most: more means a wrong sign
 STOW_VEL_DEG_S, STOW_ACC_DEG_S2 = 15.0, 30.0
 
 
+def parse_offsets(text):
+    """ARM_JOINT_OFFSETS: six angles in degrees (empty: all zero)."""
+    if not (text or "").strip():
+        return [0.0] * ARM_JOINTS
+    try:
+        offs = [float(v) for v in text.split()]
+    except ValueError:
+        offs = []
+    if len(offs) != ARM_JOINTS or any(abs(o) > 180 for o in offs):
+        raise ValueError(f'ARM_JOINT_OFFSETS needs six angles in degrees, got "{text}"')
+    return offs
+
+
 def parse_signs(text):
     """ARM_JOINT_SIGNS: six values, each +1 or -1."""
     try:
@@ -191,9 +208,12 @@ def check_points(points, dt, limits=JOINT_LIMITS):
 class MoveItD1Bridge(Node):
     """The physical D1 arm as a FollowJointTrajectory controller."""
 
-    def __init__(self, signs, arm=None, start_stow=False):
+    def __init__(self, signs, arm=None, start_stow=False, offsets=None):
         super().__init__("moveit_d1_bridge")
         self.signs = np.array(signs, dtype=float)
+        self.offsets = np.array(
+            offsets if offsets is not None else [0.0] * ARM_JOINTS, dtype=float
+        )
         self.arm_lock = (
             threading.Lock()
         )  # telemetry is drained on read: one reader at a time
@@ -222,12 +242,20 @@ class MoveItD1Bridge(Node):
         )
         self.get_logger().info(
             f"Bridge ready: {STREAM_RATE:.0f} Hz, on the robot: {robot_has(self.arm, 'traj_points')}, "
-            f"signs {[int(s) for s in signs]}, gripper held at {self.gripper:.1f} deg"
+            f"signs {[int(s) for s in signs]}, offsets {[round(float(o), 1) for o in self.offsets]}, "
+            f"gripper held at {self.gripper:.1f} deg"
         )
         ready = os.environ.get("ARM_BRIDGE_READY")
         if ready:  # arm_moveit.sh starts MoveIt on this, after any move to stow
             with open(ready, "w") as f:
                 f.write("ready\n")
+
+    def to_firmware(self, moveit_deg):
+        """MoveIt joint angles (degrees, Joint1..6 in the last axis) -> firmware angles."""
+        return (moveit_deg + self.offsets) * self.signs
+
+    def from_firmware(self, firmware_deg):
+        return firmware_deg * self.signs - self.offsets
 
     def connect(self, arm, start_stow):
         """Reach the arm, power and enable it, and move it to stow if asked."""
@@ -277,7 +305,7 @@ class MoveItD1Bridge(Node):
         if now is None:
             raise RuntimeError("no joint angles from the arm")
         now = np.array(now[:ARM_JOINTS])
-        stow = np.array(STOW_RAD) * RAD2DEG * self.signs
+        stow = self.to_firmware(np.array(STOW_RAD) * RAD2DEG)
         if np.abs(now - stow).max() <= STOW_TOLERANCE_DEG:
             self.get_logger().info("Already at stow")
             return
@@ -292,7 +320,9 @@ class MoveItD1Bridge(Node):
                 "staying here. If MoveIt refuses this pose, move the arm to stow"
             )
             return
-        if np.abs(stow - now).max() > STOW_MAX_MOVE_DEG:
+        # Roll joints (base, 4, 6) only turn in place; a joint offset can put stow far from
+        # the fold there. The pitch joints decide whether a sign is wrong.
+        if np.abs(stow - now)[[1, 2, 4]].max() > STOW_MAX_MOVE_DEG:
             raise RuntimeError("stow is too far from the fold: check ARM_JOINT_SIGNS")
         self.get_logger().info(
             f"Moving from the fold to stow at {STOW_VEL_DEG_S:.0f} deg/s"
@@ -361,7 +391,10 @@ class MoveItD1Bridge(Node):
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = MOVEIT_JOINTS + FINGER_JOINTS
-        msg.position = list(np.array(self.measured) * self.signs * DEG2RAD) + [0.0, 0.0]
+        msg.position = list(self.from_firmware(np.array(self.measured)) * DEG2RAD) + [
+            0.0,
+            0.0,
+        ]
         self.js_pub.publish(msg)
 
     def poll_joint_states(self):
@@ -489,7 +522,7 @@ class MoveItD1Bridge(Node):
             points = resample(goal_handle.request.trajectory, STREAM_RATE)
         except ValueError as e:
             return self.fail(goal_handle, Result.INVALID_JOINTS, str(e))
-        points = points * RAD2DEG * self.signs
+        points = self.to_firmware(points * RAD2DEG)
         why = check_points(points, dt)
         if why:
             return self.fail(goal_handle, Result.INVALID_GOAL, why)
@@ -551,6 +584,7 @@ class MoveItD1Bridge(Node):
 def main():
     try:
         signs = parse_signs(os.environ.get("ARM_JOINT_SIGNS", ""))
+        offsets = parse_offsets(os.environ.get("ARM_JOINT_OFFSETS", ""))
     except ValueError as e:
         sys.exit(f"[bridge] {e}")
     # Python's own handlers, not rclpy's: those only flag the shutdown, and the
@@ -560,7 +594,9 @@ def main():
     signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        node = MoveItD1Bridge(signs, start_stow=os.environ.get("ARM_START_STOW") == "1")
+        node = MoveItD1Bridge(
+            signs, start_stow=os.environ.get("ARM_START_STOW") == "1", offsets=offsets
+        )
     except (RuntimeError, KeyboardInterrupt) as e:
         rclpy.shutdown()
         sys.exit(

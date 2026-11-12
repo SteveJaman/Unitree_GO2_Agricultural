@@ -23,6 +23,7 @@ Reads the YOLO node's output, and does not modify it:
 Publishes /objects/boxes_json (std_msgs/String): {"stamp", "boxes": [...]}.
 With dry_run, boxes are logged and nothing is published.
 """
+
 import json
 import math
 
@@ -99,9 +100,21 @@ def oriented_box(xy):
     return center[0], center[1], hi[0] - lo[0], hi[1] - lo[1], yaw
 
 
-def fuse_detection(points_map, points_cam, intrinsics, bbox, floor_z, min_points=4,
-                   ground_tolerance=0.02, max_range=6.0, cluster_radius=0.25, pad_px=2.0,
-                   min_fill=0.4, max_top_gap=0.3, floor_range=None):
+def fuse_detection(
+    points_map,
+    points_cam,
+    intrinsics,
+    bbox,
+    floor_z,
+    min_points=4,
+    ground_tolerance=0.02,
+    max_range=6.0,
+    cluster_radius=0.25,
+    pad_px=2.0,
+    min_fill=0.4,
+    max_top_gap=0.3,
+    floor_range=None,
+):
     """One detection -> a 3D box dict, or {"traverse": "unknown", ...}.
 
     A measurement must explain the detection: the cluster must span min_fill of
@@ -116,34 +129,77 @@ def fuse_detection(points_map, points_cam, intrinsics, bbox, floor_z, min_points
     if len(pts) == 0:
         return {"traverse": "unknown", "n_points": 0, "reason": "no_points"}
     u, v = project(cam, *intrinsics)
-    inside = (u >= x1 - pad_px) & (u <= x2 + pad_px) & (v >= y1 - pad_px) & (v <= y2 + pad_px)
+    inside = (
+        (u >= x1 - pad_px)
+        & (u <= x2 + pad_px)
+        & (v >= y1 - pad_px)
+        & (v <= y2 + pad_px)
+    )
     inside &= pts[:, 2] > floor_z + ground_tolerance
     pts, u, v, depth = pts[inside], u[inside], v[inside], cam[:, 0][inside]
     if len(pts) < min_points:
-        return {"traverse": "unknown", "n_points": int(len(pts)), "reason": "too_few_points"}
+        return {
+            "traverse": "unknown",
+            "n_points": int(len(pts)),
+            "reason": "too_few_points",
+        }
     fill, keep = best_cluster(pts, u, bbox, cluster_radius)
     pts, v, depth = pts[keep], v[keep], depth[keep]
     if len(pts) < min_points:
-        return {"traverse": "unknown", "n_points": int(len(pts)), "reason": "too_few_points"}
+        return {
+            "traverse": "unknown",
+            "n_points": int(len(pts)),
+            "reason": "too_few_points",
+        }
     if fill < min_fill:
-        return {"traverse": "unknown", "n_points": int(len(pts)), "reason": "small_in_box"}
+        return {
+            "traverse": "unknown",
+            "n_points": int(len(pts)),
+            "reason": "small_in_box",
+        }
     if (float(v.min()) - y1) / max(y2 - y1, 1.0) > max_top_gap:
-        return {"traverse": "unknown", "n_points": int(len(pts)), "reason": "top_not_seen"}
-    if floor_range is not None and abs(float(np.median(depth)) - floor_range) > max(0.4, 0.2 * floor_range):
-        return {"traverse": "unknown", "n_points": int(len(pts)), "reason": "wrong_range"}
+        return {
+            "traverse": "unknown",
+            "n_points": int(len(pts)),
+            "reason": "top_not_seen",
+        }
+    if floor_range is not None and abs(float(np.median(depth)) - floor_range) > max(
+        0.4, 0.2 * floor_range
+    ):
+        return {
+            "traverse": "unknown",
+            "n_points": int(len(pts)),
+            "reason": "wrong_range",
+        }
     x, y, sx, sy, yaw = oriented_box(pts[:, :2])
     top = float(pts[:, 2].max())
-    return {"x": float(x), "y": float(y), "z": (top + floor_z) / 2, "sx": float(sx), "sy": float(sy),
-            "sz": top - floor_z, "yaw": yaw, "height": top - floor_z, "n_points": int(len(pts))}
+    return {
+        "x": float(x),
+        "y": float(y),
+        "z": (top + floor_z) / 2,
+        "sx": float(sx),
+        "sy": float(sy),
+        "sz": top - floor_z,
+        "yaw": yaw,
+        "height": top - floor_z,
+        "n_points": int(len(pts)),
+    }
 
 
 class Tracks:
     """World-fixed objects. Same class and close together is the same object;
     a track is published once it has been seen min_obs times."""
 
-    def __init__(self, merge_dist=0.7, step_over_max=0.12, lethal_min=0.22, history=9, min_obs=2):
+    def __init__(
+        self, merge_dist=0.7, step_over_max=0.12, lethal_min=0.22, history=9, min_obs=2
+    ):
         self.merge, self.step, self.lethal, self.history, self.min_obs = (
-            merge_dist, step_over_max, lethal_min, history, min_obs)
+            merge_dist,
+            step_over_max,
+            lethal_min,
+            history,
+            min_obs,
+        )
         self.items = []
         self.next_id = 0
 
@@ -159,17 +215,33 @@ class Tracks:
         return best
 
     def new(self, cls, x, y):
-        t = {"id": self.next_id, "class": cls, "x": x, "y": y, "z": 0.0, "sx": 0.0, "sy": 0.0, "sz": 0.0,
-             "yaw": 0.0, "heights": [], "n_obs": 0, "n_points": 0, "height": None, "traverse": "unknown"}
+        t = {
+            "id": self.next_id,
+            "class": cls,
+            "x": x,
+            "y": y,
+            "z": 0.0,
+            "sx": 0.0,
+            "sy": 0.0,
+            "sz": 0.0,
+            "yaw": 0.0,
+            "heights": [],
+            "n_obs": 0,
+            "n_points": 0,
+            "height": None,
+            "traverse": "unknown",
+        }
         self.next_id += 1
         self.items.append(t)
         return t
 
     def update(self, cls, score, box, now):
         t = self.find(cls, box["x"], box["y"]) or self.new(cls, box["x"], box["y"])
-        t["heights"] = (t["heights"] + [box["height"]])[-self.history:]
+        t["heights"] = (t["heights"] + [box["height"]])[-self.history :]
         t["n_obs"] += 1
-        t.update({k: box[k] for k in ("x", "y", "z", "sx", "sy", "sz", "yaw", "n_points")})
+        t.update(
+            {k: box[k] for k in ("x", "y", "z", "sx", "sy", "sz", "yaw", "n_points")}
+        )
         t.update(score=float(score), last_seen=now)
         self.merge_duplicates(t)
         self.rate(t)
@@ -187,22 +259,56 @@ class Tracks:
 
     def merge_duplicates(self, keep):
         for t in list(self.items):
-            if t is not keep and t["class"] == keep["class"] and \
-                    math.hypot(t["x"] - keep["x"], t["y"] - keep["y"]) < self.radius(keep):
-                keep["heights"] = (t["heights"] + keep["heights"])[-self.history:]
+            if (
+                t is not keep
+                and t["class"] == keep["class"]
+                and math.hypot(t["x"] - keep["x"], t["y"] - keep["y"])
+                < self.radius(keep)
+            ):
+                keep["heights"] = (t["heights"] + keep["heights"])[-self.history :]
                 keep["n_obs"] += t["n_obs"]
                 self.items.remove(t)
 
+    def prune(self, now, in_view, view_timeout=0.0, max_age=0.0):
+        """Forget objects that moved away. A track the camera should see right now
+        (in_view(track) is True) but has not matched for view_timeout s is gone; any
+        track unseen for max_age s is dropped too. 0 turns either off. Returns the
+        number dropped. Without this, every chair or person ever seen kept its box,
+        label and semantic costmap mark at the old spot (lab, 2026-11-11)."""
+        keep = []
+        for t in self.items:
+            age = now - t.get("last_seen", now)
+            gone = (view_timeout > 0 and age > view_timeout and in_view(t)) or (
+                max_age > 0 and age > max_age
+            )
+            if not gone:
+                keep.append(t)
+        dropped = len(self.items) - len(keep)
+        self.items = keep
+        return dropped
+
     def publishable(self):
-        return [{k: (round(v, 3) if isinstance(v, float) else v)
-                 for k, v in t.items() if k != "heights"}
-                for t in self.items if t["n_obs"] >= self.min_obs]
+        return [
+            {
+                k: (round(v, 3) if isinstance(v, float) else v)
+                for k, v in t.items()
+                if k != "heights"
+            }
+            for t in self.items
+            if t["n_obs"] >= self.min_obs
+        ]
 
 
 def cloud_xyz(msg):
     off = {f.name: f.offset for f in msg.fields}
-    dt = np.dtype({"names": ["x", "y", "z"], "formats": ["<f4"] * 3,
-                   "offsets": [off["x"], off["y"], off["z"]], "itemsize": msg.point_step})
+    dt = np.dtype(
+        {
+            "names": ["x", "y", "z"],
+            "formats": ["<f4"] * 3,
+            "offsets": [off["x"], off["y"], off["z"]],
+            "itemsize": msg.point_step,
+        }
+    )
     raw = np.frombuffer(bytes(msg.data), dtype=dt, count=msg.width * msg.height)
     pts = np.stack([raw["x"], raw["y"], raw["z"]], axis=1).astype(np.float64)
     return pts[np.isfinite(pts).all(axis=1)]
@@ -210,10 +316,13 @@ def cloud_xyz(msg):
 
 def rotation_matrix(q):
     x, y, z, w = q.x, q.y, q.z, q.w
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
 
 
 def main():
@@ -245,35 +354,55 @@ def main():
             p("lethal_height_min", 0.22)
             p("min_points", 4)
             p("max_range", 6.0)
-            p("unknown_range", 3.0)   # a floor-ray position is poor beyond this
+            p("unknown_range", 3.0)  # a floor-ray position is poor beyond this
             p("fx", 468.0)
             p("fy", 468.0)
             p("cx", 320.0)
             p("cy", 180.0)
             p("dry_run", False)
+            # Forget moved objects (Tracks.prune); 0 = never, as in the sim trials.
+            p("track_view_timeout_s", 0.0)  # robot: 3.0
+            p("track_max_age_s", 0.0)  # robot: 60.0
             gp = lambda k: self.get_parameter(k).value  # noqa: E731
             self.map_frame, self.cam_frame = gp("map_frame"), gp("camera_frame")
             self.floor_z, self.min_points = float(gp("floor_z")), int(gp("min_points"))
             self.floor_mode = gp("floor_estimation")
             if self.floor_mode not in ("fixed", "histogram"):
-                raise ValueError(f"floor_estimation must be fixed or histogram, not {self.floor_mode}")
+                raise ValueError(
+                    f"floor_estimation must be fixed or histogram, not {self.floor_mode}"
+                )
             self.floor_hist = deque(maxlen=max(1, int(gp("floor_smoothing_frames"))))
             self.max_range, self.dry_run = float(gp("max_range")), bool(gp("dry_run"))
+            self.view_timeout = float(gp("track_view_timeout_s"))
+            self.max_age = float(gp("track_max_age_s"))
             self.unknown_range = float(gp("unknown_range"))
-            self.K = (float(gp("fx")), float(gp("fy")), float(gp("cx")), float(gp("cy")))
+            self.K = (
+                float(gp("fx")),
+                float(gp("fy")),
+                float(gp("cx")),
+                float(gp("cy")),
+            )
             self.scans = deque(maxlen=int(gp("cloud_history")))
-            self.tracks = Tracks(step_over_max=float(gp("step_over_height_max")),
-                                 lethal_min=float(gp("lethal_height_min")))
+            self.tracks = Tracks(
+                step_over_max=float(gp("step_over_height_max")),
+                lethal_min=float(gp("lethal_height_min")),
+            )
             self.tf = Buffer()
             self.listener = TransformListener(self.tf, self)
             self.pub = self.create_publisher(String, "/objects/boxes_json", 10)
-            self.create_subscription(PointCloud2, gp("cloud_topic"), self.on_cloud,
-                                     qos_profile_sensor_data)
+            self.create_subscription(
+                PointCloud2, gp("cloud_topic"), self.on_cloud, qos_profile_sensor_data
+            )
             self.create_subscription(CameraInfo, "/camera/camera_info", self.on_info, 1)
-            self.create_subscription(String, "/objects/detections_json", self.on_json, 10)
+            self.create_subscription(
+                String, "/objects/detections_json", self.on_json, 10
+            )
             try:
                 from vision_msgs.msg import Detection2DArray
-                self.create_subscription(Detection2DArray, "/yolo/detections", self.on_yolo, 10)
+
+                self.create_subscription(
+                    Detection2DArray, "/yolo/detections", self.on_yolo, 10
+                )
             except ImportError:
                 self.get_logger().info("vision_msgs missing: JSON detections only")
             self.get_logger().info(f"object_box_fusion dry_run={self.dry_run}")
@@ -291,9 +420,13 @@ def main():
                     b = d.bbox
                     hw, hh = b.size_x / 2, b.size_y / 2
                     cx, cy = b.center.position.x, b.center.position.y
-                    dets.append({"class": d.results[0].hypothesis.class_id,
-                                 "score": d.results[0].hypothesis.score,
-                                 "bbox": [cx - hw, cy - hh, cx + hw, cy + hh]})
+                    dets.append(
+                        {
+                            "class": d.results[0].hypothesis.class_id,
+                            "score": d.results[0].hypothesis.score,
+                            "bbox": [cx - hw, cy - hh, cx + hw, cy + hh],
+                        }
+                    )
             self.process(dets)
 
         def on_json(self, msg):
@@ -303,9 +436,12 @@ def main():
             if self.floor_mode == "fixed":
                 return self.floor_z
             from low_object_clusterer import estimate_floor
+
             self.floor_hist.append(estimate_floor(pts, self.floor_z))
             floor = float(np.median(self.floor_hist))
-            self.get_logger().info(f"floor_z estimate {floor:.4f}", throttle_duration_sec=1.0)
+            self.get_logger().info(
+                f"floor_z estimate {floor:.4f}", throttle_duration_sec=1.0
+            )
             return floor
 
         def process(self, detections):
@@ -319,24 +455,55 @@ def main():
             pts = np.concatenate(list(self.scans))
             floor = self.current_floor(pts)
             tr = tf.transform.translation
-            cam = pts @ rotation_matrix(tf.transform.rotation).T + np.array([tr.x, tr.y, tr.z])
+            cam = pts @ rotation_matrix(tf.transform.rotation).T + np.array(
+                [tr.x, tr.y, tr.z]
+            )
             now = self.get_clock().now().nanoseconds * 1e-9
             rot = rotation_matrix(tf.transform.rotation)
             trans = np.array([tr.x, tr.y, tr.z])
             for det in detections:
                 p = ground_point(det["bbox"], self.K, rot, trans, floor)
                 floor_range = None if p is None else float((rot @ p + trans)[0])
-                box = fuse_detection(pts, cam, self.K, det["bbox"], floor, self.min_points,
-                                     max_range=self.max_range, floor_range=floor_range)
+                box = fuse_detection(
+                    pts,
+                    cam,
+                    self.K,
+                    det["bbox"],
+                    floor,
+                    self.min_points,
+                    max_range=self.max_range,
+                    floor_range=floor_range,
+                )
                 if "height" in box:
                     self.tracks.update(det["class"], det["score"], box, now)
                 else:
-                    if p is not None and np.hypot(*(p + rot.T @ trans)[:2]) < self.unknown_range:
-                        self.tracks.update_unknown(det["class"], det["score"], float(p[0]), float(p[1]), now)
+                    if (
+                        p is not None
+                        and np.hypot(*(p + rot.T @ trans)[:2]) < self.unknown_range
+                    ):
+                        self.tracks.update_unknown(
+                            det["class"], det["score"], float(p[0]), float(p[1]), now
+                        )
+            if self.view_timeout > 0 or self.max_age > 0:
+                fx, fy, cx, cy = self.K
+
+                def in_view(t):
+                    # Camera frame x forward (project()): in range and inside the image.
+                    z = t["z"] if t.get("height") is not None else 0.2
+                    c = rot @ np.array([t["x"], t["y"], z]) + trans
+                    if not 0.5 < c[0] < min(self.max_range, 4.0):
+                        return False
+                    u, v = project(c[None, :], fx, fy, cx, cy)
+                    return 0.05 * cx < u[0] < 1.95 * cx and 0.05 * cy < v[0] < 1.95 * cy
+
+                n = self.tracks.prune(now, in_view, self.view_timeout, self.max_age)
+                if n:
+                    self.get_logger().info(f"forgot {n} object(s) that moved away")
             out = {"stamp": now, "boxes": self.tracks.publishable()}
             if self.dry_run:
-                self.get_logger().info(f"dry_run boxes: {len(out['boxes'])}",
-                                       throttle_duration_sec=5.0)
+                self.get_logger().info(
+                    f"dry_run boxes: {len(out['boxes'])}", throttle_duration_sec=5.0
+                )
             else:
                 self.pub.publish(String(data=json.dumps(out)))
 
