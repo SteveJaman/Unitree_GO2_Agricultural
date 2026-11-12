@@ -1,45 +1,59 @@
 #!/usr/bin/env python3
-"""3-point plant inspection with the D1 arm through MoveIt 2."""
+"""3-point plant inspection (Front, Left, Right) with the D1 arm through MoveIt 2.
+
+Everything is in the arm's own base frame (FRAME, base_link: +x straight ahead of the
+arm, +y its left, +z up). The arm is modelled facing forward (d1_go2.urdf.xacro, yaw 0);
+on the dog it faces the tail, so the operator parks the dog tail-first to the plant and
+for the arm the plant is simply ahead. No mount compensation, no roll parameter.
+
+The three viewpoints sit on a circle around the canopy: Front between the plant and the
+arm, Left and Right azimuth_deg to the arm's left and right of it, each a little below the
+canopy and looking up at it (look_up_deg). The gripper's X axis points at the canopy and
+its Z axis is kept up in the arm frame.
+
+The arm can make the same gripper pose with different forearm / wrist twists (Joint4 and
+Joint6 both roll), and MoveIt picked a different one from run to run (Front once came out
+Joint4 +91, Joint6 -88; the gripper looked flipped). So each pose is solved by IK from
+several seeds, the solution with the least twist (|Joint4| + |Joint6|) is kept, and the
+arm is sent there as a joint goal, planned and collision-checked by MoveIt.
+
+Parameters (metres / degrees, arm frame): plant_forward, plant_left, canopy_height,
+canopy_radius, standoff, look_up_deg, azimuth_deg, load_rack (bed_top_height, bed_depth,
+bed_width, floor_height), dwell_s, plan_only, planning_time, velocity_scaling, tool_link.
+"""
 import math
-import os
 import time
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Point, Pose, Quaternion
+from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import (BoundingVolume, CollisionObject, Constraints, JointConstraint,
-                             MotionPlanRequest, OrientationConstraint, PlanningOptions,
-                             PlanningScene, PositionConstraint)
-from moveit_msgs.srv import ApplyPlanningScene
+from moveit_msgs.msg import (CollisionObject, Constraints, JointConstraint, MotionPlanRequest,
+                             PlanningOptions, PlanningScene, PositionIKRequest, RobotState)
+from moveit_msgs.srv import ApplyPlanningScene, GetPositionIK
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
+FRAME = 'base_link'  # the D1's base: +x ahead of the arm
 ARM_JOINTS = ['Joint1', 'Joint2', 'Joint3', 'Joint4', 'Joint5', 'Joint6']
 STOW_ANGLES = [0.0, -1.396, 0.785, 0.0, 1.396, 0.0]
 SUCCESS = 1
+# IK seeds: the current state and stow, plus forearm rolls the wrist may need for Left/Right.
+SEED_J4_DEG = [0.0, 90.0, -90.0]
 
-def look_at(eye, target, roll_deg=0.0):
-    """Quaternion (x, y, z, w) whose X-axis points from eye to target (the gripper approach).
-    roll_deg turns the gripper about that axis; 0 = its Z axis up. On the real arm (2026-11-11)
-    neither 0, 90, -45 nor -60 looked flat to the operator: the flat roll is not settled yet."""
+
+def look_at(eye, target):
+    """Quaternion (x, y, z, w): X from eye to target, Z as close to +z (arm frame up) as possible."""
     x = np.asarray(target, float) - np.asarray(eye, float)
     x /= np.linalg.norm(x)
-
-    up = np.array([0.0, 0.0, 1.0])
-    if abs(np.dot(x, up)) > 0.99:
-        up = np.array([0.0, 1.0, 0.0])
-
+    up = np.array([0.0, 0.0, 1.0]) if abs(x[2]) < 0.99 else np.array([1.0, 0.0, 0.0])
     z = up - np.dot(up, x) * x
     z /= np.linalg.norm(z)
     y = np.cross(z, x)
-    r = math.radians(roll_deg)
-    y, z = math.cos(r) * y + math.sin(r) * z, -math.sin(r) * y + math.cos(r) * z
-
     m = np.column_stack([x, y, z])
     w = math.sqrt(max(0.0, 1.0 + m[0, 0] + m[1, 1] + m[2, 2])) / 2.0
     if w > 1e-6:
@@ -54,122 +68,143 @@ def look_at(eye, target, roll_deg=0.0):
     q[k] = (m[k, i] + m[i, k]) / s
     return (q[0], q[1], q[2], (m[k, j] - m[j, k]) / s)
 
-def compute_3_point_poses(canopy, toward_dog_yaw, radius, look_up_deg, azimuth_deg=30.0):
+
+def viewpoints(canopy, radius, look_up_deg, azimuth_deg):
+    """[(name, eye, canopy)] for Front, Left, Right, in the arm frame. Front lies on the line
+    from the canopy back toward the arm (the origin); Left / Right are turned azimuth_deg
+    about the canopy toward the arm's +y / -y."""
     el = math.radians(look_up_deg)
-    poses = []
-    # Swapped Left and Right to match backward-mounted arm
-    for name, az_deg in [('Front', 0.0), ('Left', azimuth_deg), ('Right', -azimuth_deg)]:
-        az = toward_dog_yaw + math.radians(az_deg)
+    toward_arm = math.atan2(-canopy[1], -canopy[0])
+    out = []
+    for name, side in (('Front', 0.0), ('Left', -1.0), ('Right', 1.0)):
+        # Looking back at the arm from the plant, +y (the arm's left) is to the right,
+        # i.e. a clockwise (negative) turn about the canopy.
+        az = toward_arm + side * math.radians(azimuth_deg)
         eye = (canopy[0] + radius * math.cos(el) * math.cos(az),
                canopy[1] + radius * math.cos(el) * math.sin(az),
                canopy[2] - radius * math.sin(el))
-        poses.append((name, eye, canopy))
-    return poses
+        out.append((name, eye, canopy))
+    return out
+
+
+def twist(q):
+    """How much the forearm and wrist are rolled (rad): the quantity kept small."""
+    return abs(q[3]) + abs(q[5])
+
 
 class InspectPlant(Node):
     def __init__(self):
         super().__init__('inspect_plant')
         d = self.declare_parameter
-        d('plant_x', -0.465)
-        d('plant_y', 0.0)
-        d('bed_height', 0.864)
-        d('bed_depth', 0.254)
-        d('bed_width', 1.02)
-        d('canopy_above_bed', 0.09)
+        # The plant, ahead of the arm (defaults: the lab rack, dog parked tail-first).
+        d('plant_forward', 0.465)
+        d('plant_left', 0.0)
+        d('canopy_height', 0.607)    # canopy centre above the arm base
         d('canopy_radius', 0.055)
         d('load_rack', False)
+        d('bed_top_height', 0.517)   # rack top above the arm base
+        d('bed_depth', 0.254)
+        d('bed_width', 1.02)
+        d('floor_height', -0.347)    # the floor, relative to the arm base
+        # The views.
         d('standoff', 0.150)
         d('look_up_deg', 15.0)
         d('azimuth_deg', 30.0)
-        d('roll_deg', 0.0)  # gripper roll about the viewing axis, deg; 0 = its Z axis up (as before)
         d('dwell_s', 3.0)
         d('plan_only', False)
         d('planning_time', 5.0)
         d('velocity_scaling', 0.3)
-        d('image_topic', '')
         d('tool_link', 'tool0')
-        d('image_dir', os.path.expanduser('~/plant_inspection'))
         self.p = lambda n: self.get_parameter(n).value
 
         self.move = ActionClient(self, MoveGroup, 'move_action')
         self.scene = self.create_client(ApplyPlanningScene, 'apply_planning_scene')
+        self.ik = self.create_client(GetPositionIK, 'compute_ik')
         self.markers = self.create_publisher(MarkerArray, '/inspect_plant/markers', 1)
+        self.joints = None
+        self.create_subscription(JointState, '/joint_states', self.on_joints, 10)
 
-        # Track the current joint state to seed the IK solver
-        self.current_joint_state = None
-        self.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
-
-        self.latest_image = None
-        if self.p('image_topic'):
-            self.create_subscription(Image, self.p('image_topic'),
-                                     lambda m: setattr(self, 'latest_image', m), 1)
-
-    def joint_cb(self, msg):
-        if len(msg.position) >= 6:
-            self.current_joint_state = msg
-
-    def wait_for_moveit(self, timeout=30.0):
-        ok = (self.move.wait_for_server(timeout_sec=timeout)
-              and self.scene.wait_for_service(timeout_sec=timeout))
-        if not ok:
-            self.get_logger().error('MoveIt not found.')
-        return ok
-
-    def add_plant(self, bed_h, canopy_r):
-        x, y = self.p('plant_x'), self.p('plant_y')
-        above = float(self.p('canopy_above_bed'))
-
-        def obj(name, kind, dims, pos):
-            o = CollisionObject()
-            o.header.frame_id = 'world'
-            o.id = name
-            o.operation = CollisionObject.ADD
-            prim = SolidPrimitive(type=kind, dimensions=list(dims))
-            pose = Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(w=1.0))
-            o.primitives.append(prim)
-            o.primitive_poses.append(pose)
-            return o
-
-        objects = []
-        if self.p('load_rack'):
-            objects.append(obj('bed', SolidPrimitive.BOX, (self.p('bed_depth'), self.p('bed_width'), bed_h), (x, y, bed_h / 2)))
-
-        objects.extend([
-            obj('plant_stem', SolidPrimitive.CYLINDER, (above, 0.03), (x, y, bed_h + above / 2)),
-            obj('plant_canopy', SolidPrimitive.SPHERE, (canopy_r,), (x, y, bed_h + above)),
-        ])
-
-        req = ApplyPlanningScene.Request()
-        req.scene = PlanningScene(is_diff=True)
-        req.scene.world.collision_objects = objects
-        res = self.call(self.scene.call_async(req))
-        return res is not None and res.success
+    def on_joints(self, msg):
+        if all(j in msg.name for j in ARM_JOINTS):
+            self.joints = [msg.position[msg.name.index(j)] for j in ARM_JOINTS]
 
     def call(self, future, timeout=60.0):
         rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
         return future.result() if future.done() else None
 
-    def request(self, constraints):
-        r = MotionPlanRequest()
-        r.group_name = 'arm'
-        r.num_planning_attempts = 5
-        r.allowed_planning_time = float(self.p('planning_time'))
-        r.max_velocity_scaling_factor = float(self.p('velocity_scaling'))
-        r.max_acceleration_scaling_factor = float(self.p('velocity_scaling'))
+    def wait_for_moveit(self, timeout=30.0):
+        ok = (self.move.wait_for_server(timeout_sec=timeout)
+              and self.scene.wait_for_service(timeout_sec=timeout)
+              and self.ik.wait_for_service(timeout_sec=timeout))
+        if not ok:
+            self.get_logger().error('MoveIt not found.')
+        return ok
 
-        # CRITICAL FIX: Seed the planner with the current joint state to prevent IK flips!
-        if self.current_joint_state:
-            r.start_state.joint_state = self.current_joint_state
-        else:
-            r.start_state.is_diff = True
+    # ------------------------------------------------------------------ scene
+    def add_plant(self, canopy):
+        def obj(name, kind, dims, pos):
+            o = CollisionObject(id=name, operation=CollisionObject.ADD)
+            o.header.frame_id = FRAME
+            o.primitives.append(SolidPrimitive(type=kind, dimensions=list(dims)))
+            o.primitive_poses.append(Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]),
+                                          orientation=Quaternion(w=1.0)))
+            return o
 
-        r.goal_constraints = [constraints]
-        return r
+        x, y, z = canopy
+        r = float(self.p('canopy_radius'))
+        objects = [obj('plant_canopy', SolidPrimitive.SPHERE, (r,), canopy)]
+        if self.p('load_rack'):
+            top, floor = float(self.p('bed_top_height')), float(self.p('floor_height'))
+            objects.append(obj('bed', SolidPrimitive.BOX,
+                               (self.p('bed_depth'), self.p('bed_width'), top - floor),
+                               (x, y, (top + floor) / 2)))
+            stem = max(0.01, z - r - top)
+            objects.append(obj('plant_stem', SolidPrimitive.CYLINDER, (stem, 0.015), (x, y, top + stem / 2)))
+        req = ApplyPlanningScene.Request(scene=PlanningScene(is_diff=True))
+        req.scene.world.collision_objects = objects
+        res = self.call(self.scene.call_async(req))
+        return res is not None and res.success
 
-    def execute(self, constraints):
-        goal = MoveGroup.Goal()
-        goal.request = self.request(constraints)
-        goal.planning_options = PlanningOptions(plan_only=bool(self.p('plan_only')))
+    # -------------------------------------------------------------------- IK
+    def solve(self, eye, quat):
+        """The least-twisted IK solution for tool_link at eye/quat, or None."""
+        pose = PoseStamped()
+        pose.header.frame_id = FRAME
+        pose.pose.position = Point(x=eye[0], y=eye[1], z=eye[2])
+        pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+        seeds = [list(STOW_ANGLES)] + ([list(self.joints)] if self.joints else [])
+        for j4 in SEED_J4_DEG:
+            seeds.append([0.0, -0.3, -0.1, math.radians(j4), 0.2, 0.0])
+        best = None
+        for seed in seeds:
+            req = GetPositionIK.Request()
+            r = PositionIKRequest(group_name='arm', ik_link_name=self.p('tool_link'),
+                                  avoid_collisions=True, pose_stamped=pose)
+            r.robot_state = RobotState(joint_state=JointState(name=ARM_JOINTS, position=seed))
+            r.timeout.sec = 1
+            req.ik_request = r
+            res = self.call(self.ik.call_async(req), timeout=5.0)
+            if res is None or res.error_code.val != SUCCESS:
+                continue
+            js = res.solution.joint_state
+            q = [js.position[js.name.index(j)] for j in ARM_JOINTS]
+            if best is None or twist(q) < twist(best):
+                best = q
+        return best
+
+    # ------------------------------------------------------------------ moves
+    def execute(self, angles):
+        c = Constraints(name='joints')
+        c.joint_constraints = [JointConstraint(joint_name=j, position=a, tolerance_above=0.01,
+                                               tolerance_below=0.01, weight=1.0)
+                               for j, a in zip(ARM_JOINTS, angles)]
+        req = MotionPlanRequest(group_name='arm', num_planning_attempts=5,
+                                allowed_planning_time=float(self.p('planning_time')),
+                                max_velocity_scaling_factor=float(self.p('velocity_scaling')),
+                                max_acceleration_scaling_factor=float(self.p('velocity_scaling')),
+                                goal_constraints=[c])
+        req.start_state.is_diff = True
+        goal = MoveGroup.Goal(request=req, planning_options=PlanningOptions(plan_only=bool(self.p('plan_only'))))
         handle = self.call(self.move.send_goal_async(goal))
         if handle is None or not handle.accepted:
             return False, 'goal rejected'
@@ -179,53 +214,15 @@ class InspectPlant(Node):
         code = result.result.error_code.val
         return code == SUCCESS, f'error code {code}'
 
-    def pose_goal(self, pos, quat):
-        c = Constraints(name='view')
-        pc = PositionConstraint()
-        pc.header.frame_id = 'world'
-        pc.link_name = self.p('tool_link')
-        pc.constraint_region = BoundingVolume(
-            primitives=[SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.01])],
-            primitive_poses=[Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(w=1.0))])
-        pc.weight = 1.0
-
-        oc = OrientationConstraint()
-        oc.header.frame_id = 'world'
-        oc.link_name = self.p('tool_link')
-        oc.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
-        # Tight tolerances to prevent the wrist from flipping 180 degrees
-        oc.absolute_x_axis_tolerance = 0.1
-        oc.absolute_y_axis_tolerance = 0.1
-        oc.absolute_z_axis_tolerance = 0.1
-        oc.weight = 1.0
-
-        c.position_constraints = [pc]
-        c.orientation_constraints = [oc]
-        return c
-
-    def joint_goal(self, angles):
-        c = Constraints(name='joints')
-        c.joint_constraints = [JointConstraint(joint_name=j, position=a, tolerance_above=0.01, tolerance_below=0.01, weight=1.0) for j, a in zip(ARM_JOINTS, angles)]
-        return c
-
-    def stow_goal(self):
-        return self.joint_goal(STOW_ANGLES)
-
-    def publish_markers(self, canopy, poses, status):
+    def publish_markers(self, canopy, views, status):
         arr = MarkerArray()
-        label = Marker(ns='plant', id=0, type=Marker.TEXT_VIEW_FACING, action=Marker.ADD)
-        label.header.frame_id = 'world'
-        label.pose.position = Point(x=canopy[0], y=canopy[1], z=canopy[2] + 0.28)
-        label.pose.orientation.w = 1.0
-        label.scale.z = 0.05
-        label.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
-        label.text = 'plant'
-        arr.markers.append(label)
         colors = {None: (0.6, 0.6, 0.6), True: (0.1, 0.9, 0.2), False: (0.9, 0.2, 0.1)}
-        for i, (name, eye, _target) in enumerate(poses):
+        for i, (name, eye, _target) in enumerate(views):
             m = Marker(ns='views', id=i, type=Marker.ARROW, action=Marker.ADD)
-            m.header.frame_id = 'world'
-            m.points = [Point(x=eye[0], y=eye[1], z=eye[2]), Point(x=eye[0] + 0.6 * (canopy[0] - eye[0]), y=eye[1] + 0.6 * (canopy[1] - eye[1]), z=eye[2] + 0.6 * (canopy[2] - eye[2]))]
+            m.header.frame_id = FRAME
+            m.points = [Point(x=eye[0], y=eye[1], z=eye[2]),
+                        Point(x=eye[0] + 0.6 * (canopy[0] - eye[0]), y=eye[1] + 0.6 * (canopy[1] - eye[1]),
+                              z=eye[2] + 0.6 * (canopy[2] - eye[2]))]
             m.scale.x, m.scale.y, m.scale.z = 0.008, 0.016, 0.02
             r, g, b = colors[status.get(i)]
             m.color = ColorRGBA(r=r, g=g, b=b, a=0.9)
@@ -233,40 +230,48 @@ class InspectPlant(Node):
         self.markers.publish(arr)
 
     def run(self):
-        if not self.wait_for_moveit(): return 1
+        if not self.wait_for_moveit():
+            return 1
+        canopy = (float(self.p('plant_forward')), float(self.p('plant_left')), float(self.p('canopy_height')))
+        if not self.add_plant(canopy):
+            self.get_logger().error('Could not add the plant to the planning scene.')
+            return 1
+        radius = float(self.p('canopy_radius')) + float(self.p('standoff'))
+        views = viewpoints(canopy, radius, float(self.p('look_up_deg')), float(self.p('azimuth_deg')))
 
-        bed_h = float(self.p('bed_height'))
-        canopy_r = float(self.p('canopy_radius'))
-        if not self.add_plant(bed_h, canopy_r): return 1
-
-        x, y = self.p('plant_x'), self.p('plant_y')
-        canopy = (x, y, bed_h + float(self.p('canopy_above_bed')))
-        toward_dog = math.atan2(0.0 - y, 0.0 - x)
-        radius = canopy_r + float(self.p('standoff'))
-        poses = compute_3_point_poses(canopy, toward_dog, radius, float(self.p('look_up_deg')), float(self.p('azimuth_deg')))
-
-        self.get_logger().info('Moving to pre-grasp (Front)...')
-        front_name, front_eye, front_target = poses[0]
-        ok, why = self.execute(self.pose_goal(front_eye, look_at(front_eye, front_target, self.p('roll_deg'))))
-        if not ok:
-            self.execute(self.stow_goal())
+        solutions = {}
+        for name, eye, target in views:
+            q = self.solve(eye, look_at(eye, target))
+            solutions[name] = q
+            if q is None:
+                self.get_logger().warn(f'{name}: no IK solution at ({eye[0]:.3f}, {eye[1]:.3f}, {eye[2]:.3f})')
+            else:
+                self.get_logger().info(f'{name}: eye ({eye[0]:.3f}, {eye[1]:.3f}, {eye[2]:.3f}) m, joints '
+                                       + ' '.join(f'{math.degrees(a):.1f}' for a in q) + ' deg')
+        if solutions['Front'] is None:
+            self.get_logger().error('Front is unreachable: move the dog or the plant parameters.')
             return 1
 
-        for i, (name, eye, target) in enumerate(poses):
+        status = {}
+        for i, (name, eye, _target) in enumerate(views):
+            if solutions[name] is None:
+                status[i] = False
+                continue
             self.get_logger().info(f'Moving to {name}...')
-            ok, why = (True, '') if i == 0 else self.execute(self.pose_goal(eye, look_at(eye, target, self.p('roll_deg'))))
-            self.publish_markers(canopy, poses, {i: ok})
+            ok, why = self.execute(solutions[name])
+            status[i] = ok
+            self.publish_markers(canopy, views, status)
             if not ok:
-                self.get_logger().warn(f'{name}: unreachable ({why})')
+                self.get_logger().warn(f'{name}: {why}')
             else:
                 time.sleep(float(self.p('dwell_s')))
 
         self.get_logger().info('Returning to Front...')
-        self.execute(self.pose_goal(front_eye, look_at(front_eye, front_target, self.p('roll_deg'))))
-
+        self.execute(solutions['Front'])
         self.get_logger().info('Returning home (stow)...')
-        self.execute(self.stow_goal())
+        self.execute(STOW_ANGLES)
         return 0
+
 
 def main():
     rclpy.init()
@@ -278,6 +283,7 @@ def main():
     node.destroy_node()
     rclpy.shutdown()
     return code
+
 
 if __name__ == '__main__':
     raise SystemExit(main())

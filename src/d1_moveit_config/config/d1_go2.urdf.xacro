@@ -55,10 +55,14 @@
   <xacro:include filename="$(find d1_moveit_config)/config/d1_550_arm.xacro"/>
   <xacro:d1_550_arm end_effector="${end_effector}"/>
 
-  <!-- FIXED: Rotated 180 degrees (yaw = PI) so the arm faces the BACK of the dog -->
+  <!-- go2_trunk -> D1 base_link -->
   <joint name="go2_to_d1" type="fixed">
     <parent link="go2_trunk"/><child link="base_link"/>
-    <origin xyz="0 0 0.057" rpy="0 0 3.14159"/>
+    <!-- Arm modelled facing FORWARD (yaw 0). On the dog it is mounted facing the tail; the
+         operator parks the dog tail-first to the plant, so for the arm the plant is simply
+         ahead (+x of base_link). The trunk collision boxes are symmetric front-back, so
+         collision checking is unchanged. Was rpy="0 0 3.14159" until 2026-11-12. -->
+    <origin xyz="0 0 0.057" rpy="0 0 0"/>
   </joint>
 
   <xacro:if value="${end_effector == 'gripper'}">

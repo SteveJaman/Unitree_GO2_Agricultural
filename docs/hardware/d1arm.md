@@ -722,11 +722,16 @@ firmware: see [Joint signs](#joint-signs).
 [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py)
 performs a **discrete 3-point scan** of a plant. Its defaults are the
 [hydroponic trial's](../simulation/hydroponic_trial.md) rack and lettuce (rack
-0.864 m high, plant centre at 0.954 m, camera 0.15 m from it), placed **behind**
-the dog, where the arm faces (mount yaw 180°). The dog parks with its **tail**
-0.333 m from the rack's front edge. In Gazebo that distance puts the rear legs on the
-rack's low rail: the hydroponic trial parks at 0.40 m
-([results](../simulation/hydroponic_trial.md)), which moves the plant to `plant_x:=-0.527`.
+0.864 m high, plant centre at 0.954 m, camera 0.15 m from it), given **in the arm's
+own frame** (`base_link`: +x ahead of the arm): `plant_forward` 0.465 m, `canopy_height`
+0.607 m above the arm base. Since 2026-11-12 MoveIt models the arm facing **forward**
+(`d1_go2.urdf.xacro`, yaw 0); on the dog it faces the tail, so the dog parks
+**tail-first** with the plant ahead of the arm (0.333 m from the rack's front edge; the
+Gazebo hydroponic trial parks at 0.40 m, `plant_forward:=0.527`). Each view is solved by IK
+from several seeds and the least-twisted solution (|Joint4| + |Joint6|) is planned as a
+joint goal, so the wrist no longer flips between runs. Front is untwisted; Left and Right
+(30°) need the forearm rolled about 100° (base at ±128°): no less-twisted solution exists
+with the gripper level.
 
 **Flow (7 steps):**
 
@@ -920,10 +925,10 @@ and Joint6 (wrist roll) were each rolled alone through the bridge and turned the
 as RViz. `moveit_d1_bridge.py` also takes `ARM_JOINT_OFFSETS` (six degrees, firmware =
 sign x (MoveIt + offset)); it is not needed on this arm: RViz and the real gripper agree
 with all zeros. Still open: the gripper roll the operator calls flat at Front
-(`inspect_plant.py` `roll_deg`, default 0). Check the mount at the same time: at `home` (all zeros) the forearm
-must point over the dog's **tail**, as in `d1_go2.urdf.xacro` (yaw 180°). The
-dashboard, `twin/d1_tf_urdf.py` and `arm_ik_scanner.py` still assume it points
-forward.
+(2026-11-12: `roll_deg` removed; the views keep the gripper's Z axis up in the arm frame).
+The physical arm faces the dog's **tail**; MoveIt (`d1_go2.urdf.xacro`) models it facing
+forward since 2026-11-12, and the dog parks tail-first. Gazebo (`gazebo/run_sim.sh`
+`SIM_D1_MOUNT`, yaw 180°) still mounts it backward.
 
 ## Troubleshooting
 
