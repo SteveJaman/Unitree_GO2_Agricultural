@@ -364,6 +364,23 @@ tilted the map by 17.7°.
 - Keep the dog still until the first map appears: the start pose sets the
   floor plane.
 
+**Fixed from 2026-11-12: the tilt is held to the body IMU.** It is not only fast turns:
+on 2026-11-12 (`run-20261112-190610`) the estimate swung 70° in half a second while the
+dog stood still, and the dog then sank under the floor in RViz at ~45°. On the real dog
+`wifi_3d_nav.sh` now runs
+[`go2_lidar3d_level.py`](../scripts/nodes/go2_lidar3d_level.py): the dog's relay hands
+Point-LIO's topics over as `/lidar3d/raw/*`, and the node republishes them on
+`/lidar3d/odom`, `/lidar3d/registered` and `/lidar3d/path` with the tilt taken from the
+Go2's own gravity-referenced body IMU (`/lf/lowstate`), and the dog's height held at its
+start height (a flat floor). Replayed on that run: tilt ≤ 9° through the jump and 0.5°
+after it (was 91°), height constant.
+
+- Its log: `ws/log/3d/level.log` in go2-nav2-wifi; `Point-LIO tilt jumped` marks a
+  divergence. The correction in degrees: `ros2 topic echo /lidar3d/level/correction_deg`.
+- Keep the dog still for the first 3 s: that sets the reference.
+- The map from before a jump and after it may not line up exactly.
+- Ramps or stairs: `GO2_LIDAR3D_HOLD_HEIGHT=0`. Off entirely: `GO2_LIDAR3D_LEVEL=0`.
+
 ### `/cmd_vel` publishes but the dog doesn't move
 
 The Jetson motion relay failed to bind port 17999. Check on the Jetson:

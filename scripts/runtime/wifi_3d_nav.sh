@@ -84,6 +84,10 @@
 #   ./scripts/runtime/wifi_3d_nav.sh --semantic      # traversability: height bands, gait, VLM labels
 #   ./scripts/runtime/wifi_3d_nav.sh --semantic --hardware               # + sport_client backend, dry_run
 #   ./scripts/runtime/wifi_3d_nav.sh --semantic --hardware --send-gait   # + foot lift sent to the dog
+#   ./scripts/runtime/wifi_3d_nav.sh --avoid         # + the dog's own obstacle avoidance (the remote's
+#                                                    #   Free Avoid: slows/steers for what is ahead;
+#                                                    #   forward only). Fall recovery is always on
+#                                                    #   (GO2_SPORT_AUTO_RECOVERY=0 turns it off)
 #   ./scripts/runtime/wifi_3d_nav.sh --sim --world lab_office --semantic --manual
 #                                                    # Gazebo lab world, traversability, goals
 #                                                    #   from RViz 2D Goal Pose / dashboard
@@ -235,6 +239,7 @@ while [ $# -gt 0 ]; do
         --drive)      DRIVE="${2:-}"; [ $# -ge 2 ] && shift ;;
         --diff|--hybrid|--omni) DRIVE="${1#--}" ;;
         --semantic)   TRAV_SEMANTIC="true" ;;
+        --avoid)      export GO2_SPORT_AVOID=1 ;;
         --hardware)   TRAV_HARDWARE="true" ;;
         --send-gait)  TRAV_SEND_GAIT="true" ;;
         --world)      SIM_WORLD_ARG="${2:-}"; [ $# -ge 2 ] && shift ;;
@@ -1053,6 +1058,14 @@ else
     # firmware): ClassicWalk steps evenly, FreeWalk did not (mapping.sh passes this to
     # the dog-side robot_sport_bridge.py).
     [ "${TRAV_SEMANTIC}" = "true" ] && export GO2_SPORT_WALK_MODE="${GO2_SPORT_WALK_MODE:-classic}"
+    # The dog-side bridge (scripts/tools/sport_bridge_features.py): fall recovery on by
+    # default; --avoid walks through the firmware's obstacle avoidance.
+    export GO2_SPORT_AUTO_RECOVERY="${GO2_SPORT_AUTO_RECOVERY:-1}"
+    # Point-LIO's tilt held to the body IMU's gravity, and the dog's height to the floor
+    # (scripts/nodes/go2_lidar3d_level.py; the dog sank under the floor at ~45 deg,
+    # 2026-11-12). GO2_LIDAR3D_LEVEL=0: off. GO2_LIDAR3D_HOLD_HEIGHT=0: ramps / stairs.
+    [ "${GO2_LIDAR3D_LEVEL:-1}" = 1 ] && export GO2_LIDAR3D_RAW=1
+    [ "${GO2_SPORT_AVOID:-0}" = "1" ] && echo "[avoid] the dog's own obstacle avoidance is on (forward only; Nav2 still plans)"
 fi
 export TRAV_STEP_OVER
 if [ "${TRAV_SEMANTIC}" = "true" ]; then

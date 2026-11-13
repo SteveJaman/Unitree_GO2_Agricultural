@@ -28,8 +28,9 @@ Edits (each tagged with TAG, original kept as mapping.sh.pre-timeouts):
     it), the end of the SLAM or motion link no longer ends the whole run:
     scripts/runtime/session_keepalive.sh halts the robot, prints the cause
     and the fix, and waits for Ctrl+C. Without it, mapping.sh is unchanged.
-  * walk mode (WALK_TAG): GO2_SPORT_WALK_MODE reaches the dog-side
-    robot_sport_bridge.py (ssh does not pass the environment); default free.
+  * walk mode (WALK_TAG): GO2_SPORT_WALK_MODE, GO2_SPORT_AVOID and
+    GO2_SPORT_AUTO_RECOVERY reach the dog-side robot_sport_bridge.py (ssh does
+    not pass the environment); defaults free, 0, 1 (sport_bridge_features.py).
 Run by wifi_nav.sh before every session.
 """
 
@@ -40,6 +41,13 @@ import sys
 TAG = "  # go2-agri: stop timeouts"
 KEEP_TAG = "  # go2-agri: keep session"
 WALK_TAG = "  # go2-agri: walk mode (wifi_3d_nav.sh --semantic: classic)"
+# The dog-side bridge's settings (ssh passes no environment): walk mode, and the fall
+# recovery / obstacle avoidance of scripts/tools/sport_bridge_features.py.
+WALK_LINE = ('        "GO2_SPORT_WALK_MODE=${GO2_SPORT_WALK_MODE:-free} GO2_SPORT_AVOID=${GO2_SPORT_AVOID:-0} '
+             'GO2_SPORT_AUTO_RECOVERY=${GO2_SPORT_AUTO_RECOVERY:-1} '
+             'exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh" >"$log_dir/motion.log" 2>&1 &')
+WALK_LINE_V1 = ('        "GO2_SPORT_WALK_MODE=${GO2_SPORT_WALK_MODE:-free} '
+                'exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh" >"$log_dir/motion.log" 2>&1 &')
 FILE = "mapping.sh"
 
 LOCAL_STOP = 'docker exec "$GO2_CONTAINER" bash /ws/scripts/go2-session.sh stop "$session_mode" --owner "$owner" >/dev/null 2>&1'
@@ -113,14 +121,15 @@ EDITS = [
     # the robot (FreeWalk's steps were uneven, measured 2026-11-11); free otherwise, as before.
     (
         """        'exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh' >"$log_dir/motion.log" 2>&1 &""",
-        """        "GO2_SPORT_WALK_MODE=${GO2_SPORT_WALK_MODE:-free} exec bash ~/go2-nav2-lidar3d-onboard/robot-motion-wifi.sh" >"$log_dir/motion.log" 2>&1 &"""
-        + WALK_TAG,
+        WALK_LINE + WALK_TAG,
     ),
 ]
 
 
 # (earlier edit, current edit): files patched by an older version of this script.
 OLD_VERSIONS = [
+    # 2026-11-12: walk mode only -> also obstacle avoidance and fall recovery.
+    (WALK_LINE_V1 + WALK_TAG, WALK_LINE + WALK_TAG),
     ("-o ServerAliveInterval=5 -o ServerAliveCountMax=3 -S \"$ssh_socket\" \"$target\" true" + TAG,
      "-o ServerAliveInterval=10 -o ServerAliveCountMax=6 -S \"$ssh_socket\" \"$target\" true" + TAG),
     # 2026-10-30: local stop in the foreground -> alongside the Jetson stop.

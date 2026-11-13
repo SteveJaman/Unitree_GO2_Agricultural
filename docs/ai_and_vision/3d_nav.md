@@ -54,6 +54,13 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   `lidar3d_map`. RTAB-Map reads Point-LIO's pose from TF as its odometry and
   builds the dense map. Its own frame `rtabmap_map` becomes the parent of
   `lidar3d_map`, and Nav2 does not notice.
+- **Point-LIO's tilt is held level on the real dog** (from 2026-11-12). Point-LIO runs
+  gyro-only and once lost 70° of tilt while the dog stood still, sinking it under the
+  floor. The relay now hands its topics over as `/lidar3d/raw/*`, and
+  [`go2_lidar3d_level.py`](../../scripts/nodes/go2_lidar3d_level.py) republishes
+  `/lidar3d/odom`, `/registered` and `/path` with the tilt from the Go2's body IMU and the
+  height held to the floor. `GO2_LIDAR3D_LEVEL=0`: off; `GO2_LIDAR3D_HOLD_HEIGHT=0`: ramps
+  and stairs ([troubleshooting](../troubleshooting.md#the-3d-map-tilts-after-a-turn)).
 - **RTAB-Map runs in its own container (`go2-3d`).** `wifi_nav.sh` tears down
   `go2-lidar3d` when it exits. If RTAB-Map ran inside it, it would be killed
   before saving its database. `wifi_3d_nav.sh` stops `go2-3d` gracefully
@@ -279,6 +286,7 @@ Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
 | `--voxel` | **3D voxel costmap.** Nav2's obstacle layer becomes a `VoxelLayer` (0.1 m × 16 voxels) on the self-filtered LiDAR; with `--camera-obstacles` the front camera feeds the same grid. See [voxel_costmap.md](../navigation/voxel_costmap.md) |
 | `--semantic` / `--hardware` / `--send-gait` | **Traversability on the robot**, three safety gates: costmap layout (height band local, semantic both), and the traversability nodes (`traversability_nodes.sh`: LiDAR clusters, gait supervisor and, with a camera calibration, YOLO 3D boxes and VLM labels); then the `sport_client` gait backend armed; then gait commands sent. `--sim --world NAME` picks the Gazebo world. See [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md) |
+| `--avoid` | **The dog's own obstacle avoidance** (the remote's Free Avoid): Nav2's speed goes through the firmware's `obstacles_avoid` service, which slows, stops and backs off from what the dog's lidar sees ahead (forward only; it does not steer around). Off again at the end, and switched off at the start of sessions without it. Fall recovery (`AutoRecoverySet`) is on in every session; `GO2_SPORT_AUTO_RECOVERY=0` turns it off |
 | `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [drive_modes.md](../navigation/drive_modes.md) and [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
 | `--rgbd` | RealSense colour + depth instead of the Go2 camera. Needs the RealSense driver publishing `/camera/color/*` and `/camera/depth/*` |

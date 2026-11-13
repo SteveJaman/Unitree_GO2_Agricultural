@@ -46,3 +46,6 @@ twin/webapp/dist/
 
 # Arm offset calibration output (scripts/tools/calibrate_arm.py --output cal.json)
 cal.json
+
+# Unitree SDK 2 Python, cloned locally for reference (its own git repo)
+unitree_sdk2_python/

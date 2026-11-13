@@ -44,6 +44,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-go2-lidar3d}"
 FLOOR_FILTER_SCRIPT="${NODES_DIR}/go2_floor_filter.py"
 RECOVERY_SCRIPT="${NODES_DIR}/go2_stuck_recovery.py"
 LINK_WATCH_SCRIPT="${SCRIPT_DIR}/../debug/go2_link_watch.py"
+LEVEL_SCRIPT="${SCRIPT_DIR}/../nodes/go2_lidar3d_level.py"
 EXPLORER_SCRIPT="${NODES_DIR}/frontier_explorer.py"
 CAMERA_RELAY_SCRIPT="${NODES_DIR}/go2_camera_relay.py"
 ROBOT_CAMERA_DIR="$( cd "${SCRIPT_DIR}/../robot" &> /dev/null && pwd )"   # scripts/robot: go2_camera_wifi.*, arm_bridge_wifi.* (run on the robot)
@@ -1066,7 +1067,7 @@ cleanup() {
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -x "${CONTAINER_NAME}" >/dev/null; then
         # One exec for every helper node (was five, one with a 1 s sleep).
         docker exec -u root "${CONTAINER_NAME}" pkill -9 -f \
-            "^python3 /tmp/go2_link_watch.py|frontier_explorer|explore_lite|ros2 run explore|go2_floor_filter|go2_camera_relay|^python3 /tmp/go2_stuck_recovery.py" \
+            "^python3 /tmp/go2_link_watch.py|go2_lidar3d_level|frontier_explorer|explore_lite|ros2 run explore|go2_floor_filter|go2_camera_relay|^python3 /tmp/go2_stuck_recovery.py" \
             >/dev/null 2>&1 &
         bg+=($!)
     fi
@@ -1248,6 +1249,13 @@ fi
 # that link keep-alives and every cleanup step a time limit (idempotent).
 if [ "${SIM}" != "true" ]; then
     python3 "${SCRIPT_DIR}/../tools/mapping_stop_timeouts.py" "${NAV2_WIFI_DIR}" || true
+    # The dog-side sport bridge: automatic fall recovery, and the firmware's obstacle
+    # avoidance with GO2_SPORT_AVOID=1 (wifi_3d_nav.sh --avoid). Idempotent.
+    python3 "${SCRIPT_DIR}/../tools/sport_bridge_features.py" "${NAV2_WIFI_DIR}" || true
+    # Point-LIO levelled with the body IMU (go2_lidar3d_level.py, GO2_LIDAR3D_RAW=1 from
+    # wifi_3d_nav.sh): the dog's relay hands its topics over as /lidar3d/raw/*. Idempotent;
+    # without GO2_LIDAR3D_RAW=1 the edits change nothing.
+    python3 "${SCRIPT_DIR}/../tools/relay_lidar3d_raw.py" "${NAV2_WIFI_DIR}" || true
 fi
 # An RViz crash (RViz 2 segfaults now and then) restarts RViz instead of ending the
 # session (go2-nav2-wifi's go2_session.py; idempotent). Robot and sim.
@@ -1349,6 +1357,34 @@ else
                  exec python3 /tmp/go2_link_watch.py" 2>/dev/null
         ) &
         LINK_WATCH_PID=$!
+    fi
+
+    # Point-LIO levelled with the body IMU (GO2_LIDAR3D_RAW=1, real dog only): the relay
+    # publishes /lidar3d/raw/*, and nothing publishes /lidar3d/odom (so no TF, no Nav2,
+    # and the link watch above sees no data) until this node runs. Started with the
+    # session's go2_odom_tf node like the link watch, restarted if it dies.
+    if [ "${GO2_LIDAR3D_RAW:-0}" = 1 ] && [ "${SIM}" != "true" ]; then
+        (
+            launched=$(date +%s)
+            up=""
+            for _ in $(seq 1 120); do
+                up=$(docker exec -u root "${CONTAINER_NAME}" ps -eo etimes=,args= 2>/dev/null \
+                    | awk -v max="$(( $(date +%s) - launched ))" '$1 <= max && index($0, "--ros-args") \
+                          && index($0, "__node:=go2_odom_tf") && !index($0, "awk") {print; exit}')
+                [ -n "${up}" ] && break
+                sleep 1
+            done
+            [ -n "${up}" ] || { echo "[level] WARN: no go2_odom_tf node: levelling not started (no /lidar3d/odom)"; exit 0; }
+            docker cp "${LEVEL_SCRIPT}" "${CONTAINER_NAME}:/tmp/go2_lidar3d_level.py" 2>/dev/null || exit 0
+            hold=$( [ "${GO2_LIDAR3D_HOLD_HEIGHT:-1}" = 0 ] && echo false || echo true )
+            echo "[level] Point-LIO levelled with the body IMU (/lidar3d/raw/* -> /lidar3d/*, hold height ${hold}); log ${NAV2_WIFI_DIR}/ws/log/3d/level.log"
+            exec docker exec -u root "${DDS_EXEC_ENV[@]}" "${CONTAINER_NAME}" bash -c \
+                "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash 2>/dev/null; \
+                 source /opt/go2-unitree-msgs/local_setup.bash 2>/dev/null; mkdir -p /ws/log/3d; \
+                 for i in \$(seq 1 20); do python3 -u /tmp/go2_lidar3d_level.py --ros-args -p hold_height:=${hold} \
+                     >> /ws/log/3d/level.log 2>&1; echo \"[level] exited (\$?), restarting\" >> /ws/log/3d/level.log; sleep 1; done" \
+                 >/dev/null 2>&1
+        ) &
     fi
 
     # A lost SLAM / motion link halts the robot and explains itself instead

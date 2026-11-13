@@ -72,6 +72,8 @@ Other entry points:
 | `./scripts/runtime/wifi_nav.sh --sim --arm` | Same stack against the Gazebo simulation |
 | `./scripts/runtime/wifi_3d_nav.sh --view` | Show saved 3D scans without the robot |
 | `./scripts/runtime/wifi_3d_nav.sh --voxel --camera-obstacles` | 3D voxel costmap with front camera + LiDAR fusion (`--sim` for Gazebo) |
+| `./scripts/runtime/wifi_3d_nav.sh --semantic --avoid` | Traversability, plus the dog's own obstacle avoidance (the remote's Free Avoid) |
+| `ARM_JOINT_SIGNS="-1 1 1 1 1 -1" ./scripts/runtime/arm_moveit.sh --real` | MoveIt 2 on the real D1 arm; then `inspect_plant.py` for the 5-view plant scan |
 
 ## Core Features
 
@@ -93,10 +95,17 @@ Other entry points:
 - **Traversability (step over, don't detour):** LiDAR height bands in the local
   costmap, camera + LiDAR 3D boxes choosing the foot lift, a costmap backstop and
   an optional VLM semantic layer. Validated in Gazebo at n = 10 per mode
-  ([results](docs/simulation/traversability_sim.md)); the real-dog path is written
-  but not yet run ([hardware handoff](docs/simulation/HARDWARE_HANDOFF.md)).
+  ([results](docs/simulation/traversability_sim.md)) and run on the real dog
+  (`--semantic`: ClassicWalk, 3 cm step-over, YOLO → 3D box → VLM label;
+  [hardware handoff](docs/simulation/HARDWARE_HANDOFF.md)).
 - **YOLO / VLM AI:** YOLO11s obstacles feed the Nav2 costmap. A local
   `llava:7b` (Ollama) reads the camera and pauses + docks on a blocked path.
+- **Level 3D map:** on the real dog Point-LIO's tilt is held to the Go2's
+  gravity-referenced body IMU, so the dog no longer sinks under the floor in RViz
+  and the dashboard ([details](docs/troubleshooting.md#the-3d-map-tilts-after-a-turn)).
+- **Dog-side safety:** automatic fall recovery every session; `--avoid` routes
+  Nav2's speed through the firmware's obstacle avoidance (stops and backs off
+  from what is ahead; forward only).
 - **Battery dock and auto-localization:** below 15 % the dog returns to the
   dock. It localizes itself at start, so there's no "2D Pose Estimate" click.
 - **Semantic rooms:** the map is split into rooms (robot-vacuum style) that
@@ -114,8 +123,10 @@ Other entry points:
   `--drive omni` (Nav2 walks it backwards and sideways during normal driving
   too). [Comparison with sim results](docs/navigation/locomotion_comparison.md).
 - **MoveIt 2 for the arm:** `arm_moveit.sh` plans collision-free arm motion to
-  a camera pose (Cartesian goals, IK + OMPL) around the dog and a plant, with a
-  plant-inspection demo. Mock hardware for now.
+  a camera pose (Cartesian goals, IK + OMPL) around the dog and a plant. On the
+  real arm (`--real`, Wi-Fi bridge) `inspect_plant.py` scans a plant from five
+  views over ±45°, with the dog parked tail-first
+  ([details](docs/hardware/d1arm.md#plant-inspection-demo---inspect)).
 - **Simulation:** Go2 + D1 in Gazebo Harmonic, and the explorer + Nav2 in the
   CMU Unity sim, for testing without hardware. Worlds include a furnished
   indoor lab (`SIM_WORLD=lab_office`: 7 rooms, desks, chairs, tables,

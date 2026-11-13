@@ -2,13 +2,38 @@
 
 [← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
 
-Last updated: 2026-11-11
+Last updated: 2026-11-12
 
 ---
 
+## 2026-11-12: localization tilt held to the body IMU; Free Avoid; fall recovery
+
+- **The dog sinking under the floor (the drift to-do below): cause and fix.** Gyro-only
+  Point-LIO's attitude swung 70° in 0.5 s while the dog stood still (`run-20261112-190610`,
+  93 s in) and never recovered: no gravity reference. New
+  [`go2_lidar3d_level.py`](../scripts/nodes/go2_lidar3d_level.py) holds the tilt to the
+  body IMU and the height to the floor; on by default in `wifi_3d_nav.sh` on the real dog
+  ([troubleshooting](troubleshooting.md#the-3d-map-tilts-after-a-turn)). Tested offline
+  (replay of that run in go2-lidar3d, `tests/test_lidar3d_level.py`); **not yet run on the
+  dog**.
+- **Free Avoid** (`wifi_3d_nav.sh --avoid`): Nav2's speed goes through the firmware's
+  obstacle avoidance ([`sport_bridge_features.py`](../scripts/tools/sport_bridge_features.py)).
+  On the dog: walking at 0.15 m/s at a box it stopped by itself, stepped back, held its
+  distance (it does not steer around; forward only). A `--semantic --avoid` session started
+  with all replies ok; Nav2 driving with it on not yet watched.
+- **Fall recovery:** `AutoRecoverySet(true)` every session; the firmware already had it on.
+- **Arm, run on the real D1:** MoveIt models the arm facing forward (yaw 0) and the dog
+  parks tail-first; signs `-1 1 1 1 1 -1`. `inspect_plant` sweeps five views (Far left,
+  Left, Front, Right, Far right; the far ones as wide as reachable, ±45° at the lab rack)
+  with least-twist IK; the operator judged all five right. Settle tolerance 0.2°: moves
+  end 0.21–0.35° off (were 0.2–0.7°). ±90° beside the plant and a top view from 45 in
+  are out of the arm's reach (d1arm.md, plant-inspection demo).
+- **Still open:** levelling and `--avoid` with Nav2 driving, on the dog; STVL live test;
+  Gazebo still mounts the arm backward (`SIM_D1_MOUNT` yaw 180°).
+
 ## 2026-11-11: arm signs, moving obstacles, session fixes
 
-**To do next (2026-11-12): localization drift.** On the real dog the robot sinks below the
+**To do next (2026-11-12): localization drift** (cause found and fixed 2026-11-12, above). On the real dog the robot sinks below the
 floor in RViz and in the web app while it walks: the 3D pose (Point-LIO / `lidar3d_map`)
 drifts downward. Check: the z of `base_link` in `lidar3d_map` over a walk; whether the map
 tilts (`scripts/tools/check_map_tilt.sh`); the gravity alignment at start-up (Point-LIO lost
