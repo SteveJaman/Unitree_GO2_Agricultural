@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""3-point plant inspection (Front, Left, Right) with the D1 arm through MoveIt 2.
+"""Plant inspection over a 180 degree arc (Far left, Left, Front, Right, Far right) with the
+D1 arm through MoveIt 2.
 
 Everything is in the arm's own base frame (FRAME, base_link: +x straight ahead of the
 arm, +y its left, +z up). The arm is modelled facing forward (d1_go2.urdf.xacro, yaw 0);
 on the dog it faces the tail, so the operator parks the dog tail-first to the plant and
 for the arm the plant is simply ahead. No mount compensation, no roll parameter.
 
-The three viewpoints sit on a circle around the canopy: Front between the plant and the
-arm, Left and Right azimuth_deg to the arm's left and right of it, each a little below the
-canopy and looking up at it (look_up_deg). The gripper's X axis points at the canopy and
+The five viewpoints sit on a circle around the canopy: Front between the plant and the
+arm, Left and Right azimuth_deg to the arm's left and right of it, Far left and Far right
+side_azimuth_deg (90: directly beside the plant), each a little below the canopy and looking
+up at it (look_up_deg). The arm sweeps them in order from far left to far right, so each
+move is to the neighbouring view.
+
+Directly beside the lab rack's plant is out of the D1's reach (the canopy is already
+~0.68 m from the shoulder, and the camera would have to look back past the arm), so Far
+left / Far right are searched: the widest azimuth from side_azimuth_deg down, in 15 deg
+steps and also 15 deg more look-up, that has an IK solution. The log gives the angle used. The gripper's X axis points at the canopy and
 its Z axis is kept up in the arm frame.
 
 The arm can make the same gripper pose with different forearm / wrist twists (Joint4 and
@@ -18,7 +26,7 @@ several seeds, the solution with the least twist (|Joint4| + |Joint6|) is kept, 
 arm is sent there as a joint goal, planned and collision-checked by MoveIt.
 
 Parameters (metres / degrees, arm frame): plant_forward, plant_left, canopy_height,
-canopy_radius, standoff, look_up_deg, azimuth_deg, load_rack (bed_top_height, bed_depth,
+canopy_radius, standoff, look_up_deg, azimuth_deg, side_azimuth_deg, load_rack (bed_top_height, bed_depth,
 bed_width, floor_height), dwell_s, plan_only, planning_time, velocity_scaling, tool_link.
 """
 import math
@@ -69,17 +77,18 @@ def look_at(eye, target):
     return (q[0], q[1], q[2], (m[k, j] - m[j, k]) / s)
 
 
-def viewpoints(canopy, radius, look_up_deg, azimuth_deg):
-    """[(name, eye, canopy)] for Front, Left, Right, in the arm frame. Front lies on the line
-    from the canopy back toward the arm (the origin); Left / Right are turned azimuth_deg
-    about the canopy toward the arm's +y / -y."""
+def viewpoints(canopy, radius, look_up_deg, azimuth_deg, side_azimuth_deg=90.0):
+    """[(name, eye, canopy)] from far left to far right, in the arm frame. Front lies on the
+    line from the canopy back toward the arm (the origin); Left / Right are turned azimuth_deg
+    and FarLeft / FarRight side_azimuth_deg about the canopy toward the arm's +y / -y."""
     el = math.radians(look_up_deg)
     toward_arm = math.atan2(-canopy[1], -canopy[0])
     out = []
-    for name, side in (('Front', 0.0), ('Left', -1.0), ('Right', 1.0)):
+    a, b = math.radians(azimuth_deg), math.radians(side_azimuth_deg)
+    for name, turn in (('FarLeft', -b), ('Left', -a), ('Front', 0.0), ('Right', a), ('FarRight', b)):
         # Looking back at the arm from the plant, +y (the arm's left) is to the right,
         # i.e. a clockwise (negative) turn about the canopy.
-        az = toward_arm + side * math.radians(azimuth_deg)
+        az = toward_arm + turn
         eye = (canopy[0] + radius * math.cos(el) * math.cos(az),
                canopy[1] + radius * math.cos(el) * math.sin(az),
                canopy[2] - radius * math.sin(el))
@@ -110,6 +119,7 @@ class InspectPlant(Node):
         d('standoff', 0.150)
         d('look_up_deg', 15.0)
         d('azimuth_deg', 30.0)
+        d('side_azimuth_deg', 90.0)  # Far left / Far right: directly beside the plant
         d('dwell_s', 3.0)
         d('plan_only', False)
         d('planning_time', 5.0)
@@ -214,6 +224,19 @@ class InspectPlant(Node):
         code = result.result.error_code.val
         return code == SUCCESS, f'error code {code}'
 
+    def widest(self, canopy, radius, name, sign):
+        """(eye, joints, azimuth, look_up) of the widest reachable far view, or None."""
+        a, b, up = float(self.p('azimuth_deg')), float(self.p('side_azimuth_deg')), float(self.p('look_up_deg'))
+        az = b
+        while az > a:
+            for el in (up, up + 15.0):
+                _, eye, target = viewpoints(canopy, radius, el, 0.0, az)[0 if sign < 0 else 4]
+                q = self.solve(eye, look_at(eye, target))
+                if q is not None:
+                    return eye, q, az, el
+            az -= 15.0
+        return None
+
     def publish_markers(self, canopy, views, status):
         arr = MarkerArray()
         colors = {None: (0.6, 0.6, 0.6), True: (0.1, 0.9, 0.2), False: (0.9, 0.2, 0.1)}
@@ -237,11 +260,21 @@ class InspectPlant(Node):
             self.get_logger().error('Could not add the plant to the planning scene.')
             return 1
         radius = float(self.p('canopy_radius')) + float(self.p('standoff'))
-        views = viewpoints(canopy, radius, float(self.p('look_up_deg')), float(self.p('azimuth_deg')))
+        views = viewpoints(canopy, radius, float(self.p('look_up_deg')), float(self.p('azimuth_deg')),
+                           float(self.p('side_azimuth_deg')))
 
         solutions = {}
-        for name, eye, target in views:
-            q = self.solve(eye, look_at(eye, target))
+        for i, (name, eye, target) in enumerate(views):
+            if name.startswith('Far'):
+                found = self.widest(canopy, radius, name, -1 if name == 'FarLeft' else 1)
+                q = None
+                if found:
+                    eye, q, az, el = found
+                    views[i] = (name, eye, target)
+                    self.get_logger().info(f'{name}: widest reachable view {az:.0f} deg around, '
+                                           f'looking up {el:.0f} deg')
+            else:
+                q = self.solve(eye, look_at(eye, target))
             solutions[name] = q
             if q is None:
                 self.get_logger().warn(f'{name}: no IK solution at ({eye[0]:.3f}, {eye[1]:.3f}, {eye[2]:.3f})')

@@ -614,7 +614,7 @@ git clone https://github.com/JeewanthaSadaruwan/unitree-D1-550-Robot-ARM ~/files
 ```bash
 ./scripts/runtime/arm_moveit.sh              # build if needed, then RViz + MoveIt
 ./scripts/runtime/arm_moveit.sh --inspect    # same, then the plant-inspection demo
-ARM_JOINT_SIGNS="1 1 1 1 1 1" ./scripts/runtime/arm_moveit.sh --real   # MOVES THE ARM: see "Joint signs"
+ARM_JOINT_SIGNS="-1 1 1 1 1 -1" ./scripts/runtime/arm_moveit.sh --real   # MOVES THE ARM: signs measured on this arm, see "Joint signs"
 ./scripts/runtime/arm_moveit.sh --real --robot <go2-ip>                # arm plugged into the Go2 (or ARM_ROBOT)
 ./scripts/runtime/arm_moveit.sh --real --camera                        # camera on the wrist flange, as the sim trial
 ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
@@ -691,8 +691,8 @@ used yet.
 | Angles | degrees | radians |
 | Limits | ±135, ±90, ±90, ±135, ±90, ±135 | from the D1-550 URDF (±134.6° / ±89.95°) |
 
-The joint order matches. The signs have **not** been checked against the
-firmware: see [Joint signs](#joint-signs).
+The joint order matches. The signs were measured on this arm (2026-11-11):
+`-1 1 1 1 1 -1`, see [Joint signs](#joint-signs).
 
 ### Model
 
@@ -720,7 +720,7 @@ firmware: see [Joint signs](#joint-signs).
 ### Plant-inspection demo (`--inspect`)
 
 [`inspect_plant.py`](../../src/d1_moveit_config/scripts/inspect_plant.py)
-performs a **discrete 3-point scan** of a plant. Its defaults are the
+performs a **5-view scan** of a plant (Far left, Left, Front, Right, Far right). Its defaults are the
 [hydroponic trial's](../simulation/hydroponic_trial.md) rack and lettuce (rack
 0.864 m high, plant centre at 0.954 m, camera 0.15 m from it), given **in the arm's
 own frame** (`base_link`: +x ahead of the arm): `plant_forward` 0.465 m, `canopy_height`
@@ -733,15 +733,25 @@ joint goal, so the wrist no longer flips between runs. Front is untwisted; Left 
 (30°) need the forearm rolled about 100° (base at ±128°): no less-twisted solution exists
 with the gripper level.
 
-**Flow (7 steps):**
+**Run on the real arm (2026-11-12), all five views judged right by the operator:**
 
-1. **Pre-grasp** — extend from stow to the Front pose.
-2. **Front** (0° azimuth) — camera aimed at the plant centre, 15° look-up. Hold 3 s for capture.
-3. **Left** (−30° azimuth). Hold 3 s.
-4. **Right** (+30° azimuth). Hold 3 s.
-5. **Front** — return to the front view (confirmation shot).
-6. **Retract** — the arm is already at pre-grasp.
-7. **Stow** — fold arm to walking pose (`J2 = −80°, J3 = 45°, J5 = 80°`).
+| View | Camera (arm frame, m) | Joints (deg) |
+|---|---|---|
+| Far left (45°, 30° look-up) | 0.339, 0.126, 0.504 | 134.8 −71.2 −28.0 84.5 60.5 10.7 |
+| Left (30°) | 0.294, 0.099, 0.554 | 128.4 −51.8 −33.0 99.7 75.8 −5.2 |
+| Front | 0.267, 0.000, 0.554 | −0.6 −16.8 −5.5 −4.3 7.3 4.1 |
+| Right (30°) | 0.294, −0.099, 0.554 | −128.1 −51.9 −32.8 −99.5 75.8 5.5 |
+| Far right (45°, 30° look-up) | 0.339, −0.126, 0.504 | −134.7 −71.3 −27.7 −84.5 60.5 −10.4 |
+
+Every move ended 0.21–0.30° from its goal (the bridge's settle, below). The far-view search
+takes about a minute before the arm moves.
+
+**Flow:**
+
+1. **Solve** all five views (IK, least twist) before anything moves.
+2. **Far left → Left → Front → Right → Far right**, each a neighbour of the last; hold
+   `dwell_s` at each for the capture. Left / Far left are the **arm's** left (the dog's right).
+3. **Front** again, then **Stow** — fold arm to walking pose (`J2 = −80°, J3 = 45°, J5 = 80°`).
 
 The stow pose keeps the arm folded tight over the dog's back:
 `STOW_ANGLES = [0.0, −1.396, 0.785, 0.0, 1.396, 0.0]` (radians). The mock arm
@@ -749,22 +759,48 @@ starts there too, like the folded real arm.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `plant_x`, `plant_y` | `-0.465`, `0.0` | Plant position (world: ground under the dog, x forward) |
-| `bed_height`, `bed_depth`, `bed_width` | `0.864`, `0.254`, `1.02` | The rack, centred on the plant |
-| `canopy_above_bed`, `canopy_radius`, `standoff` | `0.09`, `0.055`, `0.095` | Plant centre, its size, camera distance from its surface |
+| `plant_forward`, `plant_left` | `0.465`, `0.0` | Plant centre in the arm frame (m: ahead of the arm, to its left) |
+| `canopy_height`, `canopy_radius`, `standoff` | `0.607`, `0.055`, `0.150` | Plant centre above the arm base, its size, camera distance from its surface |
+| `load_rack` (`bed_top_height`, `bed_depth`, `bed_width`, `floor_height`) | `false` (`0.517`, `0.254`, `1.02`, `−0.347`) | Add the rack box to the planning scene |
 | `look_up_deg` | `15.0` | Camera look-up angle at each pose (degrees) |
 | `azimuth_deg` | `30.0` | Left and Right, either side of Front (degrees) |
+| `side_azimuth_deg` | `90.0` | Far left / Far right: the widest angle tried; the script steps down 15° at a time (and tries 15° more look-up) until IK solves |
 | `tool_link` | `tool0` | Link aimed at the plant; `camera_link` with `--camera` |
-| `dwell_s` | `3.0` | Pause at each of the 3 viewpoints (the capture moment) |
+| `dwell_s` | `3.0` | Pause at each of the 5 viewpoints (the capture moment) |
 | `velocity_scaling` | `0.3` | Speed and acceleration scaling (0.2 with `--real`) |
+| `plan_only` | `false` | Plan every move, move nothing |
 
 ```bash
 # Sim / mock hardware:
 ./scripts/runtime/arm_moveit.sh --inspect
 
-# Real arm (velocity scaled to 20 %, bridge auto-started):
-ARM_JOINT_SIGNS="1 1 1 1 1 1" ./scripts/runtime/arm_moveit.sh --real
+# Real arm (velocity scaled to 20 %, bridge auto-started), then in a second terminal:
+ARM_JOINT_SIGNS="-1 1 1 1 1 -1" ./scripts/runtime/arm_moveit.sh --real
+python3 src/d1_moveit_config/scripts/inspect_plant.py --ros-args -p dwell_s:=5.0
 ```
+
+The sweep runs Far left, Left, Front, Right, Far right. Directly beside the lab
+rack's plant (±90°) is out of reach: the canopy is already ~0.68 m from the shoulder.
+Probed on the real arm's MoveIt (level gripper, any roll): ±90° never solves, for
+plant_forward 0.25–0.465 m, canopy_height 0.30–0.607 m or look-up −60° to 30°. At
+the defaults Far left / Far right land at **±45°, 30° look-up**, so the scan covers
+90° of the plant. More needs the dog parked a second time beside the plant.
+
+**Top of the plant: out of reach from above.** With the dog standing the arm base is
+0.347 m above the floor. Highest `tool0` reaches the arm can make (FK over every
+shoulder / elbow / wrist angle, 15° steps):
+
+| Camera aim | Highest above the arm base | Above the floor |
+|---|---|---|
+| Straight down | 0.265 m | ~24 in |
+| 60° down | 0.39 m | ~29 in |
+| 45° down | 0.45 m | ~31 in |
+| Level (Front view) | ~0.55 m | ~35 in |
+| Straight up, fully stretched | ~0.75 m | ~44 in |
+
+A camera at 45 in (1.14 m) looking down at a taller plant setup needs a ~0.35 m riser under
+the arm (45° down) or ~0.53 m (straight down), a fixed camera on a mast, or the canopy
+top at or below ~0.70 m (27–28 in) from the floor.
 
 Against the solid rack box, ±30° at 15° look-up reaches 3/3 viewpoints with the
 gripper and the camera; ±35° also does with the camera. ±45° at 25° reaches only

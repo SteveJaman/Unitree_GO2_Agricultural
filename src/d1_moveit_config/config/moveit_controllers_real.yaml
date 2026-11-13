@@ -14,4 +14,4 @@ moveit_simple_controller_manager:
 trajectory_execution:
   allowed_start_tolerance: 0.05          # rad; the bridge refuses more than 5 deg itself
   allowed_execution_duration_scaling: 1.5
-  allowed_goal_duration_margin: 4.0      # s, for the settle at the end
+  allowed_goal_duration_margin: 8.0      # s, for the settle at the end (up to 5 s, moveit_d1_bridge)

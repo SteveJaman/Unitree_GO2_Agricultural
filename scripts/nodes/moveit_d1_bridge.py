@@ -111,7 +111,12 @@ START_TOLERANCE_DEG = (
 PATH_TOLERANCE_DEG = 20.0  # behind the setpoint: something is blocking the arm
 PATH_LAG_S = 1.0  # measured against the setpoint this long ago: Wi-Fi and the
 # firmware delay telemetry, at wrist speed 1 s reads as 20 deg (real arm, 2026-11-03)
-GOAL_TOLERANCE_DEG = 2.0
+GOAL_TOLERANCE_DEG = 2.0  # accepted as reached (the goal fails beyond it)
+# After each trajectory the settle PID (d1_motion) keeps correcting until every joint is
+# within this, or SETTLE_TIMEOUT_S passes; 2.0 stopped it at once and left 0.2-0.6 deg
+# (2026-11-12). Telemetry reads in 0.1 deg steps: 0.2 is about the floor.
+SETTLE_TOLERANCE_DEG = float(os.environ.get("ARM_SETTLE_TOLERANCE_DEG", "0.2"))
+SETTLE_TIMEOUT_S = 5.0
 TELEMETRY_TIMEOUT_S = (
     2.0  # 9 Hz over Wi-Fi with pauses of 0.5 s idle, 0.9 s moving (2026-11-05)
 )
@@ -272,9 +277,9 @@ class MoveItD1Bridge(Node):
             max_vel=REAL_MAX_VEL_DEG_S,
             max_acc=REAL_MAX_ACC_DEG_S2,
             min_duration=0.5,
-            tolerance=GOAL_TOLERANCE_DEG,
+            tolerance=SETTLE_TOLERANCE_DEG,
             settle_time=0.3,
-            settle_timeout=2.0,
+            settle_timeout=SETTLE_TIMEOUT_S,
         )
         if start_stow:
             self.fold_to_stow()
@@ -346,7 +351,7 @@ class MoveItD1Bridge(Node):
         except KeyboardInterrupt:
             self.stop_arm()  # on the Go2 the robot would otherwise finish the move
             raise
-        if not done.reached:
+        if done.final_error > GOAL_TOLERANCE_DEG:
             raise RuntimeError(f"stow not reached (off by {done.final_error:.1f} deg)")
 
     # ------------------------------------------------------------------ state
@@ -570,13 +575,13 @@ class MoveItD1Bridge(Node):
             )
             self.poll_angles()
             self.publish_joint_states()
-        if not done.reached:
+        if done.final_error > GOAL_TOLERANCE_DEG:
             return self.fail(
                 goal_handle,
                 Result.GOAL_TOLERANCE_VIOLATED,
                 f"stopped {done.final_error:.1f} deg from the goal",
             )
-        self.get_logger().info(f"Goal reached (off by {done.final_error:.1f} deg)")
+        self.get_logger().info(f"Goal reached (off by {done.final_error:.2f} deg)")
         goal_handle.succeed()
         return Result(error_code=Result.SUCCESSFUL)
 
