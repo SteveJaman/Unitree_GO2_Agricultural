@@ -1,6 +1,6 @@
 # Development
 
-[← Back to README](../../README.md) · [Scripts](scripts.md) · [Status](../STATUS.md) · [Roadmap](../roadmap.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Scripts](scripts.md) · [Status](../status.md) · [Roadmap](../roadmap.md)
 
 Repository layout, lint hooks, archived code and external projects.
 
@@ -27,7 +27,10 @@ Unitree_GO2_Agricultural/
 │   ├── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
 │   └── semantic_locations.json       # named points from --save-location (created on first save)
 ├── docs/
-│   ├── STATUS.md                     # current state, current goals, robot test checklist
+│   ├── README.md                     # docs index
+│   ├── status.md                     # current state: what works on the robot, in sim, open items
+│   ├── changelog.md                  # session-by-session notes, newest first
+│   ├── verification_checklist.md     # robot test checklist and session plan
 │   ├── roadmap.md                    # milestones
 │   ├── architecture.md               # scope, data flow, network / DDS
 │   ├── troubleshooting.md            # problems, fixes, collision tuning
@@ -39,23 +42,23 @@ Unitree_GO2_Agricultural/
 │   │   ├── explorer.md               # frontier explorer: run, goal choice, parameters, fixes, results
 │   │   ├── drive_modes.md            # --drive hybrid | diff | omni, stuck recovery
 │   │   ├── locomotion_comparison.md  # drive-mode trials (sim), how to test on the dog
-│   │   ├── drift-and-shudder.md      # pose drift / shudder investigation
+│   │   ├── drift_and_shudder.md      # pose drift / shudder investigation
 │   │   ├── voxel_costmap.md          # --voxel: 3D VoxelLayer + front-camera fusion
 │   │   ├── tour.md                   # waypoint mode setup
-│   │   └── LAB-NAV-FIXES.md          # lab fixes for upstream go2-nav2-wifi
+│   │   └── lab_nav_fixes.md          # lab fixes for upstream go2-nav2-wifi
 │   ├── ai_and_vision/
 │   │   ├── 3d_nav.md                 # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
 │   │   ├── camera.md                 # live camera setup
 │   │   ├── camera_lidar_fusion.md    # camera calibration + LiDAR overlay check, --fusion
 │   │   └── realsense.md              # RealSense D435i on the Go2 (boot service, topics)
 │   ├── hardware/
-│   │   └── d1arm.md                  # D1 arm runbook: direct control, Wi-Fi, Teach & Playback, MoveIt 2
+│   │   ├── d1_arm.md                 # D1 arm runbook: direct control, Wi-Fi, Teach & Playback, MoveIt 2
+│   │   └── traversability_handoff.md # traversability on the real dog: measurements, checks, flags
 │   ├── simulation/
 │   │   ├── gazebo.md                 # Gazebo Harmonic: Go2 + D1
 │   │   ├── lab_office.md             # furnished indoor lab: drive-mode trials
 │   │   ├── hydroponic_trial.md       # MoveIt 2 + Nav2 mission at a hydroponic rack
 │   │   ├── traversability_sim.md     # traversability: height bands, gait, backstop, semantic layer
-│   │   ├── HARDWARE_HANDOFF.md       # traversability on the real dog: checks, flags, rollout
 │   │   └── unity.md                  # CMU Unity sim: explorer + Nav2
 │   └── images/                       # figures used by the docs
 ├── scripts/
@@ -159,7 +162,7 @@ Hooks cover: Python (ruff), shell (shellcheck), C++ (clang-format), Markdown
 (markdownlint), and general hygiene (trailing whitespace, EOF newline, large
 files). To skip once: `git commit --no-verify`.
 
-Session notes live in [docs/STATUS.md](../STATUS.md).
+The current state is in [docs/status.md](../status.md); session notes in [docs/changelog.md](../changelog.md).
 
 The Markdown rules are in [`.markdownlint.jsonc`](../../.markdownlint.jsonc).
 Lint the docs by hand with:

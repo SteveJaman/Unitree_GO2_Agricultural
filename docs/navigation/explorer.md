@@ -1,6 +1,6 @@
 # Frontier Explorer
 
-[← Back to README](../../README.md) · [Scripts](../setup/scripts.md) · [Drive modes](drive_modes.md) · [Troubleshooting → Explorer](../troubleshooting.md#explorer) · [Roadmap](../roadmap.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Scripts](../setup/scripts.md) · [Drive modes](drive_modes.md) · [Troubleshooting → Explorer](../troubleshooting.md#explorer) · [Roadmap](../roadmap.md)
 
 The Go2 maps an area on its own: [`frontier_explorer.py`](../../scripts/nodes/frontier_explorer.py)
 picks the edge between known and unknown space and sends it to Nav2 as a goal.

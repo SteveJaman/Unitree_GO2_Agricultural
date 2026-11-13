@@ -1,6 +1,6 @@
 # Live Camera
 
-[← Back to README](../../README.md) · [Troubleshooting](../troubleshooting.md#camera) · [Camera + LiDAR fusion](camera_lidar_fusion.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Troubleshooting](../troubleshooting.md#camera) · [Camera + LiDAR fusion](camera_lidar_fusion.md)
 
 The Go2's front camera reaches the laptop as colour `sensor_msgs/Image` on
 `/camera/image_raw`, in two hops:
@@ -83,6 +83,8 @@ To use the camera together with the LiDAR, calibrate it once
 > **RealSense D435i (colour + depth):** separate from the front camera, it runs
 > in a Docker container on the Jetson and publishes `/camera/color/*` and
 > `/camera/aligned_depth_to_color/*` on the same domain. See [realsense.md](realsense.md).
+
+<!-- -->
 
 > **Note:** the hyperspectral camera on the D1-T arm is a separate device from
 > the Go2's front camera. Its ROS 2 / DDS interface will be documented in a

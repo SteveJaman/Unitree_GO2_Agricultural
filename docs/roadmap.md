@@ -1,7 +1,7 @@
 <!-- markdownlint-disable-file MD025 -- "Phase" sections are top-level on purpose -->
 # Roadmap
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Tour setup](navigation/tour.md) · [Camera](ai_and_vision/camera.md) · [Troubleshooting](troubleshooting.md)
+[← README](../README.md) · [Docs index](README.md) · [Status](status.md) · [Tour setup](navigation/tour.md) · [Camera](ai_and_vision/camera.md) · [Troubleshooting](troubleshooting.md)
 
 Two phases. Phase 1 is autonomous navigation and 3D tour capture. Phase 2
 is the D1-T arm and crop-scanning pipeline. Each phase has its own success
@@ -130,7 +130,7 @@ The pipeline that produces the dense 3D tour.
 | 4.13 | YOLO obstacles in the Nav2 costmap | ✅ [`add-yolo-costmap-source.sh`](../scripts/tools/add-yolo-costmap-source.sh), run automatically with `--ai`, ⏳ verify |
 | 4.13b | Camera obstacles in the Nav2 costmap: monocular depth scaled by the LiDAR (`wifi_3d_nav.sh --camera-obstacles`) | ✅ pipeline verified on the dog, ⏳ calibration + drive test |
 | 4.13c | 3D voxel costmap (`--voxel`), front camera + LiDAR fused in one grid | ✅ written, ✅ Gazebo sessions (works, no collisions), ⚠️ explores worse than 2D (rooms behind doorways stay unknown), ⏳ find the clearing cause, re-run with camera |
-| 4.13d | Traversability: step over low items, gait by object height, costmap backstop ([sim](simulation/traversability_sim.md), [hardware handoff](simulation/HARDWARE_HANDOFF.md)) | ✅ validated in sim (n = 10), backend + flags written, nodes launched by `wifi_3d_nav.sh --semantic` (sim-tested 2026-11-11), ⏳ first hardware session |
+| 4.13d | Traversability: step over low items, gait by object height, costmap backstop ([sim](simulation/traversability_sim.md), [hardware handoff](hardware/traversability_handoff.md)) | ✅ validated in sim (n = 10), backend + flags written, nodes launched by `wifi_3d_nav.sh --semantic` (sim-tested 2026-11-11), ⏳ first hardware session |
 | 4.14 | Door / glass detection (custom-trained model; COCO has neither) | ⏳ (`--camera-obstacles` already sees glass as depth) |
 | 4.14b | Full mobility: MPPI Omni (reverse + sidestep), omni lattice, stuck recovery (`--omni`) | ✅ verified in sim, loads on the robot, ⏳ drive test on the dog |
 | 4.15 | Low-battery return to the dock (`--ai`) | ✅ [`battery_manager.py`](../scripts/nodes/battery_manager.py) written, ⏳ verify |
@@ -247,7 +247,7 @@ a colour + depth capture is saved at each pose (12.3–12.4).
 **Protocol:** `{"seq":N,"address":1,"funcode":F,"data":{...}}` on
 `rt/arm_Command`. `data` is nested JSON, and angles are degrees: funcode 1
 single joint, 2 all joints, 5 enable (`mode` 80000) / release (`mode` 0),
-7 home. Full table: [d1arm.md](hardware/d1arm.md).
+7 home. Full table: [d1_arm.md](hardware/d1_arm.md).
 
 **Network:** the arm is wired to the workstation's arm port (`ARM_IFACE`,
 auto-detected, e.g. `enp0s31f6`; host `192.168.123.99`, arm `.100`, DDS domain

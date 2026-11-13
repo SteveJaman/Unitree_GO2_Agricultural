@@ -6,7 +6,7 @@
 #   traversability_nodes.sh stop    gait to NORMAL, then stop exactly those groups
 #   traversability_nodes.sh status  which nodes are running
 #
-# Nodes (docs/simulation/traversability_sim.md, HARDWARE_HANDOFF.md):
+# Nodes (docs/simulation/traversability_sim.md, traversability_handoff.md):
 #   low_object_clusterer.py  LiDAR-only low clusters -> /objects/low_clusters (gait backstop)
 #   gait_supervisor.py       gait from boxes, costmap, clusters, labels -> /gait/command
 #   with the camera path (TRAV_CAMERA=1; YOLO runs in its own container, see wifi_3d_nav.sh):
@@ -132,7 +132,7 @@ do_start() {
                 -p only_classes:="${TRAV_STAND_IN:-}"
         fi
         # Sim: the fixed floor of the n = 10 trials. Robot: the floor from a height
-        # histogram (the body pitches and rolls; HARDWARE_HANDOFF.md).
+        # histogram (the body pitches and rolls; traversability_handoff.md).
         # Robot: forget objects that moved (in view, unmatched 3 s; any, unseen 60 s).
         local fusion_robot=()
         [ "${TRAV_SIM:-0}" = 1 ] || fusion_robot=(-p track_view_timeout_s:=3.0 -p track_max_age_s:=60.0)
@@ -153,7 +153,7 @@ do_start() {
                     -p sdk_network_interface:="${TRAV_SDK_IFACE:-wlan0}" $(hw_gait_args "${TRAV_HW_CONFIG}"))
         python3 -c "from unitree_sdk2py.go2.sport.sport_client import SportClient as S; assert hasattr(S, 'FootRaiseHeight')" \
             2>/dev/null || echo "[trav] WARN: unitree_sdk2py with SportClient.FootRaiseHeight is not importable here;" \
-                                "the sport_client backend will log [FATAL] and stay inactive (HARDWARE_HANDOFF.md check 1)"
+                                "the sport_client backend will log [FATAL] and stay inactive (traversability_handoff.md check 1)"
     else
         # Sim: /gait/command drives the Gazebo legs. Robot without --hardware: the same
         # topic, which nothing on the dog listens to (gait decisions logged only).

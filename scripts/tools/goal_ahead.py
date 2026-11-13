@@ -18,7 +18,7 @@ velocity smoother brings the dog to a halt. Only this process exits.
   goal_ahead.py --cancel                # cancel any running goal and exit (the abort)
 
 Run it inside go2-lidar3d with the session's DDS settings (source /tmp/go2-trav/env.sh),
-detached, so stopping it cannot touch the session: see docs/simulation/HARDWARE_HANDOFF.md.
+detached, so stopping it cannot touch the session: see docs/hardware/traversability_handoff.md.
 """
 
 import argparse

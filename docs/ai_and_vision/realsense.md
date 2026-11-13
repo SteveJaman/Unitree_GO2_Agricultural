@@ -1,6 +1,6 @@
-# RealSense D435i on the Go2 (boot service on the robot, topics in go2-lidar3d)
+# RealSense D435i on the Go2
 
-[← Back to README](../../README.md) · [Camera](camera.md) · [3D twin](3d_nav.md) · [Troubleshooting](../troubleshooting.md#camera)
+[← README](../../README.md) · [Docs index](../README.md) · [Camera](camera.md) · [3D twin](3d_nav.md) · [Troubleshooting](../troubleshooting.md#camera)
 
 The D435i plugged into the **rear USB-C port of the Go2 expansion dock**
 publishes colour and depth as soon as the dog is powered on, and the topics
@@ -188,6 +188,7 @@ MAC.
 
 **Boot service, once.** `./scripts/tools/realsense_host.sh setup-robot
 --hotplug` does three things:
+
 1. Copies `realsense/` to `~/files/rs-test` on the robot.
 2. Runs `sudo ./install_boot_service.sh --host-mac <this machine's MAC>
    --hotplug` there. The robot's sudo password is asked.
@@ -242,6 +243,7 @@ Robot-side log, `./scripts/tools/realsense_host.sh robot-logs` (or
 ```
 
 **Pass criteria:**
+
 - Exactly two `Open profile` lines, Depth and Color.
 - In `check`, compressed colour and depth hold about the profile fps.
 - `camera_info` reports 640×480 with `frame_id: camera_color_optical_frame`.

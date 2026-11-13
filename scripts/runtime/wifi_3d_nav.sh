@@ -35,7 +35,7 @@
 # driving), --diff or --drive diff|hybrid|omni pick another, as in wifi_nav.sh.
 #
 # Traversability: step over low items instead of detouring
-# (docs/simulation/traversability_sim.md, docs/simulation/HARDWARE_HANDOFF.md).
+# (docs/simulation/traversability_sim.md, docs/hardware/traversability_handoff.md).
 # Three gates; the dog's feet are commanded only with all three:
 #   --semantic   costmap layout (local: obstacle, height band 0.12/0.22 m, semantic;
 #                global: obstacle, semantic; add-traversability-layers.sh edits the
@@ -50,7 +50,7 @@
 #                sport_client with scripts/config/hardware.yaml, still dry_run: logs
 #                "[DRY_RUN] would send FootRaiseHeight(...)"
 #   --send-gait  (requires --hardware) dry_run false: FootRaiseHeight reaches the legs.
-#                Pre-session checks and the staged rollout: HARDWARE_HANDOFF.md.
+#                Pre-session checks and the staged rollout: traversability_handoff.md.
 # On exit the gait is set back to NORMAL before the nodes stop.
 #
 # wifi_nav.sh runs unchanged and every option not listed below is passed to
@@ -263,7 +263,7 @@ if [ -n "${SIM_WORLD_ARG:-}" ]; then
     fi
 fi
 
-# --- Traversability flags (docs/simulation/HARDWARE_HANDOFF.md) ---------------
+# --- Traversability flags (docs/hardware/traversability_handoff.md) ---------------
 # Three gates, each doing one thing; reaching the dog's legs needs all three:
 #   --semantic   costmap layout (scripts/tools/add-traversability-layers.sh on the external
 #                go2-nav2-wifi repo; a session without it runs the --undo) and the
@@ -296,7 +296,7 @@ echo "[wifi_3d_nav] semantic=${TRAV_SEMANTIC} hardware=${GAIT_ENABLE_HARDWARE} d
     [ "${TRAV_HARDWARE}" = "true" ] && echo " config=${TRAV_HW_CONFIG}")"
 if [ "${TRAV_SEND_GAIT}" = "true" ]; then
     echo "[wifi_3d_nav] [WARN] --send-gait: the gait supervisor will command FootRaiseHeight on the dog." \
-         "First session: dog on a stand or held (docs/simulation/HARDWARE_HANDOFF.md)." >&2
+         "First session: dog on a stand or held (docs/hardware/traversability_handoff.md)." >&2
 fi
 # The Gazebo legs follow /gait/command only with the sim's gait bridge.
 [ "${TRAV_SEMANTIC}" = "true" ] && [ "${SIM}" = "true" ] && export SIM_GAIT="${SIM_GAIT:-1}"

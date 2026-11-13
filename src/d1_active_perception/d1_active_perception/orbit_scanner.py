@@ -13,7 +13,7 @@ then executed as joint goals.
 
 The defaults are a low plant beside the dog, the geometry where the whole 180
 degrees is reachable. A flat circle level with the plant tops out near 120
-degrees, wherever the plant is (docs/hardware/d1arm.md).
+degrees, wherever the plant is (docs/hardware/d1_arm.md).
 
   ros2 launch d1_moveit_config demo.launch.py end_effector:=camera      # terminal 1
   ros2 run d1_active_perception orbit_scanner                           # terminal 2

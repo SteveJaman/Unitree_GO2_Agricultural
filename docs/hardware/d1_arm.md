@@ -1,6 +1,6 @@
-# Unitree D1 arm: setup and control runbook
+# D1 Arm: Setup and Control
 
-[← Back to README](../../README.md) · [Scripts](../setup/scripts.md) · [Gazebo sim](../simulation/gazebo.md) · [Troubleshooting → D1-T Arm](../troubleshooting.md#d1-t-arm) · [Roadmap](../roadmap.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Scripts](../setup/scripts.md) · [Gazebo sim](../simulation/gazebo.md) · [Troubleshooting → D1-T Arm](../troubleshooting.md#d1-t-arm) · [Roadmap](../roadmap.md)
 
 Controls a Unitree D1 / D1-T arm over DDS directly from the host (no
 container). Protocol source: Unitree "D1 Mechanical Arm Services Interface" doc,

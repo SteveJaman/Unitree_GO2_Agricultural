@@ -1,6 +1,6 @@
-# Indoor Lab World (`lab_office`): Mapping and Navigation, Hybrid vs Omni
+# Indoor Lab World (`lab_office`): Mapping and Navigation
 
-[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [Drive modes compared](../navigation/locomotion_comparison.md) · [Status](../STATUS.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Gazebo sim](gazebo.md) · [Drive modes compared](../navigation/locomotion_comparison.md) · [Status](../status.md)
 
 A Gazebo world of a furnished indoor research lab, built to test the Go2's
 exploration and obstacle avoidance in clutter, and the results of running

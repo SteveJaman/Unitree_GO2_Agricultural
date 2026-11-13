@@ -1,6 +1,6 @@
 # Setup and Everyday Use
 
-[← Back to README](../../README.md) · [Architecture](../architecture.md) · [3D twin](../ai_and_vision/3d_nav.md) · [D1 arm](../hardware/d1arm.md) · [Troubleshooting](../troubleshooting.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Architecture](../architecture.md) · [3D twin](../ai_and_vision/3d_nav.md) · [D1 arm](../hardware/d1_arm.md) · [Troubleshooting](../troubleshooting.md)
 
 Everything needed on a new workstation, then the everyday commands for
 navigation and the arm. **Shortcut:** `./scripts/setup.sh` does the host
@@ -74,7 +74,7 @@ git clone https://github.com/dancher00/go2-nav2-wifi ~/files/go2-nav2-wifi
 git clone https://github.com/SteveJaman/Unitree_GO2_Agricultural ~/files/Unitree_GO2_Agricultural
 
 # 2. Apply lab fixes (RPP + velocity smoother + correct lidar mount),
-#    see docs/navigation/LAB-NAV-FIXES.md. Run it from the go2-nav2-wifi clone:
+#    see docs/navigation/lab_nav_fixes.md. Run it from the go2-nav2-wifi clone:
 cd ~/files/go2-nav2-wifi
 bash ~/files/Unitree_GO2_Agricultural/scripts/tools/apply-lab-nav-fixes.sh
 
@@ -120,7 +120,7 @@ Optional costmap features, per session (each is undone by a session without it):
   camera + LiDAR fusion ([voxel_costmap.md](../navigation/voxel_costmap.md)).
 - `--semantic` (`--hardware`, `--send-gait`): traversability layout for the
   real dog; `./scripts/setup.sh --with-traversability` applies it once at setup.
-  Read [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md) first.
+  Read [traversability_handoff.md](../hardware/traversability_handoff.md) first.
 
 Every session: dog standing at the dock, then
 `./scripts/runtime/wifi_3d_nav.sh` and open `http://localhost:3000` (from
@@ -234,7 +234,7 @@ stays holding instead.
 
 With the arm plugged into the Go2 instead of the workstation, use
 `./scripts/runtime/wifi_nav.sh --arm-wifi`: same fold, over Wi-Fi through the
-robot's bridge ([d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)).
+robot's bridge ([d1_arm.md](../hardware/d1_arm.md#arm-over-wi-fi-plugged-into-the-go2)).
 
 To run the arm on its own:
 
@@ -249,7 +249,7 @@ cd ~/files/Unitree_GO2_Agricultural
 ./scripts/runtime/start_arm.sh enable sleep 2 joint 0 20 sleep 3 release
 ```
 
-See [D1-T Arm Control](../hardware/d1arm.md) for every command.
+See [D1-T Arm Control](../hardware/d1_arm.md) for every command.
 
 ## Navigation — flags
 
@@ -257,7 +257,7 @@ See [D1-T Arm Control](../hardware/d1arm.md) for every command.
 |---|---|
 | *(none)* | Explore + camera (default) |
 | `--arm` | **Start everything:** also fold the D1 arm in the background (over the wired `ARM_IFACE`) |
-| `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1arm.md](../hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
+| `--arm-wifi` | Same, with the arm plugged into the Go2: bridge on the robot, arm over Wi-Fi (see [d1_arm.md](../hardware/d1_arm.md#arm-over-wi-fi-plugged-into-the-go2)) |
 | `--omni` | **Full Go2 mobility:** MPPI walks backwards and sidesteps, omnidirectional planning. See [drive_modes.md](../navigation/drive_modes.md) |
 | `--no-recovery` | Turn off the stuck recovery (on by default: an aborted leg backs the dog up 0.3 m and retries) |
 | `--sim` | Run against the Gazebo simulator instead of the robot (no discovery, SSH or relay); combine with `--arm` |

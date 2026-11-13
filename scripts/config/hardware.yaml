@@ -1,6 +1,6 @@
 # Hardware configuration for the traversability stack on the real Go2.
 # Read by `wifi_3d_nav.sh --semantic` (step-over height and VLM model on the robot); the gait
-# section is passed to the gait supervisor with --hardware (see docs/simulation/HARDWARE_HANDOFF.md).
+# section is passed to the gait supervisor with --hardware (see docs/hardware/traversability_handoff.md).
 # Defaults keep the robot's legs untouched: --hardware turns enable_hardware_backend on,
 # and only --send-gait turns dry_run off. The values below are the safe resting state.
 

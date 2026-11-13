@@ -13,7 +13,7 @@ is the foot height while it is on the ground (a low percentile of the recording)
 every swing above it by more than --swing-min is one step, and its peak above the
 stance level is the step's clearance: how far the foot's lowest point rose over the
 floor it stood on. Firmware V2.0 no longer reports foot_raise_height, so this is the
-way to measure it (docs/simulation/HARDWARE_HANDOFF.md).
+way to measure it (docs/hardware/traversability_handoff.md).
 
   python3 step_height_probe.py --duration 12            # record, then print per leg
   python3 step_height_probe.py --duration 12 --csv /tmp/steps.csv

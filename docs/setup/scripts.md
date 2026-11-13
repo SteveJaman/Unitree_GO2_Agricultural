@@ -1,6 +1,6 @@
 # Scripts Reference
 
-[← Back to README](../../README.md) · [Setup](setup.md) · [Explorer](../navigation/explorer.md) · [3D twin](../ai_and_vision/3d_nav.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Setup](setup.md) · [Explorer](../navigation/explorer.md) · [3D twin](../ai_and_vision/3d_nav.md)
 
 Every entry point, ROS node and tool in [`scripts/`](../../scripts/). The
 go2-3d container's own files (YOLO node, image compressor, web dashboard)
@@ -21,13 +21,12 @@ of anything left to fix (exit 1). `--with-traversability` also applies the
 traversability costmap layout
 ([`add-traversability-layers.sh`](../../scripts/tools/add-traversability-layers.sh)).
 
-
 ## Runtime ([`scripts/runtime/`](../../scripts/runtime/))
 
 | Script | Purpose |
 |---|---|
 | [`wifi_nav.sh`](../../scripts/runtime/wifi_nav.sh) | **Main entry point.** Relay + Nav2 + RViz + explorer + camera; `--arm` also folds the D1 arm (`--arm-wifi`: arm plugged into the Go2) |
-| [`wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop`; `--voxel` (3D VoxelLayer, [voxel_costmap.md](../navigation/voxel_costmap.md)); `--semantic` / `--hardware` / `--send-gait` (traversability, [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md)) |
+| [`wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) | **The one command.** Builds or refreshes its image, starts Ollama and pulls the VLM, then by default runs the AI and the unattended survey (`--manual`, `--no-ai` opt out). Runs `wifi_nav.sh` unchanged plus RTAB-Map (camera fusion when the camera publishes), the web dashboard (`:3000`, rosbridge `:9090`) and click-to-goal in a separate `go2-3d` container; `--manual`, `--no-ai`, `--no-build`, `--resume`, `--save-location`, `--foxglove`, `--build`, `--export`, `--stop`; `--voxel` (3D VoxelLayer, [voxel_costmap.md](../navigation/voxel_costmap.md)); `--semantic` / `--hardware` / `--send-gait` (traversability, [traversability_handoff.md](../hardware/traversability_handoff.md)) |
 | [`wifi_mapping.sh`](../../scripts/runtime/wifi_mapping.sh) | Mapping-only wrapper (no explorer) |
 | [`sim_explore.sh`](../../scripts/runtime/sim_explore.sh) | **Unity simulation.** CMU Unity sim + real go2_nav2 config + explorer, on the host. See [unity.md](../simulation/unity.md). For the Gazebo sim use `wifi_nav.sh --sim` ([docs/simulation/gazebo.md](../simulation/gazebo.md)) |
 | [`start_rtabmap.sh`](../../scripts/runtime/start_rtabmap.sh) | Older manual RTAB-Map launcher inside `go2-lidar3d` (superseded by `wifi_3d_nav.sh`) |
@@ -80,7 +79,7 @@ logs `go2-nav2-wifi/ws/log/3d/traversability/`), and by the sim trials
 
 | Script | What it does |
 |---|---|
-| [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py) | `ros2 run d1_active_perception orbit_scanner`: camera sweep around a plant through MoveIt, with a placeholder at each capture point. Full 180° for a low plant beside the dog (13/13 in Gazebo, no contacts), 120° at rack height ([details](../hardware/d1arm.md#orbit-sweep-d1_active_perception)) |
+| [`orbit_scanner.py`](../../src/d1_active_perception/d1_active_perception/orbit_scanner.py) | `ros2 run d1_active_perception orbit_scanner`: camera sweep around a plant through MoveIt, with a placeholder at each capture point. Full 180° for a low plant beside the dog (13/13 in Gazebo, no contacts), 120° at rack height ([details](../hardware/d1_arm.md#orbit-sweep-d1_active_perception)) |
 
 ## Tools ([`scripts/tools/`](../../scripts/tools/))
 
@@ -117,9 +116,9 @@ logs `go2-nav2-wifi/ws/log/3d/traversability/`), and by the sim trials
 | [`go2_param_tool.py`](../../scripts/debug/go2_param_tool.py) | Run by the hub inside `go2-lidar3d`: reads or sets several Nav2 parameters in one process (the ros2 CLI takes ~1 s each) |
 | [`debug_dashboard.py`](../../scripts/debug/debug_dashboard.py) | Built into the dashboard's System tab with `wifi_3d_nav.sh`; on its own for a plain `wifi_nav.sh` session. Debug page on <http://localhost:3001>: why the dog isn't moving (LiDAR → TF → goal → planner → costmap → controller → smoother → walking), topic health, costmap, ROS errors, all logs. Read-only probe: [`go2_debug_probe.py`](../../scripts/debug/go2_debug_probe.py) |
 | [`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py) | Run by `wifi_nav.sh`: patches go2-nav2-wifi `mapping.sh` (tagged, idempotent): SSH keep-alives; a fast Ctrl+C (the robot halts first, the local, Jetson and 3D-twin map saves run at the same time, time limits on each, a second Ctrl+C skips the map copy from the Jetson); and the `session_keepalive.sh` hook |
-| [`apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [LAB-NAV-FIXES.md](../navigation/LAB-NAV-FIXES.md)) |
+| [`apply-lab-nav-fixes.sh`](../../scripts/tools/apply-lab-nav-fixes.sh) | One-time patch of an upstream go2-nav2-wifi clone: lidar mount, RPP + velocity smoother (see [lab_nav_fixes.md](../navigation/lab_nav_fixes.md)) |
 | [`diag_arm.sh`](../../scripts/tools/diag_arm.sh) | D1 arm diagnostic: interface, ping, container, cyclonedds, DDS match |
-| [`teach_arm.py`](../../scripts/tools/teach_arm.py) | D1 arm plant scanning: compliance mode (stiffness 5000), save hand-guided poses to `config/arm_waypoints.json` ([d1arm.md](../hardware/d1arm.md#plant-scanning-teach--playback)) |
+| [`teach_arm.py`](../../scripts/tools/teach_arm.py) | D1 arm plant scanning: compliance mode (stiffness 5000), save hand-guided poses to `config/arm_waypoints.json` ([d1_arm.md](../hardware/d1_arm.md#plant-scanning-teach--playback)) |
 | [`play_arm.py`](../../scripts/tools/play_arm.py) | D1 arm plant scanning: replay the saved poses, hold each for the camera |
 | [`calibrate_arm.py`](../../scripts/tools/calibrate_arm.py) | D1 arm per-joint offset measurement (commanded vs reported angle); run via `start_arm.sh --calibrate` |
 | [`fix_wifi_powersave.sh`](../../scripts/tools/fix_wifi_powersave.sh) | Turns Wi-Fi power saving off for good on this computer (NetworkManager + Realtek driver) or, with `--robot`, on the Go2 (you type its sudo password; reboot the dog once). `--check` reports only, `--undo` removes it. Power saving stalls the link to the dog |

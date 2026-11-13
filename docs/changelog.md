@@ -1,8 +1,10 @@
-# Session Status
+# Changelog
 
-[← Back to README](../README.md) · [Roadmap](roadmap.md) · [Troubleshooting](troubleshooting.md)
+[← README](../README.md) · [Docs index](README.md) · [Status](status.md) · [Roadmap](roadmap.md)
 
-Last updated: 2026-11-12
+What changed, session by session, newest first. Each entry records what was built, what was
+tested and where (robot, Gazebo or offline), and what was left open at the time. The current
+state is summarized in [status.md](status.md).
 
 ---
 
@@ -27,7 +29,7 @@ Last updated: 2026-11-12
   Left, Front, Right, Far right; the far ones as wide as reachable, ±45° at the lab rack)
   with least-twist IK; the operator judged all five right. Settle tolerance 0.2°: moves
   end 0.21–0.35° off (were 0.2–0.7°). ±90° beside the plant and a top view from 45 in
-  are out of the arm's reach (d1arm.md, plant-inspection demo).
+  are out of the arm's reach (d1_arm.md, plant-inspection demo).
 - **Still open:** levelling and `--avoid` with Nav2 driving, on the dog; STVL live test;
   Gazebo still mounts the arm backward (`SIM_D1_MOUNT` yaw 180°).
 
@@ -41,7 +43,7 @@ its gravity direction in a fast turn before, 2026-10-29); and whether the dashbo
 use the same frame. A fix may need gravity/roll-pitch correction or a floor constraint.
 
 - **Arm signs measured:** `ARM_JOINT_SIGNS="-1 1 1 1 1 -1"` makes the real D1 follow RViz
-  (d1arm.md, "Joint signs"). `moveit_d1_bridge.py` gained `ARM_JOINT_OFFSETS` (default 0;
+  (d1_arm.md, "Joint signs"). `moveit_d1_bridge.py` gained `ARM_JOINT_OFFSETS` (default 0;
   not needed on this arm). `inspect_plant.py` (Front / Left / Right) gained `roll_deg`
   (default 0); the gripper roll the operator calls flat is **not settled**.
 - **Moving obstacles stayed in the costmap** with `--voxel`: in the sim a removed box stayed
@@ -63,7 +65,7 @@ use the same frame. A fix may need gravity/roll-pitch correction or a floor cons
 | `--voxel`: 3D `VoxelLayer` on the self-filtered LiDAR; `--camera-obstacles` fuses the front camera into the same grid ([voxel_costmap.md](navigation/voxel_costmap.md)) | Full Gazebo sessions 2026-11-11: config and voxel grids verified live, 0 collisions, but exploration benchmark 90/90/90 vs 100 for the 2D layer (rooms seen through doorways stay unknown); camera floor cut fixed, not re-run. Keep the 2D layer for exploration ([details](navigation/voxel_costmap.md#sim-sessions-2026-11-11)) |
 | `--camera-obstacles` could not add its costmap source once the YOLO source was present | **Fixed** (`nav2_camera_source.py`) |
 | Traversability simulation closed: height bands, gait, backstop, semantic layer ([traversability_sim.md](simulation/traversability_sim.md)) | n = 10 per mode: 0 unsafe labels on LiDAR-measured objects, 0 backstop failures, low-item foot clearance 53 % vs 26 % (p = 0.008); the semantic layer does not improve navigation (VLM accuracy) |
-| Traversability on the robot ([HARDWARE_HANDOFF.md](simulation/HARDWARE_HANDOFF.md)): `sport_client` gait backend, `--semantic` / `--hardware` / `--send-gait`, `add-traversability-layers.sh` | Written and tested without the robot (backend with a mock SDK, patch on a mock of go2-nav2-wifi); `--semantic` now starts the traversability nodes (tested in Gazebo, lab world, 2026-11-11); **no hardware run** |
+| Traversability on the robot ([traversability_handoff.md](hardware/traversability_handoff.md)): `sport_client` gait backend, `--semantic` / `--hardware` / `--send-gait`, `add-traversability-layers.sh` | Written and tested without the robot (backend with a mock SDK, patch on a mock of go2-nav2-wifi); `--semantic` now starts the traversability nodes (tested in Gazebo, lab world, 2026-11-11); **no hardware run** |
 | RealSense D435i boot service on the Go2 ([realsense.md](ai_and_vision/realsense.md)) | Merged from the `test` branch |
 
 ## 2026-11-05: 180° orbit sweep
@@ -92,20 +94,7 @@ use the same frame. A fix may need gravity/roll-pitch correction or a floor cons
 
 ---
 
-## Current goals (week of 2026-10-22)
-
-From the weekly meeting with the advisor; tracked in the
-[roadmap](roadmap.md#current-goals-advisor-week-of-2026-10-22).
-
-| Goal | State |
-|---|---|
-| Scan an object with the RGBD camera (D435i) | **Tools written**: [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) stream colour + depth to the workstation; first scan pending |
-| Arm rotates to scan the fake plant: left, front, right | **Tools written**: teach the three poses with [`teach_arm.py`](../scripts/tools/teach_arm.py), replay with [`play_arm.py`](../scripts/tools/play_arm.py); not yet done on the plant |
-| Mount the camera on the arm's end | **Blocked**: waiting for the USB-C extension cable |
-
----
-
-## Physical test readiness (2026-10-23)
+## 2026-10-23: physical test readiness
 
 **Primary interface: the web dashboard** at `http://localhost:3000` (or `http://<host IP>:3000`), started by
 `./scripts/runtime/wifi_3d_nav.sh`. RViz still opens with the session, and
@@ -130,42 +119,35 @@ Foxglove is the optional alternative (`--foxglove`).
 | D1 arm Teach & Playback (`teach_arm.py`, `play_arm.py`) | **Implemented (pending physical test)**: 22 checks against a fake arm (2026-10-27) |
 | D1 arm over Wi-Fi, plugged into the Go2 (`--arm-wifi`, `--robot`) | **Moved on the robot over Wi-Fi (2026-10-27)**: power, enable, joint 0 +20°, home, fold. Found and fixed: the bridge's auto-lock re-enabled an enabled arm, which drives it to its last target. Open: `power 0` does not switch motor power off over the bridge |
 | Drive modes `--drive hybrid` (default) / `diff` / `omni` ([drive modes](navigation/drive_modes.md)): MPPI reverse + sidestep, stuck recovery in every session | **Implemented (pending physical test)**: sim comparison of all three, 9 trials (2026-10-28, [results](navigation/locomotion_comparison.md)); on the real dog MPPI loads and recovery is ready, but no movement test yet |
-| MoveIt 2 for the D1 arm (`arm_moveit.sh`, [d1arm.md](hardware/d1arm.md#moveit-2-cartesian-planning-arm_moveitsh)): Cartesian goals, collision-free plans around the Go2, plant-inspection demo | **Implemented (pending physical test)**: runs on ros2_control mock hardware only; driving the real arm needs a trajectory bridge (not written) |
+| MoveIt 2 for the D1 arm (`arm_moveit.sh`, [d1_arm.md](hardware/d1_arm.md#moveit-2-cartesian-planning-arm_moveitsh)): Cartesian goals, collision-free plans around the Go2, plant-inspection demo | **Implemented (pending physical test)**: runs on ros2_control mock hardware only; driving the real arm needs a trajectory bridge (not written) |
 | Indoor lab world `lab_office` (Gazebo, [lab_office.md](simulation/lab_office.md)): 14 × 11 m, 7 rooms, 53 furniture pieces from 3DGEMS, ceiling; navigation tour + ground-truth coverage, clearance and SPL in `nav_compare` | **Done in sim** (2026-11-01): 3 trials per mode. hybrid reached 22/24 tour goals vs omni 15/24 (Fisher p = 0.036), median 41 s vs 62 s per goal, explored in 107 s vs 200 s; both mapped ~100 % of the floor, no contact while exploring. Benchmark `tests/sim_benchmark.py` (Gazebo contacts + room coverage): 3/3 runs 100/100 (hybrid) after the explorer's frontier grouping became 8-connected |
 | Unity sim (`sim_explore.sh`, [unity.md](simulation/unity.md)): explorer + the real go2_nav2 config in the CMU Unity sim, on the host | **Implemented (pending physical test)**: explorer runs in the sim (2026-10-16, -22); the same explorer parameters still need the robot |
 | Dashboard hub: one app from `wifi_3d_nav.sh` (`go2_hub.py`): page at once with start-up progress, System tab (health, logs, debug report), Settings tab (collision threshold, speed, live; session code), quiet terminal | **Implemented (pending physical test)**: tested in the WSL sim (2026-11-01): 26 API checks (each setting verified with `ros2 param get`, wrong or missing code refused, reset, saved defaults applied by a new hub), headless-browser walk-through of every tab with no errors, Ctrl+C 4.8 s with nothing left running |
 | VLM (llava:7b) | **Too slow on the old VM's CPU (2026-10-27)**: ~2 min per frame, longer than the node's 120 s timeout. The native workstation has an NVIDIA GPU (Quadro RTX 4000) that Ollama uses once the driver is loaded; re-test pending |
 
-Test plan: checks 17–57 under [Pending verification](#pending-verification-needs-robot),
-and the [Next session plan](#next-session-plan).
+Test plan: checks 17–57 in the [verification checklist](verification_checklist.md).
 
 ---
 
-## What's complete (code)
+## 2026-10-22: advisor goals
+
+From the weekly meeting with the advisor; tracked in the
+[roadmap](roadmap.md#current-goals-advisor-week-of-2026-10-22).
+
+| Goal | State |
+|---|---|
+| Scan an object with the RGBD camera (D435i) | **Tools written**: [`d435i_sender.py`](../scripts/tools/d435i_sender.py) / [`d435i_receiver.py`](../scripts/tools/d435i_receiver.py) stream colour + depth to the workstation; first scan pending |
+| Arm rotates to scan the fake plant: left, front, right | **Tools written**: teach the three poses with [`teach_arm.py`](../scripts/tools/teach_arm.py), replay with [`play_arm.py`](../scripts/tools/play_arm.py); not yet done on the plant |
+| Mount the camera on the arm's end | **Blocked**: waiting for the USB-C extension cable |
+
+---
+
+## 2026-10-16 to 2026-10-23: initial build-out
 
 Everything below is written, committed, and wired together. None of it
 has been verified on the robot yet except where noted.
 
-### Repository structure
-
-```text
-scripts/
-├── runtime/     wifi_nav.sh, wifi_3d_nav.sh, wifi_mapping.sh, start_rtabmap.sh, start_arm.sh,
-│                arm_moveit.sh (MoveIt 2), sim_explore.sh (Unity sim),
-│                go2_net.sh (sourced: IP detection / robot discovery)
-├── nodes/       frontier_explorer.py, go2_camera_relay.py, go2_floor_filter.py, go2_click_to_goal.py,
-│                go2_camera_info.py, battery_manager.py, vlm_reasoning_node.py, save_location.py,
-│                d1_arm_control.py, d1_arm_calibration.py, direct_test_movement.py
-├── tools/       auto_walk.sh, calibrate_arm.py, campus_session.sh, diag_arm.sh, export_tour.py,
-│                add-yolo-costmap-source.sh, apply-lab-nav-fixes.sh, mock_arm_twin.sh,
-│                preflight.sh, save_rviz_config.sh, tune_costmap.sh, verify_costmap.sh
-└── debug/       debug_dashboard.py (debug page :3001), go2_debug_probe.py, go2_link_watch.py
-tests/           test_explore.sh, test_goal_cli.sh, rgbd_test.py, test_arm_tracker_pure.py,
-                 mock_sim.py (fake robot + arm for the dashboard)
-twin/            go2-3d container: docker/Dockerfile, start_inside.sh, yolo_node.py
-```
-
-Browse: [`scripts/runtime/`](../scripts/runtime/) · [`scripts/nodes/`](../scripts/nodes/) · [`scripts/tools/`](../scripts/tools/) · [`scripts/debug/`](../scripts/debug/) · [`tests/`](../tests/) · [`twin/`](../twin/)
+The repository layout at the time is superseded by [development.md](setup/development.md).
 
 - CMU-era code (`cmu-legacy/`) removed on 2026-11-01; it is in the git history (`git log -- cmu-legacy`). Its `mock_sim.py` moved to [`tests/`](../tests/)
 - Pre-commit hooks configured (ruff, shellcheck, clang-format, markdownlint)
@@ -364,88 +346,9 @@ relay is unconfirmed.
 
 ---
 
-## Pending verification (needs robot)
+## October 2026: issues found and fixed
 
-| # | Check | Command | Expected |
-|---|---|---|---|
-| 1 | Costmap exists and publishes | `ros2 topic hz /global_costmap/costmap` | ~1 Hz |
-| 2 | Explorer subscribes | `ros2 topic info /global_costmap/costmap --verbose` | Sub count = 1 |
-| 3 | Frontier detection runs | explorer log | `detect_frontiers: known=N frontiers=K` |
-| 4 | Explorer sends goals | `ros2 topic echo /explore/status` | `goals_sent > 0` |
-| 5 | Dog moves to frontier | visual | dog walks toward unexplored area |
-| 6 | RViz START button publishes | `ros2 topic echo /explore/resume` while clicking | `data: true` |
-| 7 | STOP button halts dog | click | stop within 1 s |
-| 8 | Full autonomous run | watch | `IDLE → EXPLORING → RETURNING → DONE` |
-| 9 | Camera reaches container | `ros2 topic hz /camera/image_raw` | ~10–30 Hz |
-| 10 | Arm reachable | `./scripts/tools/diag_arm.sh` (on the Go2: `start_arm.sh --robot <ip> state`) | all PASS — ✅ over Wi-Fi 2026-10-27 |
-| 11 | Arm responds to `joint` | `start_arm.sh enable sleep 2 joint 0 20 sleep 3 release` | joint 0 moves 20° — ✅ over Wi-Fi 2026-10-27 (−0.8° → +20.0°) |
-| 12 | Joint offsets small | `start_arm.sh --calibrate --test-deg 10 --yes` | offsets within a degree or two |
-| 13 | Fold calibration | `start_arm.sh read`, paste, `start_arm.sh fold` | arm folds onto mount, goes limp — ✅ over Wi-Fi 2026-10-27 |
-| 14 | Robot discovery | `./scripts/runtime/wifi_nav.sh --check` | banner shows `[discovered]` robot IP |
-| 15 | Go2 Jetson MAC prefix | `ip link` on the Jetson | starts `02:00:00` (else set `GO2_MAC_PREFIX`) |
-| 16 | Save RViz layout | File → Save Config As | `config/tour.rviz` exists |
-| 17 | 3D image builds | `./scripts/runtime/wifi_3d_nav.sh --build` | `go2-3d:local` built |
-| 18 | 3D stack starts | `./scripts/runtime/wifi_3d_nav.sh --no-explore` | `3D digital twin READY` printed |
-| 19 | Dense map grows | dashboard `http://localhost:3000`, 3D view | map fills in as the dog walks |
-| 20 | Click-to-go | dashboard Click-to-go, click the floor, then a desk | `goal (...)` in `click_to_goal.log`; desk click logs `snapped … to free floor`, green arrow beside it |
-| 21 | DB saved + export | Ctrl+C, then `wifi_3d_nav.sh --export` | `[3d] Map saved`, PLY in `<db>-export/` |
-| 22 | Camera fusion | camera relay up, `wifi_3d_nav.sh` | READY shows `RTAB-Map : camera`; `/rtabmap/cloud_map` coloured |
-| 23 | Camera TF / intrinsics | dashboard: coloured map vs camera panel | colours on the right surfaces (else calibrate, roadmap 3.4) |
-| 24 | YOLO | stand in front of the dog | `/yolo/image` boxes; `/yolo/markers` `person ~X m` matches a tape measure |
-| 25 | YOLO → Nav2 | `--ai` (banner `YOLO → Nav2 : on`), chair in the path | chair shows in `/global_costmap/costmap`, plan goes around it |
-| 26 | Battery data | `go2sh; ros2 topic echo /lf/lowstate --field bms_state.soc` | matches the app's battery % |
-| 27 | Low-battery dock | `TWIN_BATTERY_LOW=95 wifi_3d_nav.sh --ai` (test threshold), explorer running | explorer stops, dog drives to the start point, START refused |
-| 28 | VLM | `ollama serve` + `llava:7b`, `--ai` | `[checks] Ollama llava:7b … OK`; `/vlm_decision` updates in the dashboard |
-| 29 | Resume | run, Ctrl+C, `--resume` from the same start spot | READY shows `[resumed …]`; old map visible, joined after revisiting a place |
-| 30 | Named locations | `--save-location`, click, type `Dock` | entry in `config/semantic_locations.json` |
-| 31 | Dashboard | open `http://<host IP>:3000` from another device | green rosbridge dot, robot moves with the dog, battery % matches the app |
-| 32 | Dashboard camera | camera mode, dashboard Camera / YOLO tabs | ~5 fps each |
-| 33 | Dashboard STOP | explorer running, click STOP | dog stops, explorer `IDLE` |
-| 34 | Auto-localization | `--ai` with the dog at the dock | `auto_localize.log`: `initial pose … published`; no manual 2D Pose Estimate needed |
-| 35 | VLM action | explorer running, block the path with a desk / board | `vlm.log`: `BLOCKED 1/2`, then `path BLOCKED (confirmed)`; explorer stops, dog returns to the dock |
-| 36 | VLM false alarm | `TWIN_VLM_ACT=0 … --ai`, normal run | count how often `BLOCKED` appears on a clear path before trusting the action |
-| 37 | Battery-swap restart | Ctrl+C, swap, dog at the dock, `--ai --resume` | READY shows `[resumed …]`, auto-localized, map continues |
-| 38 | Solid map frame rate | dashboard Solid, big map, ⚙ shows fps | ≥ 50 fps on the presentation laptop (else Detail: Medium) |
-| 39 | Presentation mesh | after a run: `--export --mesh`, then `--view` | 3D Scan shows closed walls and floor; < 1 min meshing |
-| 40 | Return to Dock | explorer running, press Return to Dock | explorer stops, pin at the dock, route drawn, dog drives home |
-| 41 | Room segmentation | map two rooms joined by a door | two coloured rooms split at the doorway; `config/semantic_rooms.json` written |
-| 42 | Room naming | Rooms → Edit, click a room, robot inside it, `--ai` | dialog shows a VLM suggestion; Save keeps the name after the next re-segmentation |
-| 43 | Merge / navigate | merge two adjacent rooms; Navigate to room | one room; the dog drives to the room's open centre |
-| 44 | Explorer re-plan | explore a room with an open doorway | log `explored before arrival: re-planning`; fewer stops; `replans=` grows |
-| 45 | Explorer STOP during spin | `spin_on_goal:=true`, STOP mid-spin | rotation stops within ~0.1 s |
-| 46 | Autonomous survey | plain `wifi_3d_nav.sh`, dog at the dock, two or more rooms, a bed or fridge in one | no input needed: rooms visited and spun in, named (✨), dog docks; `config/survey_report.json` written |
-| 47 | Survey keeps user names | name a room by hand, then run a survey | the hand-typed name is unchanged |
-| 48 | Survey battery pause | `TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh` | survey shows `PAUSED`, the dog docks; resumes after the battery rises |
-| 49 | One command from scratch | fresh clone, no image, Ollama installed but stopped: `./scripts/runtime/wifi_3d_nav.sh` | image built, `llava:7b` pulled, `ollama serve` started, survey runs to the dock |
-| 50 | Drive `omni` | `wifi_nav.sh --no-explore --drive omni` (or `wifi_3d_nav.sh --no-explore --omni`), remote in hand; 2D Goal Pose 1 m behind, then 1 m to the side | walks backwards without turning; sidesteps ([drive modes](navigation/drive_modes.md#tested)) |
-| 51 | Drive `hybrid` recovery | default drive, explorer next to a wall until a leg aborts | `/tmp/stuck_recovery.log`: steps back or aside 0.3 m, goal re-sent |
-| 52 | MoveIt plan | `./scripts/runtime/arm_moveit.sh --inspect` on the workstation | RViz: most viewpoints green, arm never touches the Go2 boxes or the plant |
-| 53 | MoveIt → real arm | after a trajectory bridge exists: one planned move, low scaling, arm at home | the real arm follows the plan; joint signs match ([d1arm.md](hardware/d1arm.md#from-plan-to-the-real-arm)) |
-| 54 | Unity sim | `./scripts/runtime/sim_explore.sh --autostart` | goals reached in the Unity environment; Ctrl+C stops cleanly |
-| 55 | Camera Relay starts | `docker logs go2-lidar3d \| grep camera` | No "ModuleNotFoundError: cv2" |
-| 56 | Keepalive on Wi-Fi drop | Disconnect dog's Wi-Fi | Robot stops safely; RViz/Web App stay open |
-| 57 | Debug Dashboard | dashboard **System** tab (or `python3 scripts/debug/debug_dashboard.py` with plain `wifi_nav.sh`) | green checks for Nav2/TF; Copy debug report works |
-| 58 | Dashboard first | `./scripts/runtime/wifi_3d_nav.sh`, open the printed link at once | page opens before the robot is up; start-up overlay ticks through to 3D twin |
-| 59 | Settings on the dog | Settings: Wide preset, Apply; then Reset | dog keeps visibly more clearance; Reset restores; values match `tune_costmap.sh --show` |
-| 60 | Quiet terminal | normal start with Ollama off | short terminal with the Ollama warning and its fix; everything in `ws/log/3d/boot.log` |
-
----
-
-## Blocked by hardware
-
-| Item | Blocker |
-|---|---|
-| [`config/tour.rviz`](../config/tour.rviz) | Must be saved from a running RViz on the workstation (see [tour.md](navigation/tour.md)) |
-| Camera backend on Jetson | `WARN: camera unavailable` in relay log |
-| Hyperspectral camera mount | 3D-printed attachment + sensor |
-| D435i on the arm's end | USB-C extension cable not yet arrived |
-| RTAB-Map + RealSense (`wifi_3d_nav.sh --rgbd`) | D435i in hand and streaming tools written; not yet mounted or run with `--rgbd`. LiDAR-only and Go2-camera fusion work without it |
-
----
-
-## Known issues
-
-Full list of fixes: [troubleshooting.md](troubleshooting.md).
+Most of these are fixed; the full list of fixes is in [troubleshooting.md](troubleshooting.md).
 
 ### Camera relay on the new Ubuntu workstation (2026-10-30)
 
@@ -529,85 +432,3 @@ Verification pending on the robot.
 [`tune_costmap.sh`](../scripts/tools/tune_costmap.sh) sets `inflation_radius` and `footprint_padding` at
 runtime. To persist, edit `go2_nav2/config/lidar3d_planner.yaml` and the
 matching override in `go2_nav2/launch/lidar3d_controller.launch.py`.
-
----
-
-## Do NOT do
-
-- Do not run `./setup-lidar3d.sh` without `--laptop` — hangs on the legacy builder
-- Do not start a relay manually while a session is up — `wifi_nav.sh` does it
-- Do not Ctrl+C `mapping.sh --3d --nav` before RViz finishes loading — leaves a partial session
-- Do not run `start_slam.sh` (if it still exists) — inserts a duplicate SLAM layer that conflicts with Point-LIO
-
----
-
-## Next session plan
-
-```bash
-# 1. Power on the dog, stand it up
-# 2. Power on the D1 arm if using it (24V DC, RJ45 to the workstation's wired
-#    port, address from the go2-arm profile; or plug it into the Go2 and use
-#    --arm-wifi / start_arm.sh --robot <ip>)
-./scripts/runtime/start_arm.sh --check
-
-# 3. Launch the full stack (drop --arm for navigation only)
-cd ~/files/Unitree_GO2_Agricultural
-./scripts/runtime/wifi_nav.sh --check          # confirm discovered IPs first
-./scripts/runtime/wifi_nav.sh --arm
-
-# 4. In another terminal: verify costmap
-go2sh
-ros2 topic hz /global_costmap/costmap      # expect ~1 Hz
-ros2 topic echo /explore/status            # watch goals_sent
-
-# 5. Click START in RViz
-#    Watch explorer log for FRONTIER: lines
-#    Watch /explore/status for goals_sent > 0
-
-# 6. Check the arm fold calibration and joint offsets
-./scripts/runtime/start_arm.sh read            # paste FOLDED_ANGLES into d1_arm_calibration.py if the mount changed
-./scripts/runtime/start_arm.sh --calibrate --test-deg 10 --yes
-
-# 7. Save the RViz layout
-./scripts/tools/save_rviz_config.sh
-#    Then follow the printed steps in RViz
-
-# 8. Commit any config/tour.rviz that gets saved
-```
-
-### Autonomous loop test (3D twin)
-
-```bash
-# Dog standing AT THE DOCK (the map origin, dock goal and auto-localization assume it)
-# First run needs internet: builds the image, pulls llava:7b, starts ollama serve
-./scripts/runtime/wifi_3d_nav.sh                # banner: YOLO → Nav2 on, Ollama OK, Localize auto, Survey AUTO
-# Open http://localhost:3000 (READY block) and watch; the survey needs no input
-# Step-by-step instead: ./scripts/runtime/wifi_3d_nav.sh --manual
-# Safe low-battery test: TWIN_BATTERY_LOW=95 ./scripts/runtime/wifi_3d_nav.sh
-# VLM false-alarm check first: TWIN_VLM_ACT=0 ./scripts/runtime/wifi_3d_nav.sh --manual
-
-# After a battery swap: dog back at the dock, then
-./scripts/runtime/wifi_3d_nav.sh --resume
-```
-
-Work through checks 17–57 above (see [3d_nav.md](ai_and_vision/3d_nav.md)). Keep the
-handheld remote as the emergency stop.
-
-No robot? Run the same plan against the simulator (`./gazebo/setup_gazebo.sh`
-once, then `./gazebo/test_sim.sh` and `./scripts/runtime/wifi_nav.sh --sim --arm`).
-
----
-
-## Success criteria
-
-**Phase 1 (navigation):**
-> A person who has never seen the robot runs one command, waits 10 minutes,
-> and receives a `.ply` file they can open and recognize as the room the
-> robot just explored.
-
-**Phase 2 (arm):**
-> A person who has never seen the arm runs one command, and the arm moves
-> the hyperspectral camera through a repeatable scan path over a plant,
-> storing the captured data for later analysis.
-
-See [roadmap.md](roadmap.md) for the full milestone list.

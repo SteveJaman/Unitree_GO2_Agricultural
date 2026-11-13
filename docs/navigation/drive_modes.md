@@ -1,6 +1,6 @@
-# Drive modes: `--drive diff | hybrid | omni`
+# Drive Modes: `--drive diff | hybrid | omni`
 
-[← Back to README](../../README.md) · [3D Nav](../ai_and_vision/3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](../troubleshooting.md)
+[← README](../../README.md) · [Docs index](../README.md) · [3D Nav](../ai_and_vision/3d_nav.md) · [Locomotion comparison](locomotion_comparison.md) · [Troubleshooting](../troubleshooting.md)
 
 `wifi_nav.sh` takes `--drive diff|hybrid|omni`; all three stay supported there, one per session.
 `wifi_3d_nav.sh` takes the same options (default `hybrid`) and passes them on:

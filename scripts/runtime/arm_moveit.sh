@@ -26,7 +26,7 @@
 #
 # Safety: ROS_DOMAIN_ID 78 + localhost-only DDS, so ROS traffic never reaches the
 # robot. Without --real nothing touches the arm. --real needs ARM_JOINT_SIGNS,
-# from the joint sign test in docs/hardware/d1arm.md, and stops if the bridge
+# from the joint sign test in docs/hardware/d1_arm.md, and stops if the bridge
 # to the arm dies: there is no mock arm behind it. --plan-only never uses the real arm.
 # ---------------------------------------------------------------------------
 set -eo pipefail
@@ -71,7 +71,7 @@ done
 if [ "${REAL}" = "true" ] && [ -z "${ARM_JOINT_SIGNS:-}" ]; then
     fail "--real needs ARM_JOINT_SIGNS, six values of 1 or -1 for Joint1..Joint6.
   The D1-550 model and Unitree's disagree on Joint1 and Joint6, so run the joint
-  sign test first: docs/hardware/d1arm.md, \"Joint signs\". Example:
+  sign test first: docs/hardware/d1_arm.md, \"Joint signs\". Example:
   ARM_JOINT_SIGNS=\"1 1 1 1 1 1\" $0 --real"
 fi
 

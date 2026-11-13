@@ -1,6 +1,6 @@
 # RViz Waypoint Mode and Tour Setup
 
-[← Back to README](../../README.md) · [Roadmap](../roadmap.md) · [Camera](../ai_and_vision/camera.md) · [Troubleshooting](../troubleshooting.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Roadmap](../roadmap.md) · [Camera](../ai_and_vision/camera.md) · [Troubleshooting](../troubleshooting.md)
 
 Setup guide to replace the single-goal "2D Goal Pose" tool with a queued
 waypoint system that draws a visible route on the map.

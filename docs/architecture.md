@@ -1,6 +1,6 @@
 # Architecture and Network
 
-[← Back to README](../README.md) · [Setup](setup/setup.md) · [Scripts](setup/scripts.md) · [Troubleshooting](troubleshooting.md)
+[← README](../README.md) · [Docs index](README.md) · [Setup](setup/setup.md) · [Scripts](setup/scripts.md) · [Troubleshooting](troubleshooting.md)
 
 How the Go2, the Ubuntu workstation and the D1-T arm fit together, and how the
 network is found and kept apart. For the 3D digital twin (RTAB-Map, web
@@ -107,7 +107,7 @@ Key facts:
   the arm's DDS stays on the Go2's internal network; only TCP crosses Wi-Fi.
 - **Never re-enable an enabled arm.** Enable-all sent to an already enabled
   D1 drives it back to its last multi-joint target (found 2026-10-27); see
-  [d1arm.md](hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2).
+  [d1_arm.md](hardware/d1_arm.md#arm-over-wi-fi-plugged-into-the-go2).
 
 ---
 

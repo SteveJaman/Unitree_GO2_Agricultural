@@ -1,6 +1,6 @@
-# Gazebo simulation: Go2 + D1
+# Gazebo Simulation: Go2 + D1
 
-[← Back to README](../../README.md) · [Unity sim](unity.md) · [Hydroponic trial](hydroponic_trial.md) · [Status](../STATUS.md) · [Troubleshooting](../troubleshooting.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Unity sim](unity.md) · [Hydroponic trial](hydroponic_trial.md) · [Status](../status.md) · [Troubleshooting](../troubleshooting.md)
 
 The simulation's files live in [`gazebo/`](../../gazebo/).
 
@@ -69,7 +69,7 @@ launches, pointed at this machine instead of the robot.
   the file `go2_odom_tf` itself uses), so the laptop's `go2_odom_tf` recovers the
   exact body pose. `run_sim.sh` reads it at every start and passes it in
   `SIM_SENSOR_FROM_BASE` (set that variable to override); the file is also mounted
-  for `build_model.py --sensor-yaml`. With the [lab fix](../navigation/LAB-NAV-FIXES.md)
+  for `build_model.py --sensor-yaml`. With the [lab fix](../navigation/lab_nav_fixes.md)
   applied, the lidar sits at the Go2 URDF mount (0.289, 0, −0.047 m). If the file
   is missing, the sim falls back to that same URDF mount and prints a warning. If
   the two differ, RViz shows the dog shifted, tilted or floating, and Nav2 plans

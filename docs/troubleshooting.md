@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[← Back to README](../README.md) · [Status](STATUS.md) · [Roadmap](roadmap.md)
+[← README](../README.md) · [Docs index](README.md) · [Status](status.md) · [Roadmap](roadmap.md)
 
 Every failure mode encountered during development, with the actual fix.
 Sections are self-contained. Search for the error message you see.
@@ -603,13 +603,13 @@ Arm code: [`d1_arm_control.py`](../scripts/nodes/d1_arm_control.py),
 [`d1_arm_calibration.py`](../scripts/nodes/d1_arm_calibration.py),
 [`calibrate_arm.py`](../scripts/tools/calibrate_arm.py) and
 [`start_arm.sh`](../scripts/runtime/start_arm.sh). Protocol and runbook:
-[d1arm.md](hardware/d1arm.md).
+[d1_arm.md](hardware/d1_arm.md).
 
 The arm is wired to a port of the workstation (`ARM_IFACE`, auto-detected, e.g.
 `enp0s31f6`; host `192.168.123.99`, arm `.100`, DDS
 domain 0, multicast discovery), or plugged into the Go2 and reached over
 Wi-Fi through the robot's bridge (`--robot <ip>` / `--arm-wifi`, see
-[d1arm.md](hardware/d1arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
+[d1_arm.md](hardware/d1_arm.md#arm-over-wi-fi-plugged-into-the-go2); bridge problems are
 in its troubleshooting table). Wired, the arm scripts run with the host's
 `python3` and the pip `cyclonedds` package; don't source ROS in that shell.
 
@@ -1028,7 +1028,7 @@ automatically.** It kills stale relays over SSH before starting the new one.
 > motion bridge on 17999 (`robot-motion-wifi.sh`), so `wifi_nav.sh` no longer
 > starts a second FULL relay on the same port. If `motion.log` still shows
 > "Address already in use", run with `--no-relay`. Details:
-> [docs/STATUS.md](STATUS.md).
+> [changelog](changelog.md#october-2026-issues-found-and-fixed).
 
 If you need to do it manually:
 
@@ -1160,5 +1160,5 @@ The session log folder contains:
 
 Those three files answer most questions.
 
-See [STATUS.md](STATUS.md) for session-by-session notes and
-[roadmap.md](roadmap.md) for milestones.
+See [status.md](status.md) for the current state, [changelog.md](changelog.md) for
+session-by-session notes and [roadmap.md](roadmap.md) for milestones.

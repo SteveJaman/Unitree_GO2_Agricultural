@@ -1,6 +1,6 @@
-# Unity simulation: frontier explorer in the CMU Unity sim
+# Unity Simulation: Frontier Explorer in the CMU Sim
 
-[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [Explorer](../navigation/explorer.md) · [Status](../STATUS.md) · [Roadmap](../roadmap.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Gazebo sim](gazebo.md) · [Explorer](../navigation/explorer.md) · [Status](../status.md) · [Roadmap](../roadmap.md)
 
 Test `frontier_explorer.py` and the go2-nav2-wifi Nav2 config without the robot.
 Everything runs on the host, without Docker.

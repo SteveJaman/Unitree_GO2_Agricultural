@@ -1,10 +1,10 @@
 # Traversability: Hardware Handoff
 
-[← Simulation record](traversability_sim.md) · [← Back to README](../../README.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Simulation record](../simulation/traversability_sim.md) · [Status](../status.md)
 
 What the Gazebo simulation established for the Go2 traversability stack, what it
 did not, and what the first physical trials must check. Read this before the
-hardware work. Evidence links point to [traversability_sim.md](traversability_sim.md),
+hardware work. Evidence links point to [traversability_sim.md](../simulation/traversability_sim.md),
 the single simulation record. Simulation closed 2026-11-08 on branch
 `native-ubuntu-setup`.
 
@@ -12,13 +12,13 @@ the single simulation record. Simulation closed 2026-11-08 on branch
 
 | Claim | Evidence |
 |---|---|
-| **Height bands classify correctly at the real foot-lift limits.** Synthetic objects into the local costmap: 0.10 m → 40 (step over), 0.14 m → 200 (caution), 0.20 m → 200 in `HeightBandLayer` and 254 in the full costmap, 0.30 m → 254. Bands: step over ≤ 0.12 m, caution 0.12–0.22 m, lethal ≥ 0.22 m. The obstacle layer's `min_obstacle_height: 0.15` makes the effective caution band 0.12–0.15 m, deliberately. | [Height bands](traversability_sim.md#height-band-check) |
-| **Safety fusion: the VLM cannot lower a cost below the LiDAR band.** 0 unsafe published labels on LiDAR-measured objects: 149 trial-objects at n = 10, 0 in every Phase 2 attempt and in all three offline prompt evaluations. The raw VLM called a tall measured object `STEP_OVER` 6 times in Phase 4; the LiDAR floor caught every one. | [Semantic layer](traversability_sim.md#semantic-layer), [Safety matrix](traversability_sim.md#safety-metric-trial-matrix) |
-| **Two-signal lethal rule.** A VLM `AVOID` is lethal only when LiDAR measured the object; an unmeasured object is held at CAUTION (200), flagged `low_confidence`, with a `CAREFUL` gait. In Phase 4, 55 trial-objects were unmeasured, 4 of them tall, all held at CAUTION. | [Semantic layer](traversability_sim.md#semantic-layer) |
-| **The backstop stops under-cautious gait when the costmap sees something.** Gait `NORMAL` while the costmap had an object in the corridor: 0 of 1465 samples with the backstop on vs 217 of 1822 (11.9 %) off (fixed route, 3 pairs); 0 of 5893 across 20 backstop-on trials at n = 10. Residual `NORMAL` samples are objects neither sensor saw (1–3.6 %). | [Backstop pairs](traversability_sim.md#backstop-pairs), [Safety matrix](traversability_sim.md#safety-metric-trial-matrix) |
-| **The stack clears low items more often than a low-stepping baseline.** Items ≤ 0.10 m: 25/47 passes cleared (53 %) vs 15/58 (26 %), p = 0.008, h = 0.57, n = 10 per mode. `HIGH_STEP` cleared 12 of 16 passes; misses ended about 2 cm below the item top. This is the only significant difference between modes; foot strikes per metre and goals do not differ. | [Safety matrix](traversability_sim.md#safety-metric-trial-matrix) |
-| **Gait supervisor thresholds and interface.** `HIGH_STEP` ≤ 0.10 m (0.12 m lift minus 0.02 m margin), `CAREFUL` above, `STOP` ≥ 0.25 m; unmeasured height → `CAREFUL`. `backend: gazebo` in sim; `backend: sport_client` is written but inert by default (see [Hardware integration status](#hardware-integration-status)). 58 unit tests pass (labeller, fusion, leg gait, clusterer, decide reference, sport_client backend). | [Height bands](traversability_sim.md#height-band-check), `scripts/nodes/gait_supervisor.py` |
-| **MPPI step-over critic builds and runs** against `nav2_mppi_controller` 1.1.20 (in the `go2-3d` image). | [MPPI critic](traversability_sim.md#mppi-critic-trials) |
+| **Height bands classify correctly at the real foot-lift limits.** Synthetic objects into the local costmap: 0.10 m → 40 (step over), 0.14 m → 200 (caution), 0.20 m → 200 in `HeightBandLayer` and 254 in the full costmap, 0.30 m → 254. Bands: step over ≤ 0.12 m, caution 0.12–0.22 m, lethal ≥ 0.22 m. The obstacle layer's `min_obstacle_height: 0.15` makes the effective caution band 0.12–0.15 m, deliberately. | [Height bands](../simulation/traversability_sim.md#height-band-check) |
+| **Safety fusion: the VLM cannot lower a cost below the LiDAR band.** 0 unsafe published labels on LiDAR-measured objects: 149 trial-objects at n = 10, 0 in every Phase 2 attempt and in all three offline prompt evaluations. The raw VLM called a tall measured object `STEP_OVER` 6 times in Phase 4; the LiDAR floor caught every one. | [Semantic layer](../simulation/traversability_sim.md#semantic-layer), [Safety matrix](../simulation/traversability_sim.md#safety-metric-trial-matrix) |
+| **Two-signal lethal rule.** A VLM `AVOID` is lethal only when LiDAR measured the object; an unmeasured object is held at CAUTION (200), flagged `low_confidence`, with a `CAREFUL` gait. In Phase 4, 55 trial-objects were unmeasured, 4 of them tall, all held at CAUTION. | [Semantic layer](../simulation/traversability_sim.md#semantic-layer) |
+| **The backstop stops under-cautious gait when the costmap sees something.** Gait `NORMAL` while the costmap had an object in the corridor: 0 of 1465 samples with the backstop on vs 217 of 1822 (11.9 %) off (fixed route, 3 pairs); 0 of 5893 across 20 backstop-on trials at n = 10. Residual `NORMAL` samples are objects neither sensor saw (1–3.6 %). | [Backstop pairs](../simulation/traversability_sim.md#backstop-pairs), [Safety matrix](../simulation/traversability_sim.md#safety-metric-trial-matrix) |
+| **The stack clears low items more often than a low-stepping baseline.** Items ≤ 0.10 m: 25/47 passes cleared (53 %) vs 15/58 (26 %), p = 0.008, h = 0.57, n = 10 per mode. `HIGH_STEP` cleared 12 of 16 passes; misses ended about 2 cm below the item top. This is the only significant difference between modes; foot strikes per metre and goals do not differ. | [Safety matrix](../simulation/traversability_sim.md#safety-metric-trial-matrix) |
+| **Gait supervisor thresholds and interface.** `HIGH_STEP` ≤ 0.10 m (0.12 m lift minus 0.02 m margin), `CAREFUL` above, `STOP` ≥ 0.25 m; unmeasured height → `CAREFUL`. `backend: gazebo` in sim; `backend: sport_client` is written but inert by default (see [Hardware integration status](#hardware-integration-status)). 58 unit tests pass (labeller, fusion, leg gait, clusterer, decide reference, sport_client backend). | [Height bands](../simulation/traversability_sim.md#height-band-check), `scripts/nodes/gait_supervisor.py` |
+| **MPPI step-over critic builds and runs** against `nav2_mppi_controller` 1.1.20 (in the `go2-3d` image). | [MPPI critic](../simulation/traversability_sim.md#mppi-critic-trials) |
 
 ## Measured on the dog (2026-11-11): no foot-lift control, 4–6 cm steps
 
@@ -193,8 +193,8 @@ nothing until the inputs return.
   baseline (p = 0.11, not significant) with a median 1.5 RPP aborts per trial.
   The architecture is sound; the perception input is not yet reliable enough for
   safety-critical routing. See
-  [Semantic mode: what it does and does not establish](traversability_sim.md#what-it-does-and-does-not-establish)
-  and [VLM prompt selection](traversability_sim.md#vlm-prompt-selection).
+  [Semantic mode: what it does and does not establish](../simulation/traversability_sim.md#what-it-does-and-does-not-establish)
+  and [VLM prompt selection](../simulation/traversability_sim.md#vlm-prompt-selection).
 - **MPPI step-over critic.** No measurable effect: 0 vs 0 step-over cells crossed
   with and without the critic (cost band 30–60, then 38–42). The routes tried
   never forced a step-over decision. The trial stack uses RotationShim + RPP,

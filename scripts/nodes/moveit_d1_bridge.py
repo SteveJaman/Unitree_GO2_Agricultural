@@ -15,7 +15,7 @@ Each FollowJointTrajectory goal:
      paths stay straight and the arm never stops between waypoints;
   3. plays in mode 0 (direct). With the arm on the Go2 the whole trajectory goes
      to the robot in one traj_points message, because streamed over Wi-Fi the
-     setpoints bunch up and the arm shakes (docs/hardware/d1arm.md). Wired, it
+     setpoints bunch up and the arm shakes (docs/hardware/d1_arm.md). Wired, it
      is streamed from here;
   4. ends with smooth_move() on the last point, whose outer PID removes gravity
      sag, and succeeds only if the arm is within GOAL_TOLERANCE_DEG.
@@ -26,7 +26,7 @@ is. Shutting down leaves the arm enabled and holding: it never releases by
 itself, the arm would fall. Fold it with start_arm.sh fold.
 
 Start-up powers and enables the arm only if it is not already: enable-all sent
-to an enabled arm drives it back to its last target (d1arm.md). The gripper is
+to an enabled arm drives it back to its last target (d1_arm.md). The gripper is
 held at the angle it has on start-up.
 
 With ARM_START_STOW=1 (arm_moveit.sh --real), an arm resting on its fold is then
@@ -41,11 +41,11 @@ Environment:
     ARM_JOINT_SIGNS Required: "+1/-1" for each of Joint1..Joint6, firmware angle
                     = sign x MoveIt angle. The D1-550 URDF and Unitree's own
                     d1_description disagree on Joint1 and Joint6: test on the
-                    arm (d1arm.md, "Joint signs") before setting this.
+                    arm (d1_arm.md, "Joint signs") before setting this.
     ARM_JOINT_OFFSETS Optional: six angles in degrees (default all 0), the real
                     joint minus the model's in MoveIt's sense: firmware angle =
                     sign x (MoveIt angle + offset). The wrist roll reads 90 deg off the
-                    model on this arm: "0 0 0 0 0 -90" (2026-11-11, d1arm.md).
+                    model on this arm: "0 0 0 0 0 -90" (2026-11-11, d1_arm.md).
     ARM_IFACE       Arm network interface (default: d1_arm_control's auto-detect)
     ARM_ROBOT       Go2 Wi-Fi IP, for an arm plugged into the Go2
     BRIDGE_RATE     Trajectory rate in Hz (default: 50)

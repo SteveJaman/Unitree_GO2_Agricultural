@@ -1,6 +1,6 @@
 # 3D Voxel Costmap and Camera + LiDAR Fusion
 
-[← Back to README](../../README.md) · [Drive modes](drive_modes.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Drive modes](drive_modes.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md)
 
 `wifi_3d_nav.sh --voxel` replaces the 3D stack's 2D `ObstacleLayer` with Nav2's
 3D `VoxelLayer`; adding `--camera-obstacles` feeds the Go2 front camera's

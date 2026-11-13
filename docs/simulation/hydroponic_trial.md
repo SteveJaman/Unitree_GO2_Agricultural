@@ -1,6 +1,6 @@
-# Hydroponic station trial: full end-to-end MoveIt 2 + Nav2 mission
+# Hydroponic Station Trial: MoveIt 2 + Nav2 Mission
 
-[← Back to README](../../README.md) · [Gazebo sim](gazebo.md) · [Status](../STATUS.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Gazebo sim](gazebo.md) · [Status](../status.md)
 
 A full mission test in the Gazebo hydroponic station world: the Go2 navigates
 from a charging dock to a CropKing NFT 8-4 hydroponic rack, the D1-550 arm

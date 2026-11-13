@@ -1,6 +1,6 @@
-# 3D Digital Twin Navigation (RTAB-Map + YOLO + Web Dashboard)
+# 3D Digital Twin Navigation
 
-[← Back to README](../../README.md) · [Roadmap](../roadmap.md) · [Tour](../navigation/tour.md) · [Troubleshooting](../troubleshooting.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Roadmap](../roadmap.md) · [Tour](../navigation/tour.md) · [Troubleshooting](../troubleshooting.md)
 
 [`scripts/runtime/wifi_3d_nav.sh`](../../scripts/runtime/wifi_3d_nav.sh) runs the
 normal 2D session and adds a live, dense 3D map of the building on top of it.
@@ -84,7 +84,7 @@ RViz, explorer                                        rosbridge :9090 ◄──�
   - **A frame arrives:** RTAB-Map runs in `camera` mode (colour plus visual
     loop closures), and YOLO and the VLM start (unless `--no-ai`).
   - **No frame:** for example the Jetson camera backend is down
-    ([STATUS](../STATUS.md#blocked-by-hardware)). The map stays LiDAR-only, so a
+    ([STATUS](../status.md#blocked-by-hardware)). The map stays LiDAR-only, so a
     missing camera never stops mapping.
 
 ---
@@ -285,7 +285,7 @@ Any other `wifi_nav.sh` option is passed through (`--robot-ip`, `--arm`,
 | `--fusion` | **Calibrated camera + LiDAR fusion** instead of `--camera`: the image is undistorted with the lens calibration, so colours line up; also publishes `/camera/lidar_overlay`. YOLO and the VLM run on it too. Needs a camera calibration, see [Camera + LiDAR fusion](#camera--lidar-fusion---fusion) |
 | `--camera-obstacles` | **Camera obstacles for Nav2.** LiDAR-scaled monocular depth marks glass, thin legs and near obstacles in the costmap. Needs the calibration. See [camera_lidar_fusion.md](camera_lidar_fusion.md#camera-obstacles-for-nav2) |
 | `--voxel` | **3D voxel costmap.** Nav2's obstacle layer becomes a `VoxelLayer` (0.1 m × 16 voxels) on the self-filtered LiDAR; with `--camera-obstacles` the front camera feeds the same grid. See [voxel_costmap.md](../navigation/voxel_costmap.md) |
-| `--semantic` / `--hardware` / `--send-gait` | **Traversability on the robot**, three safety gates: costmap layout (height band local, semantic both), and the traversability nodes (`traversability_nodes.sh`: LiDAR clusters, gait supervisor and, with a camera calibration, YOLO 3D boxes and VLM labels); then the `sport_client` gait backend armed; then gait commands sent. `--sim --world NAME` picks the Gazebo world. See [HARDWARE_HANDOFF.md](../simulation/HARDWARE_HANDOFF.md) |
+| `--semantic` / `--hardware` / `--send-gait` | **Traversability on the robot**, three safety gates: costmap layout (height band local, semantic both), and the traversability nodes (`traversability_nodes.sh`: LiDAR clusters, gait supervisor and, with a camera calibration, YOLO 3D boxes and VLM labels); then the `sport_client` gait backend armed; then gait commands sent. `--sim --world NAME` picks the Gazebo world. See [traversability_handoff.md](../hardware/traversability_handoff.md) |
 | `--avoid` | **The dog's own obstacle avoidance** (the remote's Free Avoid): Nav2's speed goes through the firmware's `obstacles_avoid` service, which slows, stops and backs off from what the dog's lidar sees ahead (forward only; it does not steer around). Off again at the end, and switched off at the start of sessions without it. Fall recovery (`AutoRecoverySet`) is on in every session; `GO2_SPORT_AUTO_RECOVERY=0` turns it off |
 | `--drive diff\|hybrid\|omni` | How Nav2 drives the dog: `hybrid` (default) faces forward and only sidesteps or steps back to get unstuck; `diff` forward arcs, recovery only steps back; `omni` walks backwards and sideways during normal driving too (`--hybrid`, `--diff`, `--omni` are short for these). See [drive_modes.md](../navigation/drive_modes.md) and [locomotion_comparison.md](../navigation/locomotion_comparison.md) |
 | `--lidar-only` | LiDAR-only map, no camera (so no YOLO or VLM) |
@@ -670,7 +670,7 @@ and the periscope pose run from the terminal (`./scripts/runtime/start_arm.sh
 orbit` / `periscope`); the dashboard has no buttons for them, and the camera
 picture has two views, **Live** and **AI** (the wrist camera is not mounted).
 Details and the no-robot mock:
-[d1arm.md → The arm in the web dashboard](../hardware/d1arm.md#the-arm-in-the-web-dashboard).
+[d1_arm.md → The arm in the web dashboard](../hardware/d1_arm.md#the-arm-in-the-web-dashboard).
 
 **Inspect (autonomous inspection).** Turn on the **◉ Inspect** chip and click an
 object. The click is raycast onto the map itself (voxels, 3D scan or points), so
@@ -685,7 +685,7 @@ it; a glowing marker shows what will be scanned. Then
    within 1 m), turns the point into `base_link` and asks the arm for an IK scan:
    [`arm_ik_scanner.py`](../../scripts/nodes/arm_ik_scanner.py) aims the wrist camera
    at the point and sweeps ±0.1 m across it
-   ([d1arm.md](../hardware/d1arm.md#ik-scan-start_armsh-scan));
+   ([d1_arm.md](../hardware/d1_arm.md#ik-scan-start_armsh-scan));
 3. reports on `/inspection/status` (the status line under the controls, with
    Cancel; `/inspection/command` `{"op":"cancel"}`).
 

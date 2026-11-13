@@ -191,7 +191,7 @@ cmd_up() {
     local moveit_args=()
     if [ "$SIM_MOVEIT" = 1 ]; then
         [ "$SIM_ARM" = 1 ] && die "SIM_MOVEIT=1 needs SIM_ARM=0: ros2_control drives the arm, not the D1 emulator"
-        [ -d "$D1_ARM_DIR/d1_550_description" ] || die "SIM_MOVEIT=1: no ${D1_ARM_DIR}/d1_550_description (docs/hardware/d1arm.md: git clone ... unitree-D1-550-Robot-ARM)"
+        [ -d "$D1_ARM_DIR/d1_550_description" ] || die "SIM_MOVEIT=1: no ${D1_ARM_DIR}/d1_550_description (docs/hardware/d1_arm.md: git clone ... unitree-D1-550-Robot-ARM)"
         moveit_args=(-v "$REPO_DIR/src:/moveit_src:ro" -v "$D1_ARM_DIR:/moveit_d1:ro"
                      -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}")
     fi

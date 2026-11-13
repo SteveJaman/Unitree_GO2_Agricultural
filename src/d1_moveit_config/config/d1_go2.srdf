@@ -54,7 +54,7 @@
   </group_state>
 
   <!-- Pairs that never need collision checking. Adjacent links, plus pairs
-       found never/always in contact by sampling (see docs/hardware/d1arm.md). -->
+       found never/always in contact by sampling (see docs/hardware/d1_arm.md). -->
   <disable_collisions link1="go2_trunk" link2="go2_legs" reason="Adjacent"/>
   <disable_collisions link1="go2_trunk" link2="base_link" reason="Adjacent"/>
   <disable_collisions link1="go2_legs" link2="base_link" reason="Never"/>

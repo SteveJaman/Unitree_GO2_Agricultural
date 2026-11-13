@@ -1,6 +1,6 @@
 # Locomotion Comparison: `--drive diff` vs `hybrid` vs `omni`
 
-[← Back to README](../../README.md) · [Drive modes](drive_modes.md) · [Explorer](explorer.md) · [Scripts](../setup/scripts.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Drive modes](drive_modes.md) · [Explorer](explorer.md) · [Scripts](../setup/scripts.md)
 
 How Nav2 should move the Go2: like a two-wheeled robot (the original setup),
 or with what a quadruped can also do (walk backwards, sidestep). This page has
@@ -125,7 +125,7 @@ here means the original real-dog setup **plus** these fixes, not plain Nav2.
 | **Stop on exit** | Ctrl+C sends a burst of zero commands, so the dog does not keep walking on its last command. Every cleanup step has a time limit ([`mapping_stop_timeouts.py`](../../scripts/tools/mapping_stop_timeouts.py)), so a stalled Wi-Fi link no longer makes Ctrl+C hang |
 | **Driving by hand** (dashboard **Drive** pad, [`go2_teleop.py`](../../scripts/nodes/go2_teleop.py)) | Through the same `/cmd_vel` and gait as Nav2, at Nav2's limits with ramps and a deadman, Nav2 paused meanwhile: Point-LIO keeps tracking. It sends `vy` (sidestep) straight to `/cmd_vel` in every drive mode |
 
-Details: [LAB-NAV-FIXES.md](LAB-NAV-FIXES.md),
+Details: [lab_nav_fixes.md](lab_nav_fixes.md),
 [camera_lidar_fusion.md](../ai_and_vision/camera_lidar_fusion.md#camera-obstacles-for-nav2).
 
 ### Explorer: where to go
@@ -149,7 +149,7 @@ Parameters: [explorer.md](explorer.md#parameters).
   Before, START in RViz did nothing.
 - **Debug page** (`python3 scripts/debug/debug_dashboard.py`, <http://localhost:3001>): checks the chain from the LiDAR to the legs and shows why the dog is not moving ([troubleshooting](../troubleshooting.md#debug-page-why-isnt-it-moving)).
 - **Clock-skew check** between the robot and the laptop at start-up. Skew
-  causes drift and shudder ([drift-and-shudder.md](drift-and-shudder.md)).
+  causes drift and shudder ([drift_and_shudder.md](drift_and_shudder.md)).
 - **Sim fixes:**
   - the body stays upright;
   - the feet are frictionless, so slow turns move the dog;

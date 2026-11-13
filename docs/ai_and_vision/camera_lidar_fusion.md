@@ -1,6 +1,6 @@
 # Camera–LiDAR Fusion: Calibration and Overlay Check
 
-[← Back to README](../../README.md) · [Camera](camera.md) · [3D Nav](3d_nav.md) · [Roadmap](../roadmap.md#milestone-3--camera-pipeline)
+[← README](../../README.md) · [Docs index](../README.md) · [Camera](camera.md) · [3D Nav](3d_nav.md) · [Roadmap](../roadmap.md#milestone-3--camera-pipeline)
 
 Before camera data can improve collision avoidance or mapping, a camera pixel
 must map to the right LiDAR point. That takes two things:

@@ -1,4 +1,4 @@
-﻿# Unitree_GO2_Agricultural
+# Unitree_GO2_Agricultural
 
 Autonomous navigation, 3D mapping and AI layer for the **Unitree Go2 EDU**
 quadruped, with a **Unitree D1-T** arm for crop scanning. It runs on top of
@@ -97,7 +97,7 @@ Other entry points:
   an optional VLM semantic layer. Validated in Gazebo at n = 10 per mode
   ([results](docs/simulation/traversability_sim.md)) and run on the real dog
   (`--semantic`: ClassicWalk, 3 cm step-over, YOLO → 3D box → VLM label;
-  [hardware handoff](docs/simulation/HARDWARE_HANDOFF.md)).
+  [hardware handoff](docs/hardware/traversability_handoff.md)).
 - **YOLO / VLM AI:** YOLO11s obstacles feed the Nav2 costmap. A local
   `llava:7b` (Ollama) reads the camera and pauses + docks on a blocked path.
 - **Level 3D map:** on the real dog Point-LIO's tilt is held to the Go2's
@@ -126,7 +126,7 @@ Other entry points:
   a camera pose (Cartesian goals, IK + OMPL) around the dog and a plant. On the
   real arm (`--real`, Wi-Fi bridge) `inspect_plant.py` scans a plant from five
   views over ±45°, with the dog parked tail-first
-  ([details](docs/hardware/d1arm.md#plant-inspection-demo---inspect)).
+  ([details](docs/hardware/d1_arm.md#plant-inspection-demo---inspect)).
 - **Simulation:** Go2 + D1 in Gazebo Harmonic, and the explorer + Nav2 in the
   CMU Unity sim, for testing without hardware. Worlds include a furnished
   indoor lab (`SIM_WORLD=lab_office`: 7 rooms, desks, chairs, tables,
@@ -142,12 +142,15 @@ Other entry points:
 
 ## Documentation
 
-All guides are in [`docs/`](docs/), grouped by topic. Status, roadmap and
-troubleshooting cover every area and sit at its top level.
+All guides are in [`docs/`](docs/), grouped by topic; [docs/README.md](docs/README.md) is the
+full index. Status, changelog, roadmap and troubleshooting cover every area and sit at its top level.
 
 | Area | Doc | Contents |
 |---|---|---|
-| Overview | [Status](docs/STATUS.md) | Current state, current goals and the robot test checklist |
+| Overview | [Docs index](docs/README.md) | Every document, by topic |
+| | [Status](docs/status.md) | Where each part stands: on the robot, in simulation, open items |
+| | [Changelog](docs/changelog.md) | Session-by-session notes, newest first |
+| | [Verification checklist](docs/verification_checklist.md) | Robot test checks with commands and expected results |
 | | [Roadmap](docs/roadmap.md) | Milestones and what is next |
 | | [Architecture](docs/architecture.md) | Project scope, data flow, network and DDS domains, DHCP discovery |
 | | [Troubleshooting](docs/troubleshooting.md) | Known problems and fixes (incl. the Go2 Wi-Fi dongle), collision tuning, diagnostics |
@@ -155,25 +158,26 @@ troubleshooting cover every area and sit at its top level.
 | | [Scripts](docs/setup/scripts.md) | Every runtime script, ROS node and tool |
 | | [Development](docs/setup/development.md) | Repository layout, lint hooks, legacy code, external projects |
 | Navigation | [Explorer](docs/navigation/explorer.md) | Frontier auto-explore: running it, goal choice, parameters, fixes and sim results, known issues |
-| | [Drive modes](docs/navigation/drive_modes.md) | **New:** `--drive hybrid` (default) / `diff` / `omni`: MPPI reverse + sidestep, stuck recovery |
-| | [Voxel costmap](docs/navigation/voxel_costmap.md) | **New:** `--voxel`: 3D `VoxelLayer` on the self-filtered LiDAR, with `--camera-obstacles` fusing the front camera's LiDAR-scaled depth |
+| | [Drive modes](docs/navigation/drive_modes.md) | `--drive hybrid` (default) / `diff` / `omni`: MPPI reverse + sidestep, stuck recovery |
+| | [Voxel costmap](docs/navigation/voxel_costmap.md) | `--voxel`: 3D `VoxelLayer` on the self-filtered LiDAR, with `--camera-obstacles` fusing the front camera's LiDAR-scaled depth |
 | | [Locomotion comparison](docs/navigation/locomotion_comparison.md) | `diff` vs `hybrid` vs `omni`: sim results with plots, how to test them in the sim and on the dog |
-| | [Drift and shudder](docs/navigation/drift-and-shudder.md) | Why the dog drifts or steps in place while standing, and the fixes |
+| | [Drift and shudder](docs/navigation/drift_and_shudder.md) | Why the dog drifts or steps in place while standing, and the fixes |
 | | [Waypoint tour](docs/navigation/tour.md) | RViz waypoint mode |
-| | [Lab nav fixes](docs/navigation/LAB-NAV-FIXES.md) | Fixes applied to upstream go2-nav2-wifi |
+| | [Lab nav fixes](docs/navigation/lab_nav_fixes.md) | Fixes applied to upstream go2-nav2-wifi |
 | AI and vision | [3D Digital Twin & AI](docs/ai_and_vision/3d_nav.md) | The one command `wifi_3d_nav.sh`: live 3D map, web dashboard, semantic rooms, autonomous survey, YOLO, VLM, battery dock, export and mesh |
 | | [Camera](docs/ai_and_vision/camera.md) | Go2 camera relay, RViz display, who uses the feed |
 | | [Camera + LiDAR fusion](docs/ai_and_vision/camera_lidar_fusion.md) | Camera calibration, the LiDAR overlay check, `--fusion`, `--camera-obstacles` |
-| | [RealSense D435i](docs/ai_and_vision/realsense.md) | **New:** the D435i on the Go2 in a Foxy Docker container (librealsense 2.51.1, realsense-ros 4.51.1), colour + depth to the workstation over CycloneDDS, verification and failure modes |
-| Hardware | [D1-T arm](docs/hardware/d1arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and **new:** MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
+| | [RealSense D435i](docs/ai_and_vision/realsense.md) | The D435i on the Go2 in a Foxy Docker container (librealsense 2.51.1, realsense-ros 4.51.1), colour + depth to the workstation over CycloneDDS, verification and failure modes |
+| Hardware | [D1-T arm](docs/hardware/d1_arm.md) | Arm protocol, direct joint control, calibration, Teach & Playback, arm over Wi-Fi, and MoveIt 2 Cartesian planning (`arm_moveit.sh`) |
+| | [Traversability handoff](docs/hardware/traversability_handoff.md) | Traversability on the real Go2: measured step clearance, pre-session checks, the `--semantic` / `--hardware` / `--send-gait` gates |
 | Simulation | [Gazebo](docs/simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, limits, the rooms and lab worlds |
-| | [Indoor lab world](docs/simulation/lab_office.md) | **New:** a furnished 7-room lab in Gazebo (3DGEMS desks, chairs, tables, shelves) and the hybrid vs omni mapping and navigation results, with statistics and graphs |
-| | [Traversability in simulation](docs/simulation/traversability_sim.md) | **New:** the one simulation record for traversability: the Go2 with moving legs walking over real objects (mugs, a power strip, a shoe, a laptop), camera + LiDAR 3D boxes and height bands choosing each step, the VLM semantic layer, the MPPI step-over critic and hardware-readiness status, with videos, statistics and graphs |
-| | [Hydroponic trial](docs/simulation/hydroponic_trial.md) | **New:** full end-to-end MoveIt 2 + Nav2 mission in a CropKing NFT 8-4 hydroponic station — navigation, arm extend, orbit, retract — Mission Score 99.6/100 |
-| | [Unity sim](docs/simulation/unity.md) | **New:** the explorer + Nav2 in the CMU Unity sim on the host (`sim_explore.sh`, no robot) |
+| | [Indoor lab world](docs/simulation/lab_office.md) | A furnished 7-room lab in Gazebo (3DGEMS desks, chairs, tables, shelves) and the hybrid vs omni mapping and navigation results, with statistics and graphs |
+| | [Traversability in simulation](docs/simulation/traversability_sim.md) | The one simulation record for traversability: the Go2 with moving legs walking over real objects (mugs, a power strip, a shoe, a laptop), camera + LiDAR 3D boxes and height bands choosing each step, the VLM semantic layer, the MPPI step-over critic and hardware-readiness status, with videos, statistics and graphs |
+| | [Hydroponic trial](docs/simulation/hydroponic_trial.md) | Full end-to-end MoveIt 2 + Nav2 mission in a CropKing NFT 8-4 hydroponic station — navigation, arm extend, orbit, retract — Mission Score 99.6/100 |
+| | [Unity sim](docs/simulation/unity.md) | The explorer + Nav2 in the CMU Unity sim on the host (`sim_explore.sh`, no robot) |
 | Config | [Config](config/README.md) | RViz and Foxglove layouts, camera calibration, saved named locations, rooms and survey reports |
 
-> **Traversability on the real Go2:** start from [HARDWARE_HANDOFF.md](docs/simulation/HARDWARE_HANDOFF.md), the single source for hardware sessions.
+> **Traversability on the real Go2:** start from [traversability_handoff.md](docs/hardware/traversability_handoff.md), the single source for hardware sessions.
 > It lists what the sim proved, the pre-session checks (SDK `FootRaiseHeight`, self-body points), and `wifi_3d_nav.sh --semantic --hardware --send-gait`.
 > The legs are commanded only with all three flags. `--semantic` sets the costmap layout and starts the traversability nodes (LiDAR clusters, gait supervisor and, with a camera calibration, YOLO 3D boxes and VLM labels).
 > In the sim: `./scripts/runtime/wifi_3d_nav.sh --sim --world lab_office --semantic`.

@@ -1,13 +1,13 @@
 # Go2 Traversability in Simulation
 
-[← Back to README](../../README.md) · [Hardware handoff](HARDWARE_HANDOFF.md) · [Gazebo sim](gazebo.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md)
+[← README](../../README.md) · [Docs index](../README.md) · [Hardware handoff](../hardware/traversability_handoff.md) · [Gazebo sim](gazebo.md) · [Camera–LiDAR fusion](../ai_and_vision/camera_lidar_fusion.md)
 
 The Go2 model with moving legs walks a Gazebo arena of real household objects.
 The front camera says what each object is, the LiDAR measures its height, and
 the stack decides where to plan, which cells cost what, and how high to lift the
 feet. An optional semantic layer asks a vision-language model (VLM) about each
 object. This is the single simulation record; physical-robot testing starts
-from [HARDWARE_HANDOFF.md](HARDWARE_HANDOFF.md). Closed 2026-11-08.
+from [traversability_handoff.md](../hardware/traversability_handoff.md). Closed 2026-11-08.
 
 ## Results at a glance
 
@@ -382,7 +382,7 @@ unmeasured: a null result.
 ## Hardware integration
 
 After the trials, the stack was prepared for the real dog (2026-11-09). The
-first hardware session starts from [HARDWARE_HANDOFF.md](HARDWARE_HANDOFF.md).
+first hardware session starts from [traversability_handoff.md](../hardware/traversability_handoff.md).
 
 - **LiDAR-only low-object clusters** ([`low_object_clusterer.py`](../../scripts/nodes/low_object_clusterer.py),
   ported from Yassine Salimi's branch) feed the gait backstop: any cluster ahead
@@ -404,7 +404,7 @@ These additions do not change the trial results above.
 
 ## What the sim validates, and what it does not
 
-**Validates**
+### Validates
 
 - Height-band classification at the real foot-lift limits (0.10 → 40,
   0.14 / 0.20 → 200, 0.30 → 254)
@@ -416,7 +416,7 @@ These additions do not change the trial results above.
   `HIGH_STEP` clears 12 of 16 passes
 - Semantic global re-routing: the semantic layer loads and marks in both costmaps
 
-**Does not validate**
+### Does not validate
 
 - Locomotion: the legs are kinematic, nothing balances, and strikes never trip
 - The real foot lift: 0.12 m is assumed, not measured
