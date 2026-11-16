@@ -38,7 +38,10 @@ import urllib.error
 import urllib.request
 from collections import deque
 
-import cv2
+try:
+    import cv2
+except ImportError:   # only needed for VLM crops
+    cv2 = None
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -118,6 +121,7 @@ class Traversability(Node):
         p('base_frame', 'base_link')
         p('base_height', 0.30)              # m, base_link above the floor (TF floor guess)
         p('max_range', 5.0)                 # m around the robot that is analysed
+        p('min_range', 0.6)                 # m: ignore points this close (the robot's own body)
         p('accum_s', 1.5)                   # s of LiDAR scans stacked together
         p('rate_hz', 2.0)
         p('step_limit', 0.08)               # m: at or above this the object is always avoided
@@ -143,6 +147,7 @@ class Traversability(Node):
         self.depth_timeout, self.stride = float(gp('depth_timeout')), max(1, int(gp('depth_stride')))
         self.map_frame, self.base_frame = gp('map_frame'), gp('base_frame')
         self.base_height, self.max_range = float(gp('base_height')), float(gp('max_range'))
+        self.min_range = float(gp('min_range'))
         self.accum_s = float(gp('accum_s'))
         self.step_limit = float(gp('step_limit'))
         self.cell, self.h_min, self.h_tall = float(gp('cell')), float(gp('h_min')), float(gp('h_tall'))
@@ -264,7 +269,8 @@ class Traversability(Node):
 
         pts = self.get_points()
         if pts is not None and len(pts):
-            near = np.hypot(pts[:, 0] - bx, pts[:, 1] - by) < self.max_range
+            dist = np.hypot(pts[:, 0] - bx, pts[:, 1] - by)
+            near = (dist < self.max_range) & (dist > self.min_range)
             pts = pts[near]
             floor_z = tc.estimate_floor(pts, bz - self.base_height)
             self.last_floor = floor_z
@@ -298,6 +304,8 @@ class Traversability(Node):
             return
 
     def make_crop(self, t, floor_z):
+        if cv2 is None:
+            return None
         msg, info = self.image, self.info
         if msg is None or info is None:
             return None
