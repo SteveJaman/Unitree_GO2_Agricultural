@@ -389,6 +389,27 @@ boot_stage() {
 }
 boot_say() { echo "[BOOT] $*"; }   # always reaches the terminal (boot_filter.awk)
 
+# Start-up phases in the terminal: "[PROGRESS n/N] ..." always passes boot_filter.awk
+# (and is in boot.log). N is 6 with --semantic (its own phase), else 5.
+PROGRESS_TOTAL=5
+P_TRAV=""
+P_TWIN=5
+progress() { echo "[PROGRESS $1/${PROGRESS_TOTAL}] $2"; }
+# While waiting: on a terminal, one spinner line redrawn every second on fd 3 (the
+# real terminal, past the filter and not in boot.log); boot_filter.awk clears it
+# before printing a line. Elsewhere (--verbose, or output piped into a file), a
+# "still waiting" line every 10 s instead.
+SPIN_TTY=0
+spin() {   # spin <step> <what> <seconds waited>
+    if [ "${SPIN_TTY}" = 1 ]; then
+        local frames='|/-\'
+        printf '\r\033[K[PROGRESS %s/%s] %s %s %ss' "$1" "${PROGRESS_TOTAL}" "$2" "${frames:$(( $3 % 4 )):1}" "$3" >&3
+    elif [ "$3" -gt 0 ] && [ $(( $3 % 10 )) = 0 ]; then
+        progress "$1" "$2 (still working, $3 s)"
+    fi
+}
+spin_clear() { [ "${SPIN_TTY}" = 1 ] && printf '\r\033[K' >&3; return 0; }
+
 # Quiet terminal: everything goes to BOOT_LOG, the terminal shows progress,
 # warnings with their fixes and PROBLEM boxes (scripts/runtime/boot_filter.awk).
 # The filter ignores Ctrl+C, so shutdown messages still get through. Prompts
@@ -400,7 +421,14 @@ quiet_terminal() {
     if [ "${VERBOSE}" = 1 ]; then
         exec > >(trap '' INT TERM; exec tee -a "${BOOT_LOG}") 2>&1
     else
-        exec > >(trap '' INT TERM; exec awk -v LOGFILE="${BOOT_LOG}" -f "${SCRIPT_DIR}/boot_filter.awk") 2>&1
+        # mawk (Ubuntu's awk) reads a pipe in blocks: without -W interactive a line waited
+        # in its buffer until more output came, and the terminal sat silent for 30-60 s.
+        local awk_opts=()
+        awk -W version 2>&1 | grep -q mawk && awk_opts=(-W interactive)
+        # TTY=1: the filter clears the progress spinner's line before each line it prints.
+        exec > >(trap '' INT TERM; exec awk "${awk_opts[@]}" -v LOGFILE="${BOOT_LOG}" \
+            -v TTY="$( [ -t 3 ] && echo 1 || echo 0 )" -f "${SCRIPT_DIR}/boot_filter.awk") 2>&1
+        [ -t 3 ] && SPIN_TTY=1
     fi
     FILTER_PID=$!
 }
@@ -691,6 +719,7 @@ start_twin_when_ready() {
     hard_end=$(( wait_from + 3 * TWIN_START_TIMEOUT ))
     boot_stage twin run "waiting for the navigation session"
     echo "[3d] Waiting for the wifi_nav.sh session's go2_odom_tf node (up to ${TWIN_START_TIMEOUT} s)..."
+    progress 4 "Waiting for the navigation session (SLAM on the dog, relay, Nav2)..."
     env_lines=""
     while :; do
         # A session that rebuilds the go2-lidar3d image restarts the container minutes
@@ -712,6 +741,9 @@ start_twin_when_ready() {
             env_lines="$(node_dds_env "${pid}" "${uid}")"
             grep -q '^ROS_DOMAIN_ID=' <<< "${env_lines}" && break
         fi
+        # A line every ~15 s, no spinner: SSH / sudo password prompts may be on screen.
+        [ $(( (now - wait_from) % 15 )) -lt 3 ] && [ "${now}" -gt "${wait_from}" ] \
+            && progress 4 "Waiting for the navigation session... $(( now - wait_from )) s"
         sleep 3
     done
     # Without the session's domain go2-3d would sit alone on domain 0: the
@@ -764,6 +796,7 @@ start_twin_when_ready() {
 
     # --semantic: independent of go2-3d, so it starts first (and a failure never stops go2-3d).
     if [ "${TRAV_SEMANTIC}" = "true" ]; then
+        progress "${P_TRAV}" "Starting traversability nodes (clusters, YOLO boxes, VLM, gait)..."
         if start_traversability; then
             boot_say "Traversability nodes running (gait: /gait/command; logs ws/log/3d/traversability)"
         else
@@ -779,6 +812,7 @@ start_twin_when_ready() {
                      -e TWIN_CAMERA_INFO=/camera_cfg/camera.yaml
                      -e TWIN_CAMERA_OBSTACLES="${TWIN_CAMERA_OBSTACLES}")
     fi
+    progress "${P_TWIN}" "Starting the 3D twin (RTAB-Map, YOLO, VLM, dashboard)..."
     echo "[3d] Starting ${TWIN_CONTAINER} on DDS $(sed -n 's/^ROS_DOMAIN_ID=/domain /p' <<< "${env_lines}"): RTAB-Map (${TWIN_MODE}), rosbridge, dashboard, click-to-goal..."
     if ! docker run -d --name "${TWIN_CONTAINER}" "${net[@]}" \
             --stop-timeout "${TWIN_STOP_TIMEOUT}" \
@@ -811,8 +845,10 @@ start_twin_when_ready() {
     fi
 
     # Up to TWIN_CAMERA_WAIT s of this go to camera auto-detection in the container.
-    for _ in $(seq 1 $(( TWIN_CAMERA_WAIT + 60 ))); do
+    local waited
+    for waited in $(seq 1 $(( TWIN_CAMERA_WAIT + 60 ))); do
         if docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '\[go2-3d\] READY'; then
+            spin_clear
             mode="$(docker logs "${TWIN_CONTAINER}" 2>&1 | sed -n 's/^\[go2-3d\] MODE //p' | tail -n1)"
             yolo="off"
             docker logs "${TWIN_CONTAINER}" 2>&1 | grep -q '^\[go2-3d\] yolo started' \
@@ -856,8 +892,10 @@ start_twin_when_ready() {
             return 0
         fi
         twin_running || break
+        spin "${P_TWIN}" "Waiting for the 3D twin to be READY" "${waited}"
         sleep 1
     done
+    spin_clear
     boot_stage twin fail "${TWIN_CONTAINER} did not come up (see go2-3d's log in System > Logs)"
     echo "[3d] ERROR: ${TWIN_CONTAINER} did not come up. Last log lines:"
     docker logs --tail 20 "${TWIN_CONTAINER}" 2>&1 | sed 's/^/    /'
@@ -896,6 +934,7 @@ esac
 
 mkdir -p "${TWIN_DB_DIR}" "${TWIN_LOG_DIR}" "${REPO_DIR}/config"
 : > "${BOOT_STATUS}"
+if [ "${TRAV_SEMANTIC}" = "true" ]; then PROGRESS_TOTAL=6; P_TRAV=5; P_TWIN=6; fi
 quiet_terminal
 boot_say "Starting. Full log: tail -f ${BOOT_LOG}$( [ "${VERBOSE}" = 1 ] || echo "   (everything on screen: --verbose)" )"
 start_hub
@@ -904,9 +943,11 @@ start_hub
 # shellcheck disable=SC2154  # rc is assigned inside the trap
 trap 'rc=$?; [ "${rc}" = 0 ] || [ -z "${CUR_STAGE}" ] || boot_stage "${CUR_STAGE}" fail "stopped (exit ${rc}); see boot.log"; stop_hub; end_quiet_terminal' EXIT
 CUR_STAGE=checks; boot_stage checks run "Docker, files, Ollama"
+progress 1 "Checking Docker and the ${TWIN_IMAGE} image (a missing or stale image is built: minutes)..."
 CUR_STAGE=image;  boot_stage image run "${TWIN_IMAGE}"
 ensure_image
 boot_stage image ok "${TWIN_IMAGE} ready"
+progress 2 "Checking files, camera calibration and Ollama..."
 CUR_STAGE=checks
 for f in "${TWIN_DIR}/start_inside.sh" "${TWIN_DIR}/yolo_node.py" "${TWIN_DIR}/nodes/image_compressor.py" \
          "${TWIN_DIR}/nodes/room_segmentation_node.py" "${TWIN_DIR}/survey_manager.py" \
@@ -1197,6 +1238,8 @@ trap 'exit 143' TERM
 
 mkdir -p "${TWIN_LOG_DIR}"
 start_arm_state
+# Before the watcher starts: it prints phase 4 at once.
+progress 3 "Starting the navigation session (SSH to the dog, Point-LIO, relay, Nav2, RViz)..."
 start_twin_when_ready &
 WATCH_PID=$!
 
