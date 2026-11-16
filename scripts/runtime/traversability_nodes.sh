@@ -99,7 +99,10 @@ do_stop() {
 }
 
 do_start() {
-    do_stop > /dev/null
+    # In a subshell: do_stop sources the PREVIOUS session's env.sh, which overwrote this
+    # session's TRAV_SIM, DDS settings and log dir (2026-11-16: a --sim session after a
+    # real-dog one started its nodes in robot mode).
+    ( do_stop ) > /dev/null
     mkdir -p "${LOG}"
     # Saved for stop (it runs from a fresh docker exec).
     {
