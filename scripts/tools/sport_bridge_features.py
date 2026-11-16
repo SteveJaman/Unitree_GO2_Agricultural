@@ -7,6 +7,9 @@ copied to the dog by mapping.sh every session).
   * Fall recovery (GO2_SPORT_AUTO_RECOVERY, default 1): the bridge sends sport
     AutoRecoverySet(true) (api 2054) at start; the firmware then stands the dog
     back up by itself after a fall (the remote's L2 + X, done automatically).
+  * The remote back on exit: the bridge's start sends SwitchJoystick(false) so Nav2
+    drives and the remote is ignored; its final stop (Ctrl+C, the session ending) now
+    sends SwitchJoystick(true), so the remote controls the dog again afterwards.
   * Obstacle avoidance (GO2_SPORT_AVOID, default 0; wifi_3d_nav.sh --avoid): the
     remote's "Free Avoid". The bridge switches the obstacles_avoid service on, has
     it take its walk commands from the API, and sends Nav2's velocity there
@@ -80,6 +83,13 @@ METHODS = '''    def _init_features(self) -> None:{t}
                 self._reply_call(self._avoid_pub, AVOID_SWITCH_SET, {{"enable": False}}){t}
                 self.get_logger().info("Obstacle avoidance off"){t}
         self._send(API_STOP_MOVE){t}
+        if final:{t}
+            # The start sent SwitchJoystick(false) (Nav2 drives, the remote is ignored), and{t}
+            # nothing turned it back: after Ctrl+C the remote did not move the dog (2026-11-16).{t}
+            time.sleep(0.2){t}
+            self._send(API_SWITCH_JOYSTICK, json.dumps({{"data": True}})){t}
+            self.get_logger().info("SwitchJoystick(true): the remote controls the dog again"){t}
+            time.sleep(0.3)  # delivered before the node shuts down{t}
 {t}
     def _on_cmd_vel(self, msg: Twist) -> None:
 '''.format(t=TAG)
