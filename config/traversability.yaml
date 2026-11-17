@@ -17,3 +17,9 @@ traversability:
     depth_info_topic: /camera/depth/camera_info
     gait_trigger_dist: 0.7
     max_clearance: 0.15
+    # Operator rules: comma-separated words matched (case-insensitive) against what the VLM calls the object.
+    # always_avoid: never cross. always_safe: always cross, even if the VLM says fragile.
+    # unknown_policy: vlm = the VLM decides unlisted objects; strict = avoid anything not in always_safe.
+    always_avoid: ''
+    always_safe: ''
+    unknown_policy: vlm

@@ -120,6 +120,9 @@ class Traversability(Node):
         p('depth_stride', 4)                # use every Nth depth pixel
         p('sim_depth', False)               # sim depth camera: no camera_info, camera_link axes
         p('depth_hfov', 1.2)                # rad, used with sim_depth
+        p('always_avoid', '')               # operator list: comma-separated words, e.g. phone,laptop
+        p('always_safe', '')                # operator list: words that may always be crossed
+        p('unknown_policy', 'vlm')          # 'vlm' = the VLM decides; 'strict' = avoid anything not on always_safe
         p('map_frame', 'lidar3d_map')
         p('base_frame', 'base_link')
         p('log_path', '')                   # JSONL run log (empty = off)
@@ -154,6 +157,8 @@ class Traversability(Node):
         self.src = str(gp('height_source'))
         self.depth_timeout, self.stride = float(gp('depth_timeout')), max(1, int(gp('depth_stride')))
         self.sim_depth, self.depth_hfov = bool(gp('sim_depth')), float(gp('depth_hfov'))
+        _words = lambda k: [w.strip().lower() for w in str(gp(k)).split(',') if w.strip()]
+        self.rules = {'avoid': _words('always_avoid'), 'safe': _words('always_safe'), 'unknown': str(gp('unknown_policy'))}
         self.map_frame, self.base_frame = gp('map_frame'), gp('base_frame')
         self.log_path = str(gp('log_path'))
         self.crop_dir = str(gp('crop_dir'))
@@ -305,7 +310,7 @@ class Traversability(Node):
         tracks = self.tracker.update(cands, time.monotonic())
 
         for t in tracks:
-            t.decision = tc.decide(t.height, t.verdict, self.step_limit, self.use_vlm)
+            t.decision = tc.decide(t.height, t.verdict, self.step_limit, self.use_vlm, self.rules)
         if self.use_vlm:
             self.maybe_ask_vlm(tracks, floor_z, bx, by)
         self.publish_all(tracks, floor_z, bx, by, yaw)
@@ -460,7 +465,8 @@ class Traversability(Node):
                    'base': [round(bx, 3), round(by, 3), round(yaw, 3)], 'floor': round(floor_z, 3),
                    'tracks': [{'id': t.id, 'x': round(t.x, 2), 'y': round(t.y, 2),
                                'h': round(t.height, 3), 'n': t.n_pts, 'seen': t.seen_count,
-                               'dec': t.decision, 'v': t.verdict} for t in tracks]}
+                               'dec': t.decision, 'v': t.verdict,
+                               'rule': tc.operator_rule(t.verdict, self.rules)} for t in tracks]}
             try:
                 with open(self.log_path, 'a') as lf:
                     lf.write(json.dumps(rec) + '\n')

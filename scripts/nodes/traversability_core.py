@@ -156,11 +156,36 @@ class Tracker:
 
 
 # ----------------------------------------------------------------- decision
-def decide(height, verdict, step_limit, use_vlm=True):
-    """'traversable' | 'caution' | 'avoid'. Geometry first; the VLM only restricts.
+def _match(name, words):
+    n = (name or '').lower()
+    for w in words or ():
+        w = str(w).strip().lower()
+        if w and w in n:
+            return w
+    return None
 
-    caution and avoid are both published as obstacles in v1 (a Nav2
-    ObstacleLayer marks lethal cost either way).
+
+def operator_rule(verdict, rules):
+    """('avoid'|'safe', word) when an operator list matches the VLM's object name, else None."""
+    if not rules or not verdict:
+        return None
+    w = _match(verdict.get('name'), rules.get('avoid'))
+    if w:
+        return ('avoid', w)
+    w = _match(verdict.get('name'), rules.get('safe'))
+    if w:
+        return ('safe', w)
+    return None
+
+
+def decide(height, verdict, step_limit, use_vlm=True, rules=None):
+    """'traversable' | 'caution' | 'avoid'. Geometry first, then the operator lists, then the VLM.
+
+    rules = {'avoid': [words], 'safe': [words], 'unknown': 'vlm' | 'strict'}
+      avoid list: a low object whose VLM name contains one of these words is avoided.
+      safe list:  ... is crossed, even if the VLM called it fragile.
+      unknown 'strict': a low object matching neither list is avoided (default 'vlm' = the VLM decides).
+    caution and avoid are both published as obstacles in v1.
     """
     if height >= step_limit:
         return 'avoid'
@@ -168,6 +193,11 @@ def decide(height, verdict, step_limit, use_vlm=True):
         return 'traversable'
     if verdict is None:
         return 'caution'
+    r = operator_rule(verdict, rules)
+    if r:
+        return 'avoid' if r[0] == 'avoid' else 'traversable'
+    if rules and rules.get('unknown') == 'strict':
+        return 'avoid'
     if verdict['label'] == 'avoid' or verdict.get('fragile'):
         return 'avoid'
     if verdict['label'] == 'step_over':

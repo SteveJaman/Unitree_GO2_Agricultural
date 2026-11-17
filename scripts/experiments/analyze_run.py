@@ -10,6 +10,9 @@ OBJ = [("cable", -2.0, 0.0, 0.03, 0.9, "traversable"), ("mat", -1.0, 0.0, 0.8, 1
 M = 0.2
 RANK = {"traversable": 0, "caution": 1, "avoid": 2}
 path, label = sys.argv[1], sys.argv[2]
+if len(sys.argv) > 3 and sys.argv[3] == "lab2":     # traversability_lab2 has four more objects
+    OBJ += [("laptop", 0.8, -0.5, 0.33, 0.23, "avoid"), ("glasses_case", 0.6, 0.4, 0.16, 0.06, "avoid"),
+            ("power_strip", 1.6, -1.1, 0.30, 0.06, "traversable"), ("book", -0.2, -1.3, 0.22, 0.15, "traversable")]
 recs = [json.loads(l) for l in open(path) if l.strip()]
 t0 = recs[0]["t"]
 
