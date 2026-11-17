@@ -43,7 +43,7 @@ export HOME="${HOME:-/tmp/simhome}"
 # including the arm emulator (which runs with a cleaned environment).
 export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
 # model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
-export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items:$SIM/models/plants${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
 ARM_ARGS=()
 if [ "${SIM_MOVEIT:-0}" = 1 ]; then
@@ -69,7 +69,7 @@ if [ "${SIM_MOVEIT:-0}" = 1 ]; then
     # shellcheck disable=SC1091
     source /opt/gz_ros2_control/setup.bash
     xacro "$MWS/install/d1_moveit_config/share/d1_moveit_config/config/d1_go2.urdf.xacro" \
-        hardware:=gazebo end_effector:=camera > "$GEN/d1_moveit.urdf"
+        hardware:=gazebo end_effector:=camera camera_model:="${SIM_WRIST_CAMERA:-d405}" > "$GEN/d1_moveit.urdf"
     ARM_ARGS=(--arm-urdf "$GEN/d1_moveit.urdf" --arm-mesh-root "$MWS/install/d1_550_description/share")
 fi
 
@@ -171,7 +171,8 @@ if [ "${SIM_MOVEIT:-0}" = 1 ]; then
     # robot description from robot_state_publisher when it loads, so this
     # starts first.
     export ROS_DOMAIN_ID="${SIM_ARM_DOMAIN:-66}" RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI="file://$GEN/cyclonedds.xml"
-    ros2 launch d1_moveit_config demo.launch.py hardware:=gazebo end_effector:=camera use_rviz:=false \
+    ros2 launch d1_moveit_config demo.launch.py hardware:=gazebo end_effector:=camera \
+        camera_model:="${SIM_WRIST_CAMERA:-d405}" use_rviz:=false \
         > "$GEN/moveit.log" 2>&1 &
     PIDS+=("$!")
     echo "[sim] MoveIt: move_group + controllers starting on domain ${ROS_DOMAIN_ID} (log $GEN/moveit.log)"

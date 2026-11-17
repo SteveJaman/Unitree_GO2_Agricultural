@@ -1,0 +1,122 @@
+{
+ "world": "plant_inspection",
+ "generated_by": "gazebo/worlds/build_plant_inspection_world.py",
+ "bounds": [
+  -7.4,
+  -2.5,
+  -2.4,
+  2.4
+ ],
+ "spawn": [
+  -4.5,
+  0.0,
+  0.0
+ ],
+ "bench": {
+  "center_x": -6.6,
+  "top_z": 0.45,
+  "length_y": 3.9
+ },
+ "plants": [
+  {
+   "name": "plant_a",
+   "foliage": "plant_3",
+   "class": "potted plant",
+   "base": [
+    -6.6,
+    -1.6,
+    0.45
+   ],
+   "center": [
+    -6.6,
+    -1.6,
+    0.7374999999999999
+   ],
+   "size": [
+    0.6,
+    0.6,
+    0.575
+   ]
+  },
+  {
+   "name": "plant_b",
+   "foliage": "plant_1",
+   "class": "potted plant",
+   "base": [
+    -6.6,
+    -0.8,
+    0.45
+   ],
+   "center": [
+    -6.6,
+    -0.8,
+    0.6625
+   ],
+   "size": [
+    0.45,
+    0.45,
+    0.425
+   ]
+  },
+  {
+   "name": "plant_c",
+   "foliage": "plant_2",
+   "class": "potted plant",
+   "base": [
+    -6.6,
+    0.0,
+    0.45
+   ],
+   "center": [
+    -6.6,
+    0.0,
+    0.8875
+   ],
+   "size": [
+    1.0,
+    1.0,
+    0.875
+   ]
+  },
+  {
+   "name": "plant_d",
+   "foliage": "plant_3",
+   "class": "potted plant",
+   "base": [
+    -6.6,
+    0.8,
+    0.45
+   ],
+   "center": [
+    -6.6,
+    0.8,
+    0.7374999999999999
+   ],
+   "size": [
+    0.6,
+    0.6,
+    0.575
+   ]
+  },
+  {
+   "name": "plant_e",
+   "foliage": "plant_1",
+   "class": "potted plant",
+   "base": [
+    -6.6,
+    1.6,
+    0.45
+   ],
+   "center": [
+    -6.6,
+    1.6,
+    0.6625
+   ],
+   "size": [
+    0.45,
+    0.45,
+    0.425
+   ]
+  }
+ ]
+}

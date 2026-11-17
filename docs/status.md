@@ -25,6 +25,7 @@ verified in simulation or offline only, or open. Details and evidence are in the
 | Free Avoid (`--avoid`) and fall recovery | Free Avoid stopped the dog at a box and held distance; not yet watched with Nav2 driving | — | [3D twin](ai_and_vision/3d_nav.md) |
 | D1 arm | Signs measured; five-view `inspect_plant` sweep run on the real arm (2026-11-12); arm over Wi-Fi through the Go2 | MoveIt 2, orbit sweep and hydroponic mission in Gazebo | [D1 arm](hardware/d1_arm.md), [hydroponic trial](simulation/hydroponic_trial.md) |
 | RealSense D435i | Boot service on the Go2; topics in `go2-lidar3d` | — | [RealSense](ai_and_vision/realsense.md) |
+| Plant detection on the arm camera | Not yet run on the dog (the D435i is not on the arm yet) | YOLOv5 2D + 3D boxes on the simulated wrist D435i (`plant_inspection` world) | [plant detection](ai_and_vision/plant_detection.md) |
 
 ## Open items
 

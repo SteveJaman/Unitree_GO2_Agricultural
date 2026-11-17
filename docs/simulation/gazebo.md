@@ -57,6 +57,7 @@ launches, pointed at this machine instead of the robot.
 | `go2_description` | [unitreerobotics/unitree_ros](https://github.com/unitreerobotics/unitree_ros) `robots/go2_description`, commit `5994d4f`, BSD-3-Clause | URDF + DAE meshes |
 | `d1_description` | Unitree D1 gripper-version package (`oss-global-cdn.unitree.com/…/90b2525b….zip`), SHA-256 checked | URDF + STL meshes, 6 joints + 2 fingers |
 | `furniture/` | 3DGEMS models from the [Gazebo Models & Worlds Collection](https://github.com/leonhartyao/gazebo_models_worlds_collection), commit `cce115b`, GPL-3.0 (its `LICENSE` is copied next to them) | 15 furniture models for `lab_office` (`./gazebo/setup_gazebo.sh --furniture`) |
+| `plants/` | 3DGEMS `plant_1`, `plant_2`, `plant_3` (same collection and commit, GPL-3.0; their Gazebo Classic material scripts are removed on download, Harmonic cannot read them) | Foliage for `plant_inspection` (`./gazebo/setup_gazebo.sh --plants`) |
 
 `sim/build_model.py` combines them (run automatically at start):
 
@@ -112,7 +113,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
 | `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the old 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
 | `SIM_CAMERA` | `1` | `0` drops the front camera (0.51× → 0.85× real time on the old 4-core VM). `wifi_nav.sh --sim --no-camera` sets it to 0 |
-| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only. `lab_office`: the furnished indoor lab ([lab_office.md](lab_office.md)). `hydroponic_station`: CropKing NFT 8-4 hydroponic rack in a greenhouse bay ([hydroponic_trial.md](hydroponic_trial.md)) |
+| `SIM_WORLD` | `agri_rooms` | `agri_rooms`: the field plus a building north of it (corridor, three rooms, doors). `agri_field`: the field only. `lab_office`: the furnished indoor lab ([lab_office.md](lab_office.md)). `hydroponic_station`: CropKing NFT 8-4 hydroponic rack in a greenhouse bay ([hydroponic_trial.md](hydroponic_trial.md)). `plant_inspection`: potted plants on a bench, for the plant detector ([plant_detection.md](../ai_and_vision/plant_detection.md)) |
 | `SIM_SPAWN` | `-4.5 0 0` | Start pose `x y yaw` (headland west of the beds) |
 | `SIM_D1_MOUNT` | `0 0 0.057 0 0 3.14159` | D1 pose on the trunk, `x y z roll pitch yaw` |
 | `SIM_SENSOR_YAML` | `$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml` | File the lidar mount (`sensor_from_base`) is read from; must match the one the session's `go2_odom_tf` uses |
@@ -124,6 +125,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 | `SIM_CONTACTS` | `0` | `1` puts a contact sensor on every robot link (the lumped Go2 body and legs, each D1 link) and the robot into the world file (Gazebo only sets up contact sensors of models loaded with the world, not spawned ones). Topics in `/tmp/sim-gen/contact_topics.txt`; `sim/contact_monitor.py` logs touches; used by `tests/sim_benchmark.py` |
 | `SIM_MOVEIT` | `0` | `1` builds a MoveIt 2 workspace inside the container, xacros the D1-550 with `hardware:=gazebo end_effector:=camera`, and launches `demo.launch.py` on ROS domain 66 (`SIM_ARM_DOMAIN`). Requires `go2-sim-moveit:local` (`./gazebo/setup_gazebo.sh --moveit`) and `D1_ARM_DIR` pointing to the D1-550 description clone. Incompatible with `SIM_ARM=1` (the emulator). See [hydroponic_trial.md](hydroponic_trial.md) |
 | `SIM_ARM_DOMAIN` | `66` | ROS domain for the MoveIt arm stack when `SIM_MOVEIT=1` |
+| `SIM_WRIST_CAMERA` | `d405` | `SIM_MOVEIT=1` only: the wrist camera model. `d435i` is a RealSense D435i (640 × 480, 69°, 10 Hz), republished as `/camera/color/image_raw`, `/camera/aligned_depth_to_color/image_raw` and their `camera_info` like the real driver. See [plant_detection.md](../ai_and_vision/plant_detection.md) |
 | `D1_ARM_DIR` | `~/files/unitree-D1-550-Robot-ARM` | Path to the JeewanthaSadaruwan/unitree-D1-550-Robot-ARM clone (MoveIt + Gazebo URDF and meshes) |
 
 ## Simulation differences
@@ -183,6 +185,8 @@ These are deliberate. They're listed so test results aren't over-read:
 | `worlds/render_world.sh` | Renders a world with Gazebo for the docs: a cutaway overview and a view from inside (`docs/images/lab_office/world_*.png`) |
 | `worlds/hydroponic_station.sdf`, `.json` | Generated: CropKing NFT 8-4 greenhouse bay (8 × 6 m); the JSON holds the target plant, waypoint, planning-scene objects |
 | `worlds/build_hydroponic_world.py` | Writes the hydroponic station SDF and JSON |
+| `worlds/plant_inspection.sdf`, `.json` | Generated: a room with a bench of potted plants behind the robot's spawn, for the plant detector; the JSON holds the plant positions. Needs `./gazebo/setup_gazebo.sh --plants` |
+| `worlds/build_plant_inspection_world.py` | Writes both; `--download` fetches the foliage models into `models/plants/` |
 | `docker/Dockerfile.moveit` | `go2-sim-moveit:local`: MoveIt 2, ros2_control, gz_ros2_control (0.7.21, built from source for Harmonic) |
 | `tests/hydroponic_trial.py` | Orchestrator: starts the sim, waits for Nav2 + MoveIt, runs `full_mission_test.py`, collects results |
 | `src/d1_moveit_config/` | MoveIt 2 config: URDF xacro, SRDF, launch, ros2_control, D1-550 arm macro, mission test, report |

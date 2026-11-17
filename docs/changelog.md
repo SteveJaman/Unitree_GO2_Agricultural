@@ -8,6 +8,33 @@ state is summarized in [status.md](status.md).
 
 ---
 
+## 2026-11-17: plant detection on the arm camera; simulated D435i on the D1
+
+- **Detector in the repo:** [`src/object_detection_rgbd`](../src/object_detection_rgbd), adapted
+  from IliaLarchenko/object_detection_rgbd (Apache-2.0). YOLOv5s (COCO) on
+  `/camera/color/image_raw`, aligned depth to 3D boxes, new `vision_msgs/Detection3DArray` on
+  `/detections_3d`, fine-tuned weights through `weights_path`, YOLOv5 loaded offline from the
+  torch hub cache. Parameters in `config/detection/object_detection.yaml` (keeps `person` and
+  `potted plant`, confidence 0.4).
+- **3D box depth fixed:** the most common depth in a 2D box is the background for leafy
+  objects; every plant box sat on the wall behind it with 0 m depth. Now the nearest 0.3 m
+  slab with at least 10 % of the pixels, and percentile extents. Simulation: 2.56 m → 1.7 m.
+- **`plant_detection.sh`** runs it inside `go2-lidar3d`; `detection_setup.sh` installs
+  vision_msgs, cv_bridge and pip there (apt) and CPU PyTorch plus YOLOv5 into
+  `/ws/.detect_pydeps` and `/ws/.torch`, which survive a recreated container. Checked: a
+  freshly recreated container with no Python environment on the host gave the same detections.
+  `plant_detection_host.sh` is the optional host-venv variant (needs
+  `ros-humble-rmw-cyclonedds-cpp`; not run here, that package is not installed).
+- **Gazebo:** `SIM_WRIST_CAMERA=d435i` (MoveIt mode) makes the wrist camera a D435i, bridged
+  and republished as the real driver's `/camera/color/*` and `/camera/aligned_depth_to_color/*`
+  in `camera_color_optical_frame`. D405 stays the default; its xacro output is unchanged. New
+  world `plant_inspection` (`setup_gazebo.sh --plants`). All three plants in view detected at
+  0.65 to 0.88, boxes followed an arm move. 0.14× real time and ~0.6 detections/s on the VM.
+- Not yet: on the dog (the D435i is not on the arm), arm TF on domain 64 (boxes stay in the
+  camera frame), a model trained for plants without pots.
+
+---
+
 ## 2026-11-12: localization tilt held to the body IMU; Free Avoid; fall recovery
 
 - **The dog sinking under the floor (the drift to-do below): cause and fix.** Gyro-only

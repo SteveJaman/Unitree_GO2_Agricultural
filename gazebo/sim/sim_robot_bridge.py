@@ -14,6 +14,10 @@ This node produces the same from Gazebo (through ros_gz_bridge):
   /sim/lidar/points<- gz lidar, in the sensor frame
   /sim/cmd_vel     -> gz /model/go2/cmd_vel    (VelocityControl)
   /sim/camera/image_raw <- gz camera, republished as /camera/image_raw
+  /sim/wrist/{color,depth,camera_info} <- gz wrist RGB-D camera (SIM_MOVEIT=1),
+                 republished under the RealSense driver's names:
+                 /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw
+                 and both camera_info, frame camera_color_optical_frame
 
 The laptop's go2_odom_tf turns /lidar3d/odom into base_link using the
 measured sensor_from_base, so this node publishes
@@ -268,7 +272,7 @@ def run_node(params, args):
     from rclpy.qos import qos_profile_sensor_data
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry, Path
-    from sensor_msgs.msg import Image, JointState, PointCloud2, PointField
+    from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2, PointField
 
     sensor_from_base = params["sensor_from_base"]
     t_sensor_base = (tuple(sensor_from_base[:3]), tuple(sensor_from_base[3:]))
@@ -288,6 +292,20 @@ def run_node(params, args):
             # Reliable, like ros_gz_bridge published it (RViz and the VLM subscribe reliably).
             self.image_pub = self.create_publisher(Image, "/camera/image_raw", 5)
             self.create_subscription(Image, "/sim/camera/image_raw", self.on_image, 5)
+            # Wrist RGB-D camera, under the names and frame of the real D435i driver
+            # (realsense/entrypoint.sh), so one detector config serves robot and sim.
+            # Reliable like the driver. Depth stays 32FC1 metres (the driver: 16UC1 mm).
+            self.wrist_pubs = {
+                "color": self.create_publisher(Image, "/camera/color/image_raw", 5),
+                "depth": self.create_publisher(Image, "/camera/aligned_depth_to_color/image_raw", 5),
+                "color_info": self.create_publisher(CameraInfo, "/camera/color/camera_info", 5),
+                "depth_info": self.create_publisher(CameraInfo, "/camera/aligned_depth_to_color/camera_info", 5),
+            }
+            self.wrist_offset_ns = None   # wall clock minus sim clock, fixed at the first frame
+            self.wrist_frames = 0
+            self.create_subscription(Image, "/sim/wrist/color", lambda m: self.on_wrist(m, "color"), 5)
+            self.create_subscription(Image, "/sim/wrist/depth", lambda m: self.on_wrist(m, "depth"), 5)
+            self.create_subscription(CameraInfo, "/sim/wrist/camera_info", lambda m: self.on_wrist(m, "info"), 5)
             self.base = None             # (p, q) of base as reported (drifted if enabled)
             self.true_base = None         # (p, q) of base in the sim world (ground truth)
             self.drift = (args.drift_yaw, args.drift_scale)
@@ -360,6 +378,30 @@ def run_node(params, args):
         def on_image(self, msg):
             msg.header.stamp = self.get_clock().now().to_msg()
             self.image_pub.publish(msg)
+
+        def on_wrist(self, msg, kind):
+            # One fixed sim-to-wall offset, not now(): the colour and depth image of a
+            # frame carry the same sim stamp and must keep one stamp, or nothing that
+            # pairs them by time (message_filters) ever matches.
+            sim_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+            now_ns = self.get_clock().now().nanoseconds
+            # Re-anchor on the first frame and when the sim clock jumped (world reset).
+            if self.wrist_offset_ns is None or abs(now_ns - (sim_ns + self.wrist_offset_ns)) > 2_000_000_000:
+                self.wrist_offset_ns = now_ns - sim_ns
+            wall_ns = sim_ns + self.wrist_offset_ns
+            msg.header.stamp.sec, msg.header.stamp.nanosec = divmod(wall_ns, 1_000_000_000)
+            msg.header.frame_id = "camera_color_optical_frame"
+            if kind == "info":
+                self.wrist_pubs["color_info"].publish(msg)
+                self.wrist_pubs["depth_info"].publish(msg)
+                return
+            self.wrist_pubs[kind].publish(msg)
+            if kind == "color":
+                self.wrist_frames += 1
+                if self.wrist_frames == 1:
+                    self.get_logger().info(
+                        f"wrist camera {msg.width}x{msg.height} -> /camera/color/image_raw, "
+                        "/camera/aligned_depth_to_color/image_raw")
 
         def on_points(self, msg):
             if self.base is None or self.last_odom_stamp is None:

@@ -23,6 +23,27 @@
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
 
+# Wrist RGB-D camera of the MoveIt arm (SIM_MOVEIT=1, end_effector camera). The gz
+# topics do not exist in the other modes; the bridge then just waits. Republished by
+# sim_robot_bridge.py under the RealSense driver's names (/camera/color/..., see there).
+- ros_topic_name: "/sim/wrist/color"
+  gz_topic_name: "/wrist_camera/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/sim/wrist/depth"
+  gz_topic_name: "/wrist_camera/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/sim/wrist/camera_info"
+  gz_topic_name: "/wrist_camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
 - ros_topic_name: "/sim/cmd_vel"
   gz_topic_name: "/model/go2/cmd_vel"
   ros_type_name: "geometry_msgs/msg/Twist"

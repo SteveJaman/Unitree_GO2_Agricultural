@@ -22,6 +22,7 @@ Unitree_GO2_Agricultural/
 ├── config/
 │   ├── README.md
 │   ├── camera/                       # front_camera.yaml (calibration), sim_front_camera.yaml
+│   ├── detection/object_detection.yaml # plant detector parameters
 │   ├── nav2/go2_omni.yaml            # --omni: MPPI Omni + omni lattice settings
 │   ├── foxglove_layout.json          # Foxglove layout (3D twin + camera), --foxglove
 │   ├── tour.rviz                     # RViz layout (camera, path, costmap, waypoint panel)
@@ -50,7 +51,8 @@ Unitree_GO2_Agricultural/
 │   │   ├── 3d_nav.md                 # 3D digital twin (RTAB-Map, web dashboard, AI, survey, --resume)
 │   │   ├── camera.md                 # live camera setup
 │   │   ├── camera_lidar_fusion.md    # camera calibration + LiDAR overlay check, --fusion
-│   │   └── realsense.md              # RealSense D435i on the Go2 (boot service, topics)
+│   │   ├── realsense.md              # RealSense D435i on the Go2 (boot service, topics)
+│   │   └── plant_detection.md        # YOLO + 3D boxes on the arm camera (go2-lidar3d, robot, Gazebo)
 │   ├── hardware/
 │   │   ├── d1_arm.md                 # D1 arm runbook: direct control, Wi-Fi, Teach & Playback, MoveIt 2
 │   │   └── traversability_handoff.md # traversability on the real dog: measurements, checks, flags
@@ -69,6 +71,7 @@ Unitree_GO2_Agricultural/
 │   │   ├── start_rtabmap.sh          # older manual RTAB-Map launcher
 │   │   ├── start_arm.sh              # D1-T arm entry point (preflight, fold, control)
 │   │   ├── arm_moveit.sh             # MoveIt 2 for the arm on mock hardware, --inspect demo
+│   │   ├── plant_detection.sh        # plant detector in go2-lidar3d (plant_detection_host.sh: host venv)
 │   │   ├── sim_explore.sh            # CMU Unity sim + go2_nav2 + explorer, on the host
 │   │   └── go2_net.sh                # shared IP detection / robot discovery
 │   ├── nodes/                        # ROS 2 Python nodes
@@ -130,6 +133,7 @@ Unitree_GO2_Agricultural/
 │   ├── go2_sim_bridge/               # CMU Unity sim adapter + launch (sim_explore.sh)
 │   ├── go2_vlm/                      # VLM answers -> Nav2 keepout mask + speed limit
 │   ├── d1_active_perception/         # orbit_scanner: camera sweep around a plant (MoveIt)
+│   ├── object_detection_rgbd/        # YOLOv5 + depth -> 2D and 3D detections (plant_detection.sh)
 │   ├── semantic_traversability_layer/ # Nav2 plugins: HeightBandLayer, SemanticCostmapLayer
 │   ├── go2_semantic_msgs/            # SemanticObstacle(Array) messages
 │   └── legged_mppi_critic/           # MPPI StepOverCritic (builds in the go2-3d image)
@@ -189,6 +193,8 @@ Unity simulation lives on in [`src/go2_sim_bridge`](../../src/go2_sim_bridge/).
 | Project | Purpose |
 |---|---|
 | [`dancher00/go2-nav2-wifi`](https://github.com/dancher00/go2-nav2-wifi) | SLAM (Point-LIO) + Nav2 + Wi-Fi relay |
+| [`IliaLarchenko/object_detection_rgbd`](https://github.com/IliaLarchenko/object_detection_rgbd) | The RGB-D object detection node in `src/object_detection_rgbd` (Apache-2.0), adapted for Humble, custom weights and `Detection3DArray` |
+| [`ultralytics/yolov5`](https://github.com/ultralytics/yolov5) | YOLOv5 code and `yolov5s.pt`, fetched through `torch.hub` by `detection_setup.sh` (AGPL-3.0) |
 | [RTAB-Map](https://github.com/introlab/rtabmap_ros) | Dense 3D mapping in the `go2-3d` container (`ros-humble-rtabmap-ros`) |
 | [three.js](https://threejs.org) / [React Three Fiber](https://github.com/pmndrs/react-three-fiber) / [roslib](https://github.com/RobotWebTools/roslibjs) / [rosbridge](https://github.com/RobotWebTools/rosbridge_suite) | Web dashboard (`twin/webapp`) |
 | [Foxglove](https://foxglove.dev) / [`foxglove_bridge`](https://github.com/foxglove/ros-foxglove-bridge) | Alternative 3D visualization (`--foxglove`); [Lichtblick](https://github.com/lichtblick-suite/lichtblick) works too |

@@ -45,6 +45,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Live camera](ai_and_vision/camera.md) | Go2 camera relay and who uses the feed |
 | [Camera–LiDAR fusion](ai_and_vision/camera_lidar_fusion.md) | Camera calibration, LiDAR overlay check, `--fusion`, `--camera-obstacles` |
 | [RealSense D435i](ai_and_vision/realsense.md) | The D435i on the Go2: boot service and topics |
+| [Plant detection](ai_and_vision/plant_detection.md) | YOLO detections with 3D boxes on the arm camera: `go2-lidar3d`, the robot and Gazebo |
 
 ## Hardware
 

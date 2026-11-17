@@ -35,6 +35,9 @@
 #                         setup_gazebo.sh --moveit), D1-550 with a camera instead of the gripper; needs
 #                         SIM_ARM=0 and D1_ARM_DIR (~/files/unitree-D1-550-Robot-ARM). Arm stack on
 #                         ROS domain SIM_ARM_DOMAIN (66). docs/simulation/hydroponic_trial.md
+#   SIM_WRIST_CAMERA=d405 SIM_MOVEIT=1: wrist camera model. d435i = RealSense D435i (640x480, 10 Hz),
+#                         republished as /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw
+#                         and their camera_info, like the real driver (docs/ai_and_vision/plant_detection.md)
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match
@@ -159,7 +162,9 @@ cmd_up() {
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image ${IMAGE} missing: run ./gazebo/setup_gazebo.sh"
     [ -d "$GZ_DIR/models/go2_description" ] && [ -d "$GZ_DIR/models/d1_description" ] \
         || die "models missing: run ./gazebo/setup_gazebo.sh"
-    if grep -q "model://" "$GZ_DIR/worlds/${SIM_WORLD:-agri_rooms}.sdf" 2>/dev/null && [ ! -d "$GZ_DIR/models/furniture" ]; then
+    if [ "${SIM_WORLD:-}" = plant_inspection ]; then
+        [ -d "$GZ_DIR/models/plants" ] || die "world plant_inspection needs the plant models: run ./gazebo/setup_gazebo.sh --plants"
+    elif grep -q "model://" "$GZ_DIR/worlds/${SIM_WORLD:-agri_rooms}.sdf" 2>/dev/null && [ ! -d "$GZ_DIR/models/furniture" ]; then
         die "world ${SIM_WORLD} needs the furniture models: run ./gazebo/setup_gazebo.sh --furniture"
     fi
     if sim_running; then
@@ -193,7 +198,8 @@ cmd_up() {
         [ "$SIM_ARM" = 1 ] && die "SIM_MOVEIT=1 needs SIM_ARM=0: ros2_control drives the arm, not the D1 emulator"
         [ -d "$D1_ARM_DIR/d1_550_description" ] || die "SIM_MOVEIT=1: no ${D1_ARM_DIR}/d1_550_description (docs/hardware/d1_arm.md: git clone ... unitree-D1-550-Robot-ARM)"
         moveit_args=(-v "$REPO_DIR/src:/moveit_src:ro" -v "$D1_ARM_DIR:/moveit_d1:ro"
-                     -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}")
+                     -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}"
+                     -e SIM_WRIST_CAMERA="${SIM_WRIST_CAMERA:-d405}")
     fi
 
     echo "[sim] starting ${NAME} (GUI=${gui}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
