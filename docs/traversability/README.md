@@ -16,7 +16,7 @@ object (cable, mat) or must avoid it (toolbox, phone, vase).
    background thread, and the model answers with a label (`step_over`, `caution`, `avoid`)
    and a `fragile` flag. The VLM can only make a decision stricter, never looser. An object
    waiting for its verdict is held at `caution`.
-4. Depth source: `height_source` is `lidar`, `depth` or `auto`. Only the LiDAR path has been
+4. Depth source: `height_source` is `lidar`, `depth` or `auto`. Both paths have been run in the sim (the sim has an optional depth camera, see below).
    run in the sim; the sim has no depth sensor.
 
 Outputs: `/traversability/obstacles`, `/traversability/markers`, `/traversability/status`,
@@ -34,6 +34,10 @@ Outputs: `/traversability/obstacles`, `/traversability/markers`, `/traversabilit
 | `scripts/experiments/run_goals.sh` | sends the three test goals and waits for the dog at each one |
 | `scripts/experiments/analyze_run.py` | matches a run log to the true objects and prints a compact summary |
 | `scripts/experiments/summarize_run.py` | per-track summary of a run log |
+| `scripts/experiments/replay_rules.py` | re-decides a run log with and without the operator lists (no sim needed) |
+| `scripts/tools/test_operator_rules.py` | offline test of the operator lists |
+| `gazebo/worlds/traversability_lab2.sdf` | the lab with four extra low objects (`build_lab_world.py --extra`) |
+| `docs/traversability/results/` | saved run logs and analysis output |
 
 Node options added for the experiments:
 
@@ -122,40 +126,156 @@ wait about 2 minutes for the VLM to finish its queue, then stop the node with Ct
 reports, per object: how long it was judged traversable, caution or avoid, its height range,
 its VLM labels, and the dog's path.
 
-## Results (one run per condition)
+## Depth camera in the sim (case 1)
 
-Share of the time each object was judged, run A (height rule only) against run B3 (with VLM):
+The sim has an optional depth camera (`depth_camera` sensor, 320 x 180, 5 Hz, same mount and
+field of view as the RGB camera). It is off unless `SIM_DEPTH=1`.
 
-| Object | Should be | A: trav / caution / avoid | B3: trav / caution / avoid |
-|---|---|---|---|
-| cable | traversable | 100 / 0 / 0 | 0 / 100 / 0 |
-| mat | traversable | 100 / 0 / 0 | 0 / 100 / 0 |
-| toolbox | avoid | 42 / 0 / 58 | 11 / 54 / 36 |
-| phone | avoid | 97 / 0 / 3 | 66 / 9 / 25 |
-| vase | avoid | not tracked (above the 20 cm cutoff) | not tracked |
+    export SIM_WORLD=traversability_lab SIM_SPAWN="-2.8 0 0" SIM_CAMERA=1 SIM_DEPTH=1
+    ./scripts/runtime/wifi_nav.sh --sim 2>&1 | tee ~/launch_depth.log
 
-- The LiDAR sees the cable and mat at the right place and height (2-3 cm).
-- The LiDAR reads the toolbox at 6-7 cm (true 12 cm) because only its front face is hit, so the
-  height rule alone calls it traversable 42% of the time.
-- The phone is read at 3-6 cm (true 8 cm) and the VLM calls the red box a "red object",
-  `step_over`. The phone ends `traversable` in both runs.
-- With the VLM on, unverified objects stay at `caution`, which is safer for the toolbox but
-  holds most cable and mat fragments (14 of 15 and 22 of 26) at `caution`, because the camera
-  covers only about 70 degrees ahead.
+Check that frames arrive before starting the node. Use `echo`, not `ros2 topic hz`, which receives
+nothing from the image topics here:
+
+    docker exec go2-lidar3d bash -lc 'source /opt/ros/humble/setup.bash; ros2 topic list >/dev/null; sleep 4; timeout 40 ros2 topic echo --once /camera/depth/image_raw --field header.stamp'
+
+Then the node, depth only, no VLM (same container preparation as above):
+
+    docker exec -it go2-lidar3d bash -lc 'source /opt/ros/humble/setup.bash; cd /tmp && python3 traversability_node.py --ros-args -p use_vlm:=false -p height_source:=depth -p sim_depth:=true -p depth_stride:=1 -p cloud_topic:=/lidar3d/obstacle_points -p h_tall:=0.2 -p min_seen:=3 -p log_path:=/tmp/run_D_depth.jsonl'
+
+- `sim_depth:=true`: the sim publishes no `camera_info` and the camera frame has x forward, so the
+  node builds the intrinsics from `depth_hfov` (1.2 rad) and the optical-frame rotation from the base pose.
+- If no depth points arrive, the node warns `no depth points` every 10 s.
+- The depth camera sees about 34 degrees either side and 21 degrees up and down, mounted about
+  0.3 m high, so it cannot see the floor closer than roughly 0.8 m ahead. Small objects are only
+  visible while the dog faces them from further away.
+- `run_goals.sh` takes goals as arguments and sends a goal again after 30 s without progress.
+
+## Extra objects (traversability_lab2)
+
+`python3 gazebo/worlds/build_lab_world.py --extra` also writes `traversability_lab2.sdf`
+(`SIM_WORLD=traversability_lab2`). It adds four objects, all below the 8 cm step limit:
+
+| Object | Position | Size (x, y, height) | Should the robot cross it? | Collision |
+|---|---|---|---|---|
+| laptop | (0.8, -0.5) | 0.33 x 0.23 x 0.03 | no, valuable | yes |
+| glasses case | (0.6, 0.4) | 0.16 x 0.06 x 0.05 | no, fragile | yes |
+| power strip | (1.6, -1.1) | 0.30 x 0.06 x 0.04 | yes | no |
+| book | (-0.2, -1.3) | 0.22 x 0.15 x 0.03 | yes | no |
+
+To see them, the route needs a third goal:
+`./scripts/experiments/run_goals.sh "-1.6 -0.7" "-0.9 -0.85" "-0.3 0.0" "-2.8 0.0"`.
+Add more objects by adding a line to `EXTRA` in `build_lab_world.py`, and the same footprint to
+`analyze_run.py` and `replay_rules.py`.
+
+## Operator lists
+
+A low object can be fine to cross by height and still be something its owner does not want touched.
+Appearance does not tell the robot why an object matters, so the owner states it in the config.
+
+    always_avoid: 'phone,laptop,glasses'   # comma-separated words
+    always_safe: 'cable,mat,power strip,book'
+    unknown_policy: vlm                    # 'vlm': the VLM decides unlisted objects; 'strict': avoid anything not in always_safe
+
+or `-p always_avoid:='phone,laptop' -p always_safe:='cable,mat' -p unknown_policy:=vlm`.
+
+How a decision is made, in order:
+1. Height at or above `step_limit`: avoid. The lists never override this.
+2. No VLM verdict yet: caution. With the VLM off, a low object is traversable and the lists have no effect.
+3. A word from `always_avoid` is in the VLM's object name: avoid. Then `always_safe`: traversable, even if the VLM said fragile.
+4. `unknown_policy: strict`: avoid anything else. Otherwise the VLM's label and fragile flag decide.
+
+The lists match on the name the VLM gives. In the sim every object is a plain box, so the real VLM
+cannot name most of them and the lists rarely fire with it. Each log line records the rule
+that fired (`rule`). Offline test: `python3 scripts/tools/test_operator_rules.py`.
+
+Replay a saved run with and without the lists, with the true object name as the name
+(a recogniser that names things correctly), no sim needed:
+
+    python3 scripts/experiments/replay_rules.py docs/traversability/results/run_D5_depth.jsonl D5 --lab2
+
+## Results
+
+Kept runs. Shares are the fraction of ticks an object was judged traversable / caution / avoid (an
+object counts at the strictest decision among its tracks). No run was repeated under identical
+conditions, and the depth runs below show how much one run can differ from another.
+
+| Run | Sensor | VLM | World | Notes |
+|---|---|---|---|---|
+| A | LiDAR | no | lab | |
+| B3 | LiDAR | yes (qwen2.5vl on a Mac) | lab | |
+| D | depth | no | lab | a goal was dropped, 4.5 min stall mid-route |
+| D4 | depth | no | lab | clean |
+| D5 | depth | no | lab2 | four extra objects |
+
+Discarded: B and B2 (the model host went to sleep, the dog got stuck) and D3 (no detections at all;
+probably the VM was paused or throttled while the host was in use, not confirmed).
+
+Lab world, trav / caution / avoid (%):
+
+| Object (true height) | A | B3 | D | D4 |
+|---|---|---|---|---|
+| cable (3 cm) | 100/0/0 | 0/100/0 | 100/0/0 | not seen |
+| mat (2 cm) | 100/0/0 | 0/100/0 | 100/0/0 | 100/0/0 |
+| toolbox (12 cm) | 42/0/58 | 11/54/36 | 24/0/76 | 0/0/100 |
+| phone (8 cm) | 97/0/3 | 66/9/25 | 96/0/4 | 0/0/100 |
+
+Heights read: LiDAR cable and mat 2-3 cm, toolbox 6-7 cm, phone 3-6 cm. Depth: toolbox 12 cm
+(median, D and D4), phone 8 cm.
+
+Run D5 (depth, lab2):
+
+| Object (true height) | Depth read, median (range) | trav / caution / avoid (%) |
+|---|---|---|
+| mat (2 cm) | 2 cm | 100/0/0 |
+| toolbox (12 cm) | 8 cm (3-12) | 54/0/46 |
+| phone (8 cm) | 8 cm (3-8) | 37/0/63 |
+| laptop (3 cm) | 3 cm (3-12) | 71/0/29 |
+| glasses case (5 cm) | 5 cm (3-10) | 98/0/2 |
+| power strip (4 cm) | 4 cm (4-5) | 100/0/0 |
+| book (3 cm) | 3 cm (2-8) | 98/0/2 |
+
+Replay with the operator lists and correct object names (`replay_rules.py`), trav / caution / avoid (%):
+run A toolbox 42/0/58 becomes 0/0/100 and phone 97/0/3 becomes 0/0/100; run B3 cable and mat go from
+0/100/0 (held at caution while unverified) to 100/0/0; run D5 toolbox, phone, laptop and glasses case
+all become 0/0/100 while mat and power strip stay 100/0/0 and book 98/0/2.
+
+What the results show:
+- LiDAR resolves 2-3 cm objects but under-reads the toolbox and phone, because it only hits their
+  near face, so the height rule alone often crosses them.
+- Depth reads the heights of what it sees to within 1-2 cm (toolbox 12 cm, laptop 3 cm, power strip
+  4 cm), but the decision depends on the viewpoint. The toolbox was avoided 76%, 100% and 46% of
+  the time in D, D4 and D5, and the phone 4%, 100% and 63%. Read single-run percentages as ranges.
+- The phone is exactly 8 cm, the step limit, so small noise flips it: a threshold case that height
+  alone cannot settle.
+- Low but valuable objects (laptop, glasses case) are crossed by the height rule 71% and 98% of the
+  time. This is what the operator lists are for. With correct names they are avoided 100% of the
+  time; the replay only shows this for correct names, it is not a live test.
+- With the VLM on (B3), unverified objects stay at caution. That is safer for the toolbox, but it
+  holds the cable and mat at caution because the camera covers only about 70 degrees ahead. The
+  real model's names for the sim's plain boxes match nothing on the lists.
+- The vase (30 cm) is above `h_tall` and is left to the Nav2 costmap. In runs A and D two 2-5 cm
+  fragments next to its base were tracked and judged traversable; they are probably returns at its
+  base (not confirmed) and are not the vase.
+- The depth camera did not see the cable in D4 and D5 (its field of view and 0.8 m floor blind
+  zone); LiDAR did.
 
 ## Limitations
 
-- One run per condition, no repeats. Run A's path was not logged, and the start poses of the
-  runs differ slightly.
-- Sim objects are untextured boxes, so the VLM's fragility check cannot be tested properly.
-- Each object appears as several track fragments, and results are counted per fragment.
-- LiDAR height under-reads small objects from the side, and the tracker averages it, so the
-  decision can flicker around the 8 cm limit.
-- A first VLM run was discarded because the Ollama host went to sleep mid-run.
-- The depth camera case is not tested: the sim has no depth sensor (it would need edits to
-  `gazebo/sim/build_model.py` and `bridge.yaml`).
+- One run per condition, and the depth runs differ a lot, so the numbers are indicative.
+- Heights and decisions are matched to objects within 0.2 m of their footprint, which is generous:
+  some fragments next to an object (for example 8-12 cm ones beside the 3 cm laptop and book) are
+  probably edge artifacts or neighbours, so the min and max heights are noisy.
+- Nav2 goals set no heading, so what the camera sees depends on how the dog turns. One run had a
+  goal dropped and a 4.5 minute stall, which skews its time shares.
+- The sim objects are untextured boxes, so the VLM's fragility check and the name-based lists cannot
+  be tested live. The list results are an offline replay with correct names.
+- The lists were added after runs A, B3, D and D4; those runs used no lists.
+- Each object appears as several track fragments, and results are counted per tick.
 - The costmap source script (`scripts/tools/add-traversability-costmap-source.sh`) has not been
   applied, so Nav2 does not yet act on the node's output.
+- No user study was run, so nothing here supports claims about ease of use or trust; explanation and
+  override tools for operators are future work.
 
 ## Troubleshooting
 
@@ -171,3 +291,9 @@ Share of the time each object was judged, run A (height rule only) against run B
   the SLAM frame.
 - The costmap shows nothing for the small objects: it ignores anything under
   `min_obstacle_height` (0.15 m). Add `/traversability/markers` in RViz to see the node's output.
+- Runs that stall, show no detections or have gaps can mean the VM was paused or throttled. Keep the
+  VM window in front, do not use the host during a run, and set Windows and Ubuntu to never sleep.
+- `ros2 topic hz` on an image topic reports "not published yet" even when frames arrive. Check
+  with `ros2 topic echo --once <topic> --field header.stamp` instead.
+- If Nav2 closes a goal at once ("Navigation finished OK (0.1s)") the dog does not move; the
+  updated `run_goals.sh` sends the goal again after 30 s without progress.
