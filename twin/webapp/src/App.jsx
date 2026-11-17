@@ -16,6 +16,7 @@ import HubNav from './HubNav.jsx';
 import BootOverlay from './BootOverlay.jsx';
 import SystemView from './SystemView.jsx';
 import SettingsView from './SettingsView.jsx';
+import DecisionsView from './decisions/DecisionsView.jsx';
 import { parseHash, setCode } from './hub.js';
 
 /** #/system, #/system/logs, #/settings; #code=1234 is kept for Settings, then dropped from the address. */
@@ -338,6 +339,7 @@ function Dashboard() {
       {route === 'map' && <BootOverlay />}
       {route.startsWith('system') && <SystemView sub={route === 'system/logs' ? 'logs' : ''} />}
       {route === 'settings' && <SettingsView />}
+      {route.startsWith('decisions') && <DecisionsView sub={route.split('/')[1] || ''} />}
     </div>
   );
 }

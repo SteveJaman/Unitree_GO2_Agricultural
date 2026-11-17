@@ -143,6 +143,10 @@ class VlmHeuristicNode(Node):
         )
         self.create_subscription(CameraInfo, g("camera_info_topic"), self.on_info, 1)
         self.labels_pub = self.create_publisher(String, g("labels_topic"), 10)
+        # Live edits of the protected list from the dashboard: {"classes": [...]}.
+        self.create_subscription(
+            String, "/semantic/protected_classes_set", self.on_protected_set, 10
+        )
         self.obst_pub = None
         if not self.dry_run:
             from go2_semantic_msgs.msg import SemanticObstacle, SemanticObstacleArray
@@ -346,6 +350,25 @@ class VlmHeuristicNode(Node):
         )
         return out
 
+    def on_protected_set(self, msg):
+        """Replace the protected list (this session only; the file keeps the default)."""
+        try:
+            classes = json.loads(msg.data).get("classes")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(classes, list) or len(classes) > 40:
+            return
+        clean = []
+        for c in classes:
+            n = sl.normalise_class(c)[:40] if isinstance(c, str) else ""
+            if n and n not in clean:
+                clean.append(n)
+        if clean != self.protected:
+            self.get_logger().info(
+                f"protected classes set from the dashboard: {clean or 'none'}"
+            )
+            self.protected = clean
+
     def publish(self):
         now = time.time()
         with self.lock:
@@ -360,6 +383,10 @@ class VlmHeuristicNode(Node):
                         "asked": self.n_asked,
                         "failed": self.n_failed,
                         "objects": objs,
+                        # The operator's list (the dashboard's Decisions tab shows and edits it).
+                        "protected_classes": self.protected,
+                        "step_over_height_max": self.step,
+                        "protected_margin": self.p_margin,
                     }
                 )
             )

@@ -660,6 +660,28 @@ messages, `PROBLEM` boxes and the Ctrl+C steps
 prints everything, as before. `--no-hub` leaves the hub out: `go2-3d` serves
 the dashboard itself, without System and Settings.
 
+**Decisions** (`#/decisions`, works without the hub too) is the traversability tab,
+written for operators and for visitors who don't know robotics:
+
+- **Live:**
+  - every object the traversability nodes track (`/semantic/labels_json`), with its
+    measured height, the VLM's answer, the decision (Step over / Careful / Must avoid),
+    and a one-line reason; objects within 1.5 cm of a cutoff are flagged;
+  - the gait (`/gait/status`) and the step-over coordinator (`/step_over/events`,
+    `/step_over/status`);
+  - a timeline you can download as CSV or JSON;
+  - the protected object types, editable live (`/semantic/protected_classes_set`; this
+    session only, the default list is `scripts/config/protected_classes.yaml`).
+- **How it decides:** the problem in plain words, who it is for, three terms, one
+  object step by step, who decides what is protected, and what an operator can see and
+  change.
+- **Results:** the simulation and real-robot numbers, worded precisely (clearance as a
+  share of foot passes, collision counts, what "unsafe label" means, trials and tests,
+  measured height and cutoffs).
+
+The text is in `twin/webapp/src/decisions/content.js`. Without the robot, or with
+`?demo=1`, a scripted sample plays and the page says so.
+
 The dashboard connects to rosbridge on the same host, port 9090. Override it
 with `?ws=ws://<host>:9090`. URL options: `?frame=` (fixed frame, default
 `lidar3d_map`), `?base=` (robot frame, default `base_link`), `?quality=lite|high`.

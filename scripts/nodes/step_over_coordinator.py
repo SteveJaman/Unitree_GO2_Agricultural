@@ -215,11 +215,50 @@ def main():
                 a: self.create_client(CancelGoal, f"{a}/_action/cancel_goal")
                 for a in ("/follow_path", "/compute_path_to_pose")
             }
+            self.events_pub = self.create_publisher(String, "/step_over/events", 10)
+            self.status_pub = self.create_publisher(String, "/step_over/status", 10)
             self.create_timer(0.1, self.tick)
+            self.create_timer(1.0, self.publish_status)
             self.get_logger().info(
                 f"step_over_coordinator mode={self.mode}: objects {self.p['h_min'] * 100:.0f}-"
                 f"{self.p['h_max'] * 100:.0f} cm high, at most {self.p['depth_max'] * 100:.0f} cm deep, "
                 f"{self.p['ahead_min']:.2f}-{self.p['ahead_max']:.2f} m ahead; requests in {self.req_dir}"
+            )
+
+        # the dashboard's Decisions tab: every decision, and the state once a second
+        def ev(self, level, text):
+            getattr(self.get_logger(), level)(text)
+            self.events_pub.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "t": time.time(),
+                            "level": level,
+                            "text": text,
+                            "mode": self.mode,
+                            "state": self.state,
+                            "object": self.cand["name"] if self.cand else None,
+                        }
+                    )
+                )
+            )
+
+        def publish_status(self):
+            self.status_pub.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "t": time.time(),
+                            "mode": self.mode,
+                            "state": self.state,
+                            "object": self.cand["name"] if self.cand else None,
+                            "limits": {
+                                k: self.p[k]
+                                for k in ("h_min", "h_max", "depth_max", "ahead_max")
+                            },
+                        }
+                    )
+                )
             )
 
         # inputs
@@ -235,9 +274,7 @@ def main():
             elif self.state == "failed":
                 # A new goal from the operator after a failed crawl: back to normal.
                 self.goal = msg
-                self.get_logger().info(
-                    "new goal after the failed crawl: watching again"
-                )
+                self.ev("info", "new goal after the failed crawl: watching again")
                 self.enter("idle")
 
         def on_nav_vel(self, msg):
@@ -265,18 +302,19 @@ def main():
                 if cli.service_is_ready():
                     cli.call_async(CancelGoal.Request())
                 else:
-                    self.get_logger().warn(f"cancel: {name} not available")
+                    self.ev("warn", f"cancel: {name} not available")
             self.stop()
 
         def resume_nav(self, why):
             if self.goal is None:
-                self.get_logger().info(f"{why}; no goal to resume")
+                self.ev("info", f"{why}; no goal to resume")
                 return
             self.goal.header.stamp = self.get_clock().now().to_msg()
             self.goal_pub.publish(self.goal)
-            self.get_logger().info(
+            self.ev(
+                "info",
                 f"{why}; goal resumed ({self.goal.pose.position.x:.2f}, "
-                f"{self.goal.pose.position.y:.2f})"
+                f"{self.goal.pose.position.y:.2f})",
             )
 
         def enter(self, state):
@@ -298,10 +336,11 @@ def main():
                 if now - self.done.get(tid, -1e9) < self.cooldown:
                     return
                 self.done[tid] = now
-                self.get_logger().info(
+                self.ev(
+                    "info",
                     f"{'would step' if self.mode == 'dry' else 'stepping'} over {cand['name']}: "
                     f"{cand['height'] * 100:.0f} cm high, {cand['depth'] * 100:.0f} cm deep, near edge "
-                    f"{cand['near_edge']:.2f} m ahead, {cand['lateral']:+.2f} m to the side"
+                    f"{cand['near_edge']:.2f} m ahead, {cand['lateral']:+.2f} m to the side",
                 )
                 if self.mode == "dry":
                     return
@@ -313,8 +352,9 @@ def main():
                 if done:
                     self.stop()
                     if self.mode == "align":
-                        self.get_logger().info(
-                            f"lined up in front of {self.cand['name']} (align mode: no crawl)"
+                        self.ev(
+                            "info",
+                            f"lined up in front of {self.cand['name']} (align mode: no crawl)",
                         )
                         self.enter("resume")
                         return
@@ -328,13 +368,14 @@ def main():
                     with open(path + ".tmp", "w") as f:
                         json.dump(request_payload(self.req_id, self.cand, pose, gap), f)
                     os.replace(path + ".tmp", path)
-                    self.get_logger().info(f"lined up; crawl requested ({path})")
+                    self.ev("info", f"lined up; crawl requested ({path})")
                     self.enter("crawl")
                 elif now - self.t_state > self.align_timeout:
                     self.stop()
-                    self.get_logger().warn(
+                    self.ev(
+                        "warn",
                         f"could not line up with {self.cand['name']} in "
-                        f"{self.align_timeout:.0f} s: carrying on without stepping over"
+                        f"{self.align_timeout:.0f} s: carrying on without stepping over",
                     )
                     self.enter("resume")
                 else:
@@ -351,28 +392,31 @@ def main():
                     if res.get("ok"):
                         clear, far = is_clear(self.cand, pose)
                         if clear:
-                            self.get_logger().info(
+                            self.ev(
+                                "info",
                                 f"stepped over {self.cand['name']}; its far edge is {-far:.2f} m "
-                                f"behind the body centre ({res.get('summary', '')})"
+                                f"behind the body centre ({res.get('summary', '')})",
                             )
                             self.enter("resume")
                         else:
-                            self.get_logger().error(
+                            self.ev(
+                                "error",
                                 f"PROBLEM: the crawl finished but {self.cand['name']} is not behind "
                                 f"the rear feet (far edge {far:+.2f} m from the body centre). "
-                                "Nav2 is NOT resumed."
+                                "Nav2 is NOT resumed.",
                             )
                             self.enter("failed")
                     else:
-                        self.get_logger().error(
+                        self.ev(
+                            "error",
                             f"PROBLEM: the crawl over {self.cand['name']} did not finish "
                             f"({res.get('summary', 'no summary')}). Nav2 is NOT resumed: check the dog, "
-                            "stand it with the remote, then send a new goal."
+                            "stand it with the remote, then send a new goal.",
                         )
                         self.enter("failed")
                 elif now - self.t_state > self.crawl_timeout:
-                    self.get_logger().error(
-                        "PROBLEM: no crawl result in time; Nav2 is NOT resumed"
+                    self.ev(
+                        "error", "PROBLEM: no crawl result in time; Nav2 is NOT resumed"
                     )
                     self.enter("failed")
             elif self.state == "resume":
