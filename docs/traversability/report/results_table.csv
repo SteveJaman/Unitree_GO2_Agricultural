@@ -1,0 +1,6 @@
+object,expected,true_height_cm,A_median_cm,A_pct_traversable,A_pct_caution,A_pct_avoid,B_median_cm,B_pct_traversable,B_pct_caution,B_pct_avoid,note
+cable,traversable,3,3,100,0,0,3,0,100,0,"B: VLM verdicts arrived for few of the cable fragments, the rest stayed caution"
+mat,traversable,2,2,100,0,0,2,8,92,0,"B: same backlog effect"
+toolbox,avoid,12,7,42,0,58,10,2,7,91,"A: front face read 6-7 cm, so 42% of the time it was judged traversable (unsafe). B saw it from closer, so the runs are not paired"
+phone,avoid,8,4,97,0,3,3,94,6,0,"unsafe in both runs: height read 3-4 cm and the VLM called the red box a red cube/object, step_over"
+vase,avoid,30,,,,,,,,,"not tracked (taller than the 20 cm cutoff); the normal costmap handles it. Tracks near it in run A are floor fragments"

@@ -1,0 +1,38 @@
+run,sensor,vlm,world,object,true_height_cm,should_be,crossed_pct,caution_pct,avoided_pct,note
+A,LiDAR,no,lab,cable,3,cross,100,0,0,
+B3,LiDAR,yes,lab,cable,3,cross,0,100,0,
+D,depth,no,lab,cable,3,cross,100,0,0,stall mid-route
+D4,depth,no,lab,cable,3,cross,,,,not seen
+A,LiDAR,no,lab,mat,2,cross,100,0,0,
+B3,LiDAR,yes,lab,mat,2,cross,0,100,0,
+D,depth,no,lab,mat,2,cross,100,0,0,stall mid-route
+D4,depth,no,lab,mat,2,cross,100,0,0,
+A,LiDAR,no,lab,toolbox,12,avoid,42,0,58,
+B3,LiDAR,yes,lab,toolbox,12,avoid,11,54,36,
+D,depth,no,lab,toolbox,12,avoid,24,0,76,stall mid-route
+D4,depth,no,lab,toolbox,12,avoid,0,0,100,
+A,LiDAR,no,lab,phone,8,avoid,97,0,3,
+B3,LiDAR,yes,lab,phone,8,avoid,66,9,25,
+D,depth,no,lab,phone,8,avoid,96,0,4,stall mid-route
+D4,depth,no,lab,phone,8,avoid,0,0,100,
+D5,depth,no,lab2,mat,2,cross,100,0,0,
+E,depth,yes,lab2,mat,2,cross,66,34,0,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,mat,2,cross,100,0,0,"offline replay, not a live run"
+D5,depth,no,lab2,power strip,4,cross,100,0,0,
+E,depth,yes,lab2,power strip,4,cross,4,96,0,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,power strip,4,cross,100,0,0,"offline replay, not a live run"
+D5,depth,no,lab2,book,3,cross,98,0,2,
+E,depth,yes,lab2,book,3,cross,33,61,7,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,book,3,cross,98,0,2,"offline replay, not a live run"
+D5,depth,no,lab2,toolbox,12,avoid,54,0,46,
+E,depth,yes,lab2,toolbox,12,avoid,37,0,63,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,toolbox,12,avoid,0,0,100,"offline replay, not a live run"
+D5,depth,no,lab2,phone,8,avoid,37,0,63,
+E,depth,yes,lab2,phone,8,avoid,19,0,81,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,phone,8,avoid,0,0,100,"offline replay, not a live run"
+D5,depth,no,lab2,laptop,3,avoid,71,0,29,
+E,depth,yes,lab2,laptop,3,avoid,38,34,28,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,laptop,3,avoid,0,0,100,"offline replay, not a live run"
+D5,depth,no,lab2,glasses case,5,avoid,98,0,2,
+E,depth,yes,lab2,glasses case,5,avoid,45,43,12,operator lists on; VLM called everything step_over
+D5 replay,depth,oracle names + lists,lab2,glasses case,5,avoid,0,0,100,"offline replay, not a live run"
