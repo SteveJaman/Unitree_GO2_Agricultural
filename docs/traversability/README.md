@@ -207,6 +207,7 @@ conditions, and the depth runs below show how much one run can differ from anoth
 | D | depth | no | lab | a goal was dropped, 4.5 min stall mid-route |
 | D4 | depth | no | lab | clean |
 | D5 | depth | no | lab2 | four extra objects |
+| E | depth | yes (qwen2.5vl on a Mac) | lab2 | operator lists on; the route finished in 469 s |
 
 Discarded: B and B2 (the model host went to sleep, the dog got stuck) and D3 (no detections at all;
 probably the VM was paused or throttled while the host was in use, not confirmed).
@@ -239,6 +240,31 @@ Replay with the operator lists and correct object names (`replay_rules.py`), tra
 run A toolbox 42/0/58 becomes 0/0/100 and phone 97/0/3 becomes 0/0/100; run B3 cable and mat go from
 0/100/0 (held at caution while unverified) to 100/0/0; run D5 toolbox, phone, laptop and glasses case
 all become 0/0/100 while mat and power strip stay 100/0/0 and book 98/0/2.
+
+Run E (depth + VLM, lab2, operator lists live), trav / caution / avoid (%):
+
+| Object | Should be | Recorded | Correct names + lists (replay) |
+|---|---|---|---|
+| mat | cross | 66/34/0 | 100/0/0 |
+| power strip | cross | 4/96/0 | 100/0/0 |
+| book | cross | 33/61/7 | 93/0/7 |
+| toolbox | avoid | 37/0/63 | 0/0/100 |
+| phone | avoid | 19/0/81 | 0/0/100 |
+| laptop | avoid | 38/34/28 | 0/0/100 |
+| glasses case | avoid | 45/43/12 | 0/0/100 |
+
+- The VLM labelled every object `step_over`, not fragile, so it protected nothing: live, the laptop was
+  crossed 38% of the time and the glasses case 45%.
+- Live, the lists changed no decision. The avoid list never fired, and the safe list only matched fragments
+  the VLM had already called step_over.
+- The VLM's names are unreliable: laptop fragments were called "cable" and "green mat", the phone and toolbox
+  fragments "green mat", the glasses case "purple cube". A safe list keyed on the model's name can therefore
+  clear a dangerous object that is mislabelled with a safe word, and a safe match currently overrides a
+  fragile flag. Letting a fragile or avoid verdict win over the safe list is a possible fix.
+- Until an object is verified it stays at caution, so the power strip was at caution 96% of the time and the
+  book 61%.
+- The replay column "logged VLM name, with lists" only counts ticks where a verdict exists, which is biased
+  towards fragments reading under 8 cm, so it is not reported.
 
 What the results show:
 - LiDAR resolves 2-3 cm objects but under-reads the toolbox and phone, because it only hits their
@@ -274,6 +300,8 @@ What the results show:
 - Each object appears as several track fragments, and results are counted per tick.
 - The costmap source script (`scripts/tools/add-traversability-costmap-source.sh`) has not been
   applied, so Nav2 does not yet act on the node's output.
+- The live VLM run (E) could not test the lists, because the model cannot recognise the sim's plain boxes and
+  its names are unreliable; the list results come from the replay with correct names.
 - No user study was run, so nothing here supports claims about ease of use or trust; explanation and
   override tools for operators are future work.
 

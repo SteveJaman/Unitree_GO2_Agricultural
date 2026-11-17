@@ -1,0 +1,89 @@
+OBJECTS,E,vlm=True,duration_s=469,ticks=938
+object,expected,tracks,seen_ticks,first_seen_s,h_min,h_med,h_max,pct_trav,pct_caution,pct_avoid,final,vlm_labels
+cable,traversable,0,0,,,,,,,,not_seen,
+mat,traversable,2,174,55,2,2,2,66,34,0,traversable,step_over/ok:115
+toolbox,avoid,4,213,55,3,8,12,37,0,63,avoid,step_over/ok:91
+phone,avoid,4,216,55,3,8,8,19,0,81,traversable,step_over/ok:42
+vase,avoid,0,0,,,,,,,,not_seen,
+laptop,avoid,7,287,55,3,3,12,38,34,28,traversable,step_over/ok:144
+glasses_case,avoid,4,152,55,3,5,12,45,43,12,traversable,step_over/ok:73
+power_strip,traversable,3,162,55,4,4,5,4,96,0,traversable,step_over/ok:11
+book,traversable,4,184,55,3,3,8,33,61,7,caution,step_over/ok:61
+UNMATCHED,E,wall_tracks=9,other_tracks=17
+EVENTS,E
+mat,caution@55>traversable@68>caution@118>traversable@134
+toolbox,avoid@55>traversable@236>avoid@284
+phone,avoid@55>traversable@173
+laptop,caution@55>avoid@100>caution@111>traversable@115>avoid@174>traversable@203
+glasses_case,caution@55>traversable@87>avoid@94>traversable@96>avoid@210>traversable@223
+power_strip,caution@55>traversable@161>caution@163>traversable@165
+book,caution@55>traversable@78>avoid@90>caution@118>traversable@143>caution@163
+MATCHED_TRACKS,E
+object,x,y,h_cm,final,vlm_name
+mat,-0.97,-0.7,2,traversable,mat
+mat,-0.74,-0.63,2,traversable,Red cube
+toolbox,0.26,0.45,12,avoid,
+toolbox,0.23,1.34,3,traversable,green mat
+toolbox,-0.15,1.14,8,avoid,
+toolbox,-0.15,1.17,12,avoid,
+phone,0.13,-1.1,8,avoid,
+phone,0.47,-1.04,8,avoid,
+phone,0.47,-0.86,3,traversable,green mat
+phone,0.39,-0.66,8,avoid,
+laptop,0.53,-0.81,12,avoid,
+laptop,0.73,-0.79,5,traversable,cable
+laptop,0.77,-0.81,3,caution,
+laptop,0.97,-0.62,3,traversable,cable
+laptop,0.87,-0.77,3,traversable,cable
+laptop,0.52,-0.19,3,traversable,green mat
+laptop,0.68,-0.2,8,avoid,
+glasses_case,0.35,0.18,12,avoid,
+glasses_case,0.58,0.28,5,traversable,purple cube
+glasses_case,0.32,0.42,3,traversable,green mat
+glasses_case,0.47,0.43,8,avoid,
+power_strip,1.52,-1.33,5,caution,
+power_strip,1.81,-0.89,4,traversable,red box
+power_strip,1.61,-0.9,4,caution,
+book,-0.34,-1.55,3,traversable,green mat
+book,0.03,-1.56,8,avoid,
+book,0.1,-1.44,3,traversable,green mat
+book,0.02,-1.15,3,caution,
+PATH,E
+0,-2.8,-0.0
+95,-2.636,-0.021
+102,-2.48,-0.077
+112,-2.342,-0.155
+121,-2.211,-0.249
+128,-2.091,-0.343
+138,-1.972,-0.436
+149,-1.851,-0.53
+162,-1.713,-0.623
+170,-1.563,-0.697
+175,-1.414,-0.751
+185,-1.262,-0.791
+204,-1.109,-0.812
+221,-0.958,-0.776
+233,-0.828,-0.686
+243,-0.731,-0.571
+251,-0.648,-0.441
+259,-0.566,-0.313
+270,-0.482,-0.179
+286,-0.425,-0.037
+298,-0.434,0.116
+309,-0.499,0.254
+315,-0.615,0.375
+321,-0.745,0.459
+326,-0.896,0.525
+336,-1.06,0.582
+343,-1.215,0.627
+349,-1.366,0.665
+356,-1.522,0.695
+363,-1.673,0.716
+370,-1.845,0.731
+376,-1.998,0.733
+381,-2.155,0.719
+387,-2.315,0.678
+393,-2.455,0.612
+400,-2.582,0.518
+410,-2.687,0.4
+421,-2.762,0.27
