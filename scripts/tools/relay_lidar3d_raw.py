@@ -11,6 +11,10 @@ their usual names. Without it (or GO2_LIDAR3D_RAW=0) nothing changes.
   relay_lidar3d_raw.py NAV2_WIFI_DIR          # apply (idempotent)
   relay_lidar3d_raw.py --check NAV2_WIFI_DIR
 
+Also, always: the relay's hand-off between its two processes on the dog waits up to
+GO2_RELAY_SEND_TIMEOUT (15 s) instead of 1 s before giving up, so a Wi-Fi stall of a
+few seconds no longer ends the session.
+
 Edits (tagged TAG; originals kept as <file>.pre-raw):
   * ws/scripts/robot_relay_wifi.py: the relay publisher (it runs on the dog, copied
     there by mapping.sh every session) renames the three topics when GO2_LIDAR3D_RAW=1.
@@ -34,6 +38,13 @@ EDITS = {
         '                    "/lidar3d/odom", "/lidar3d/registered", "/lidar3d/path"):' + TAG + "\n"
         '                topic = "/lidar3d/raw/" + topic.rsplit("/", 1)[1]' + TAG + "\n"
         "            pubs.append(node.create_publisher(msg_type, topic, _qos(qos_kind)))\n",
+    ), (
+        # The dog's two relay processes hand each message over a local socket; when the
+        # Wi-Fi stalls, the publishing side stops reading and a send waited only 1 s before
+        # the relay exited and ended the session (icps-lab_5G, 2026-11-16: pings up to 1.9 s).
+        # 15 s by default, within the laptop's ~60 s link watch; GO2_RELAY_SEND_TIMEOUT on the dog.
+        "        sock.settimeout(1.0)\n",
+        '        sock.settimeout(float(os.environ.get("GO2_RELAY_SEND_TIMEOUT", "15")))' + TAG + "\n",
     )],
     MAPPING: [(
         '  "exec env GO2_HOST_IP=$robot_host_ip GO2_RELAY_DOMAIN_ID=$relay_domain ',

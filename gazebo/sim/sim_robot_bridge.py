@@ -337,6 +337,12 @@ def run_node(params, args):
                                  for n in params["leg_joint_names"]}
                 self.feet_pub = self.create_publisher(String, "/sim/feet", 10)
                 self.create_subscription(String, "/gait/command", self.on_gait, 10)
+                # step_over_crawl.py --sim drives the legs itself: while /sim/legs/external is
+                # true the trot publishes no leg commands.
+                from std_msgs.msg import Bool
+                self.external = False
+                self.create_subscription(Bool, "/sim/legs/external",
+                                         lambda m: setattr(self, "external", bool(m.data)), 10)
                 self.create_subscription(String, "/objects/boxes_json", self.on_boxes, 10)
                 self.boxes = []
                 self.last_leg_t = time.monotonic()
@@ -465,6 +471,8 @@ def run_node(params, args):
             dt, self.last_leg_t = now - self.last_leg_t, now
             avoid = self.foot_blocked if self.boxes and self.true_base is not None else None
             joints, feet = self.trot.step(dt, *self.true_twist, self.lift, avoid)
+            if getattr(self, "external", False):
+                return                                  # the step-over crawl owns the legs
             self.leg_q = joints
             for name, q in joints.items():
                 self.leg_pubs[name].publish(self.Float64(data=float(q)))

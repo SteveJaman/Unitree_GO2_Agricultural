@@ -28,6 +28,7 @@ fallback_on_timeout ("geometry": a failed request leaves the LiDAR label;
 camera or the Go2's front camera relay; "robot" is not yet validated on real crops,
 and the LiDAR height still bounds every label).
 """
+
 import json
 import os
 import queue
@@ -77,6 +78,14 @@ class VlmHeuristicNode(Node):
         p("detection_max_age_s", 0.6)
         p("radius_margin", 0.05)
         p("publish_hz", 2.0)
+        # Operator-chosen classes the robot must never touch (protected_classes.yaml).
+        p("protected_classes", [""])
+        p(
+            "protected_margin", 0.10
+        )  # extra keep-out around them, m (legs, leaves, box error)
+        p(
+            "use_vlm", True
+        )  # False: no VLM requests; geometry and the protected list only
         p("fx", 468.0)
         p("fy", 468.0)
         p("cx", 320.0)
@@ -85,20 +94,39 @@ class VlmHeuristicNode(Node):
 
         self.backend = g("backend")
         if self.backend not in ("gazebo", "robot"):
-            raise ValueError(f"vlm_heuristic_node backend must be gazebo or robot, not '{self.backend}'")
+            raise ValueError(
+                f"vlm_heuristic_node backend must be gazebo or robot, not '{self.backend}'"
+            )
         self.url, self.model = g("ollama_url"), g("model")
-        self.timeout_s, self.conf_min = float(g("timeout_s")), float(g("confidence_min"))
-        self.reclassify_s, self.fallback = float(g("reclassify_s")), g("fallback_on_timeout")
+        self.timeout_s, self.conf_min = (
+            float(g("timeout_s")),
+            float(g("confidence_min")),
+        )
+        self.reclassify_s, self.fallback = (
+            float(g("reclassify_s")),
+            g("fallback_on_timeout"),
+        )
         if self.fallback not in ("geometry", "unknown"):
-            raise ValueError(f"fallback_on_timeout must be geometry or unknown, not {self.fallback}")
+            raise ValueError(
+                f"fallback_on_timeout must be geometry or unknown, not {self.fallback}"
+            )
         self.dry_run = bool(g("dry_run"))
         self.map_frame, self.cam_frame = g("map_frame"), g("camera_frame")
-        self.step, self.lethal = float(g("step_over_height_max")), float(g("lethal_height_min"))
-        self.det_age, self.r_margin = float(g("detection_max_age_s")), float(g("radius_margin"))
+        self.step, self.lethal = (
+            float(g("step_over_height_max")),
+            float(g("lethal_height_min")),
+        )
+        self.det_age, self.r_margin = (
+            float(g("detection_max_age_s")),
+            float(g("radius_margin")),
+        )
         self.K = (float(g("fx")), float(g("fy")), float(g("cx")), float(g("cy")))
+        self.protected = [c for c in g("protected_classes") if sl.normalise_class(c)]
+        self.p_margin = float(g("protected_margin"))
+        self.use_vlm = bool(g("use_vlm"))
 
-        self.tracks = {}            # id -> fused box
-        self.answers = {}           # id -> latest VLM answer
+        self.tracks = {}  # id -> fused box
+        self.answers = {}  # id -> latest VLM answer
         self.dets = deque(maxlen=50)  # (receipt time, detection)
         self.image = None
         self.lock = threading.Lock()
@@ -110,14 +138,23 @@ class VlmHeuristicNode(Node):
         self.listener = TransformListener(self.tf, self)
         self.create_subscription(String, g("boxes_topic"), self.on_boxes, 10)
         self.create_subscription(String, g("detections_topic"), self.on_dets, 10)
-        self.create_subscription(Image, g("image_topic"), self.on_image, qos_profile_sensor_data)
+        self.create_subscription(
+            Image, g("image_topic"), self.on_image, qos_profile_sensor_data
+        )
         self.create_subscription(CameraInfo, g("camera_info_topic"), self.on_info, 1)
         self.labels_pub = self.create_publisher(String, g("labels_topic"), 10)
+        # Live edits of the protected list from the dashboard: {"classes": [...]}.
+        self.create_subscription(
+            String, "/semantic/protected_classes_set", self.on_protected_set, 10
+        )
         self.obst_pub = None
         if not self.dry_run:
             from go2_semantic_msgs.msg import SemanticObstacle, SemanticObstacleArray
+
             self.Obstacle, self.ObstacleArray = SemanticObstacle, SemanticObstacleArray
-            self.obst_pub = self.create_publisher(SemanticObstacleArray, g("obstacles_topic"), 10)
+            self.obst_pub = self.create_publisher(
+                SemanticObstacleArray, g("obstacles_topic"), 10
+            )
         threading.Thread(target=self.worker, daemon=True).start()
         self.create_timer(0.25, self.schedule)
         self.create_timer(1.0 / float(g("publish_hz")), self.publish)
@@ -125,12 +162,17 @@ class VlmHeuristicNode(Node):
         self.get_logger().info(
             f"vlm_heuristic_node dry_run={self.dry_run} backend={self.backend} model={self.model} "
             f"url={self.url} ollama={'ok' if ready else 'NOT READY: ' + why} "
-            f"confidence_min={self.conf_min} reclassify_s={self.reclassify_s} fallback={self.fallback}")
+            f"confidence_min={self.conf_min} reclassify_s={self.reclassify_s} fallback={self.fallback} "
+            f"use_vlm={self.use_vlm} protected={self.protected or 'none'} (+{self.p_margin:.2f} m)"
+        )
 
     def ollama_ready(self):
         import urllib.request
+
         try:
-            with urllib.request.urlopen(self.url.rstrip("/") + "/api/tags", timeout=3) as r:
+            with urllib.request.urlopen(
+                self.url.rstrip("/") + "/api/tags", timeout=3
+            ) as r:
                 names = [m["name"] for m in json.loads(r.read())["models"]]
             ok = any(n.split(":")[0] == self.model.split(":")[0] for n in names)
             return ok, "" if ok else f"model {self.model} not in {names}"
@@ -159,7 +201,7 @@ class VlmHeuristicNode(Node):
 
     # --- VLM requests -------------------------------------------------------
     def schedule(self):
-        if self.busy or self.image is None or not self.tracks:
+        if not self.use_vlm or self.busy or self.image is None or not self.tracks:
             return
         try:
             tf = self.tf.lookup_transform(self.cam_frame, self.map_frame, Time())
@@ -171,9 +213,22 @@ class VlmHeuristicNode(Node):
         now = time.time()
         dets = [d for (ts, d) in self.dets if now - ts < self.det_age]
         with self.lock:
-            due = [b for b in self.tracks.values()
-                   if b["id"] not in self.answers or now - self.answers[b["id"]]["t"] > self.reclassify_s]
-        due.sort(key=lambda b: (b["id"] in self.answers, np.hypot(b["x"] - cam_xy[0], b["y"] - cam_xy[1])))
+            # Protected tracks are decided by the list: no VLM request (it could not lower them).
+            due = [
+                b
+                for b in self.tracks.values()
+                if not sl.is_protected(b["class"], self.protected)
+                and (
+                    b["id"] not in self.answers
+                    or now - self.answers[b["id"]]["t"] > self.reclassify_s
+                )
+            ]
+        due.sort(
+            key=lambda b: (
+                b["id"] in self.answers,
+                np.hypot(b["x"] - cam_xy[0], b["y"] - cam_xy[1]),
+            )
+        )
         img = None
         for b in due:
             det = sl.associate(b, dets, rot, trans, self.K)
@@ -181,13 +236,24 @@ class VlmHeuristicNode(Node):
                 continue
             if img is None:
                 m = self.image
-                img = sl.to_rgb(np.frombuffer(bytes(m.data), np.uint8).reshape(m.height, m.width, -1), m.encoding)
+                img = sl.to_rgb(
+                    np.frombuffer(bytes(m.data), np.uint8).reshape(
+                        m.height, m.width, -1
+                    ),
+                    m.encoding,
+                )
             got = sl.crop_bbox(img, det["bbox"])
             if got is None:
                 continue
             self.busy = True
-            self.jobs.put((b["id"], det.get("class", b["class"]), float(det.get("score", b.get("score", 0.0))),
-                           got[0].copy()))
+            self.jobs.put(
+                (
+                    b["id"],
+                    det.get("class", b["class"]),
+                    float(det.get("score", b.get("score", 0.0))),
+                    got[0].copy(),
+                )
+            )
             return
 
     def worker(self):
@@ -196,15 +262,24 @@ class VlmHeuristicNode(Node):
             ans = {"t": time.time(), "error": None}
             try:
                 # The detector's class and score go in for verification, not as an answer.
-                label, conf, reason, lat = sl.ask_ollama(self.url, self.model, crop, cls, score, self.timeout_s)
-                ans.update(label=label, conf=conf, reason=reason, latency_s=round(lat, 2))
+                label, conf, reason, lat = sl.ask_ollama(
+                    self.url, self.model, crop, cls, score, self.timeout_s
+                )
+                ans.update(
+                    label=label, conf=conf, reason=reason, latency_s=round(lat, 2)
+                )
                 self.get_logger().info(
-                    f"track {tid} {cls}: {label} {conf:.2f} ({reason}) {lat:.2f}s")
+                    f"track {tid} {cls}: {label} {conf:.2f} ({reason}) {lat:.2f}s"
+                )
             except Exception as ex:  # noqa: BLE001 - timeout/connection: fallback, logged
                 self.n_failed += 1
-                ans.update(label="UNKNOWN", conf=0.0, reason="", latency_s=None, error=str(ex))
-                self.get_logger().warn(f"track {tid} {cls}: VLM failed ({ex}); fallback={self.fallback}",
-                                       throttle_duration_sec=5.0)
+                ans.update(
+                    label="UNKNOWN", conf=0.0, reason="", latency_s=None, error=str(ex)
+                )
+                self.get_logger().warn(
+                    f"track {tid} {cls}: VLM failed ({ex}); fallback={self.fallback}",
+                    throttle_duration_sec=5.0,
+                )
             self.n_asked += 1
             with self.lock:
                 if tid in self.tracks:
@@ -215,32 +290,107 @@ class VlmHeuristicNode(Node):
     def label_track(self, b, now):
         geo = sl.geometry_label(b, self.step, self.lethal)
         a = self.answers.get(b["id"])
-        out = {"track_id": b["id"], "class": b["class"], "x": b["x"], "y": b["y"],
-               "height": b.get("height"), "geometry": geo, "vlm": None, "vlm_conf": None,
-               "vlm_reason": None, "latency_s": None, "label_age_s": None, "error": None}
-        low = geo == "UNKNOWN"   # no LiDAR height: whatever is published is flagged
+        out = {
+            "track_id": b["id"],
+            "class": b["class"],
+            "x": b["x"],
+            "y": b["y"],
+            "height": b.get("height"),
+            "geometry": geo,
+            "vlm": None,
+            "vlm_conf": None,
+            "vlm_reason": None,
+            "latency_s": None,
+            "label_age_s": None,
+            "error": None,
+        }
+        low = geo == "UNKNOWN"  # no LiDAR height: whatever is published is flagged
         if a is None:
-            final, source, conf = geo, ("geometry_only" if geo != "UNKNOWN" else "none"), 1.0
+            final, source, conf = (
+                geo,
+                ("geometry_only" if geo != "UNKNOWN" else "none"),
+                1.0,
+            )
         else:
-            out.update(vlm=a["label"], vlm_conf=round(a["conf"], 2), vlm_reason=a["reason"],
-                       latency_s=a["latency_s"], label_age_s=round(now - a["t"], 1), error=a["error"])
+            out.update(
+                vlm=a["label"],
+                vlm_conf=round(a["conf"], 2),
+                vlm_reason=a["reason"],
+                latency_s=a["latency_s"],
+                label_age_s=round(now - a["t"], 1),
+                error=a["error"],
+            )
             if a["error"] and self.fallback == "unknown":
                 final, source, conf = "UNKNOWN", "fallback_unknown", 0.0
             else:
-                final, source, low = sl.combine(a["label"], a["conf"], geo, self.conf_min)
+                final, source, low = sl.combine(
+                    a["label"], a["conf"], geo, self.conf_min
+                )
                 conf = a["conf"] if source.startswith("vlm") else 1.0
-        out.update(label=final, source=source, confidence=round(conf, 2), low_confidence=low,
-                   cost=COSTS[final], radius=round(sl.radius(b, self.r_margin), 3),
-                   size_x=b.get("sx") or 0.0, size_y=b.get("sy") or 0.0, yaw=b.get("yaw") or 0.0)
+        final, source, low = sl.protect(
+            b["class"], self.protected, final, source, low, geo
+        )
+        prot = source.startswith("protected")
+        if prot:
+            conf = 1.0
+        # Protected: a wider keep-out (legs swing wide, leaves overhang, the box may be off).
+        extra = self.p_margin if prot else 0.0
+        sx, sy = b.get("sx") or 0.0, b.get("sy") or 0.0
+        out.update(
+            label=final,
+            source=source,
+            confidence=round(conf, 2),
+            low_confidence=low,
+            protected=prot,
+            cost=COSTS[final],
+            radius=round(sl.radius(b, self.r_margin + extra), 3),
+            size_x=sx + 2 * extra if sx > 0 else 0.0,
+            size_y=sy + 2 * extra if sy > 0 else 0.0,
+            yaw=b.get("yaw") or 0.0,
+        )
         return out
+
+    def on_protected_set(self, msg):
+        """Replace the protected list (this session only; the file keeps the default)."""
+        try:
+            classes = json.loads(msg.data).get("classes")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(classes, list) or len(classes) > 40:
+            return
+        clean = []
+        for c in classes:
+            n = sl.normalise_class(c)[:40] if isinstance(c, str) else ""
+            if n and n not in clean:
+                clean.append(n)
+        if clean != self.protected:
+            self.get_logger().info(
+                f"protected classes set from the dashboard: {clean or 'none'}"
+            )
+            self.protected = clean
 
     def publish(self):
         now = time.time()
         with self.lock:
             objs = [self.label_track(b, now) for b in self.tracks.values()]
-        self.labels_pub.publish(String(data=json.dumps(
-            {"stamp": now, "dry_run": self.dry_run, "model": self.model, "asked": self.n_asked,
-             "failed": self.n_failed, "objects": objs})))
+        self.labels_pub.publish(
+            String(
+                data=json.dumps(
+                    {
+                        "stamp": now,
+                        "dry_run": self.dry_run,
+                        "model": self.model,
+                        "asked": self.n_asked,
+                        "failed": self.n_failed,
+                        "objects": objs,
+                        # The operator's list (the dashboard's Decisions tab shows and edits it).
+                        "protected_classes": self.protected,
+                        "step_over_height_max": self.step,
+                        "protected_margin": self.p_margin,
+                    }
+                )
+            )
+        )
         if self.obst_pub is None:
             return
         arr = self.ObstacleArray()
@@ -255,10 +405,16 @@ class VlmHeuristicNode(Node):
             s.label = o["label"]
             s.track_id = int(o["track_id"])
             s.confidence = float(o["confidence"])
-            s.position = Point(x=float(o["x"]), y=float(o["y"]), z=float(o["height"] or 0.0))
+            s.position = Point(
+                x=float(o["x"]), y=float(o["y"]), z=float(o["height"] or 0.0)
+            )
             s.cost = o["cost"]
             s.radius = float(o["radius"])
-            s.size_x, s.size_y, s.yaw = float(o["size_x"]), float(o["size_y"]), float(o["yaw"])
+            s.size_x, s.size_y, s.yaw = (
+                float(o["size_x"]),
+                float(o["size_y"]),
+                float(o["yaw"]),
+            )
             arr.obstacles.append(s)
         self.obst_pub.publish(arr)
 

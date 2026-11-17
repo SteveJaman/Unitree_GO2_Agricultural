@@ -34,7 +34,8 @@ its feet near objects. Full clips: [baseline](../images/cluttered_items/walk_bas
 - [The world](#the-world)
 - [How it works](#how-it-works): legs and gait, height bands, 3D boxes, backstop, semantic layer, MPPI critic
 - [How it was tested](#how-it-was-tested)
-- [Results](#results): safety matrix, backstop, height bands, semantic layer, MPPI
+- [Results](#results)
+- [Leg control in the sim](#leg-control-the-low-level-step-over-in-the-sim-2026-11-16-not-yet-run): safety matrix, backstop, height bands, semantic layer, MPPI
 - [What the sim validates, and what it does not](#what-the-sim-validates-and-what-it-does-not)
 - [Known limitations](#known-limitations)
 - [Reproduce](#reproduce)
@@ -401,6 +402,78 @@ first hardware session starts from [traversability_handoff.md](../hardware/trave
   without the robot; see the handoff.
 
 These additions do not change the trial results above.
+
+## Leg control: the low-level step-over in the sim (2026-11-16, not yet run)
+
+The real Go2's sport mode cannot raise its feet on command, so the step-over now uses
+per-leg control in low-level mode:
+[`step_over_crawl.py`](../../scripts/robot/step_over_crawl.py), documented in
+[step_over_crawl.md](../hardware/step_over_crawl.md). On the dog this works for
+`--leg-over FR`: one foot over a 6 cm object and back, worst lean 4.6°. The full crawl
+(`--step-over`) has not passed on the dog yet.
+
+`--sim` replays the **same planner and the same real-space foot paths** in this Gazebo sim:
+
+- The 12 joint angles go to the sim's leg joint controllers (`/sim/leg/<joint>/cmd_pos`).
+- The body follows the plan through the sim's velocity input (TCP 17999, as Nav2's does).
+- While it runs, `/sim/legs/external` pauses the bridge's trot
+  ([`sim_robot_bridge.py`](../../gazebo/sim/sim_robot_bridge.py)).
+- In a session, `wifi_3d_nav.sh --sim --semantic --step-over-crawl crawl` runs it through
+  the same coordinator and executor as on the dog. The executor runs the crawl inside
+  `go2-lidar3d` (`--sim`) instead of over SSH.
+
+**What this can show:** the foot paths, the clearance over the object, foot strikes
+(`contact_monitor.py`), and the whole hand-off in a navigation session: pause Nav2, line
+up, step over, resume.
+
+**What it cannot show:** balance. The sim's legs carry nothing (gravity off, the body
+held by VelocityControl), so there is no sag, tilt or fall. The real-dog runs cover those.
+
+### To run (tomorrow)
+
+**A. In a navigation session** (cluttered_items: `book_1` is 5.1 cm high):
+
+```bash
+./gazebo/run_sim.sh down
+SIM_GUI=1 SIM_CHASE=1 SIM_CONTACTS=1 TRAV_VLM_MODEL=llava:7b \
+    ./scripts/runtime/wifi_3d_nav.sh --sim --world cluttered_items --semantic --manual --step-over-crawl crawl
+```
+
+Give a **2D Goal Pose** past the book: `book_1` is at (4.1, 0.65), so for example a goal at
+(5.0, 0.65) from the corridor. Watch three logs:
+
+- `ws/log/3d/traversability/crawl.log` (go2-nav2-wifi): "stepping over …", lined up,
+  then resumed.
+- `ws/log/3d/step_over_executor.log`: the crawl's result.
+- `/ws/log/3d/step_over/nav_<id>.csv` in `go2-lidar3d`: every 20 ms of the crawl.
+
+Use `--step-over-crawl dry` first if you only want the decisions logged.
+
+**B. The step-over alone, no navigation**, with the sim up as above and the dog standing
+in front of an object:
+
+```bash
+docker exec go2-lidar3d bash -c "set -a; . /tmp/go2-trav/env.sh; set +a; . /opt/ros/humble/setup.bash; \
+    python3 /tmp/go2-trav/step_over_crawl.py --sim --leg-over FR --stand-height 0.28 --lift-margin 0.075 \
+    --object-distance 0.06 --object-depth 0.05 --object-height 0.06 --landing-margin 0.03 --yes"
+```
+
+Or `--step-over --object-height 0.05 --object-depth 0.10 --object-distance 0.12` for the
+full crawl. `/tmp/go2-trav` exists once a `--semantic` session has started the
+traversability nodes.
+
+**To count foot strikes:** run `gazebo/sim/contact_monitor.py` in `go2-sim`, as
+[`tests/traversability/run_demo.sh`](../../tests/traversability/run_demo.sh) does. It
+writes `/tmp/contacts.jsonl`, one line per foot/object contact.
+
+**Results go here:**
+
+- the foot's lowest clearance over the object (planned at ≥ 5 cm);
+- the number of foot strikes on the object (target 0);
+- the step-over time;
+- whether Nav2 resumed to the goal.
+
+Then compare with the kinematic trot's 53 % clearance in the trial matrix above.
 
 ## What the sim validates, and what it does not
 

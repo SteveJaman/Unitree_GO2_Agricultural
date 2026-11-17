@@ -11,11 +11,15 @@
 #   gait_supervisor.py       gait from boxes, costmap, clusters, labels -> /gait/command
 #   with the camera path (TRAV_CAMERA=1; YOLO runs in its own container, see wifi_3d_nav.sh):
 #   object_box_fusion.py     /objects/detections_json + LiDAR -> /objects/boxes_json
-#   vlm_heuristic_node.py    VLM labels -> /semantic/obstacles (SemanticCostmapLayer)
+#   vlm_heuristic_node.py    VLM labels and the protected classes (protected_classes.yaml)
+#                            -> /semantic/obstacles (SemanticCostmapLayer); TRAV_VLM=0: no VLM,
+#                            the protected classes and geometry only
 #   sim_box_detector.py      --sim only: ground-truth stand-in for classes YOLO lacks
+#   step_over_coordinator.py TRAV_CRAWL=dry|align|crawl: objects on the path to step over
+#                            (the crawl itself runs on the dog: step_over_executor.py)
 #
 # Environment (set by wifi_3d_nav.sh, plus the session's DDS settings):
-#   TRAV_SIM=0|1  TRAV_CAMERA=0|1  TRAV_VLM=0|1  TRAV_LOG=/ws/log/3d/traversability
+#   TRAV_SIM=0|1  TRAV_CAMERA=0|1  TRAV_VLM=0|1  TRAV_LOG=/ws/log/3d/traversability  TRAV_CRAWL=off|dry|align|crawl
 #   TRAV_CAMERA_INFO=camera yaml (intrinsics)  TRAV_WORLD_JSON=sim object list  TRAV_STAND_IN=classes
 #   TRAV_OLLAMA_URL=http://host:11434  TRAV_HW_CONFIG=hardware.yaml (--hardware)
 #   GAIT_ENABLE_HARDWARE=true|false  GAIT_DRY_RUN=true|false  TRAV_SDK_IFACE=network interface
@@ -138,16 +142,21 @@ do_start() {
         # histogram (the body pitches and rolls; traversability_handoff.md).
         # Robot: forget objects that moved (in view, unmatched 3 s; any, unseen 60 s).
         local fusion_robot=()
-        [ "${TRAV_SIM:-0}" = 1 ] || fusion_robot=(-p track_view_timeout_s:=3.0 -p track_max_age_s:=60.0)
+        # Remember objects within 1.5 m (the camera often misses a low object near the image
+        # edge, and its mark used to expire while the dog walked into it, 2026-11-16).
+        [ "${TRAV_SIM:-0}" = 1 ] || fusion_robot=(-p track_view_timeout_s:=3.0 -p track_max_age_s:=60.0
+                                                  -p track_keep_near_m:=1.5 -p view_margin:=0.15)
         bg fusion python3 "${D}/object_box_fusion.py" --ros-args "${cam_args[@]}" \
             -p floor_estimation:="$([ "${TRAV_SIM:-0}" = 1 ] && echo fixed || echo histogram)" \
             -p step_over_height_max:="${step}" "${fusion_robot[@]}"
-        if [ "${TRAV_VLM:-1}" = 1 ]; then
-            bg vlm python3 "${D}/vlm_heuristic_node.py" --ros-args --params-file "${D}/ollama.yaml" "${cam_args[@]}" \
-                -p ollama_url:="${TRAV_OLLAMA_URL}" -p dry_run:=false -p backend:="${backend}" \
-                -p step_over_height_max:="${step}" ${TRAV_VLM_MODEL:+-p model:="${TRAV_VLM_MODEL}"}
-            gait_args+=(-p use_semantic:=true)
-        fi
+        # Runs with TRAV_VLM=0 too (use_vlm false): the protected classes still mark the costmap.
+        local prot_args=()
+        [ -f "${D}/protected_classes.yaml" ] && prot_args=(--params-file "${D}/protected_classes.yaml")
+        bg vlm python3 "${D}/vlm_heuristic_node.py" --ros-args --params-file "${D}/ollama.yaml" "${prot_args[@]}" \
+            "${cam_args[@]}" -p ollama_url:="${TRAV_OLLAMA_URL}" -p dry_run:=false -p backend:="${backend}" \
+            -p use_vlm:="$([ "${TRAV_VLM:-1}" = 1 ] && echo true || echo false)" \
+            -p step_over_height_max:="${step}" ${TRAV_VLM_MODEL:+-p model:="${TRAV_VLM_MODEL}"}
+        gait_args+=(-p use_semantic:=true)
     fi
 
     if [ "${GAIT_ENABLE_HARDWARE:-false}" = true ]; then
@@ -162,6 +171,12 @@ do_start() {
         # topic, which nothing on the dog listens to (gait decisions logged only).
         gait_args+=(-p backend:=gazebo -p dry_run:=true)
     fi
+    # --step-over-crawl: picks objects on the path to step over with the low-level crawl.
+    case "${TRAV_CRAWL:-off}" in
+        dry|align|crawl)
+            bg crawl python3 "${D}/step_over_coordinator.py" --ros-args -p mode:="${TRAV_CRAWL}" \
+                -p h_min:="${step}" -p request_dir:="$(dirname "${LOG}")/step_over" ;;
+    esac
     # HIGH_STEP when an object + foot_margin (0.02) fits under the foot: clearance = step + margin.
     gait_args+=(-p foot_clearance:="$(python3 -c "print(float('${step}') + 0.02)")")
     bg gait python3 "${D}/gait_supervisor.py" --ros-args "${gait_args[@]}"

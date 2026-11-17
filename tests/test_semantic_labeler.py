@@ -92,3 +92,35 @@ def test_crop_bbox_margin_and_clamp():
     assert (u0, v0) == (0, 0) and u1 > 100 and v1 > 50
     assert crop.shape == (v1 - v0, u1 - u0, 3)
     assert sl.crop_bbox(img, [10, 10, 15, 15]) is None
+
+
+PROTECTED = ["potted plant", "Vase", "laptop", ""]
+
+
+def test_protected_class_spellings_match():
+    assert sl.is_protected("potted plant", PROTECTED)
+    assert sl.is_protected("Potted_Plant ", PROTECTED)
+    assert sl.is_protected("vase", PROTECTED)
+    assert not sl.is_protected("cable", PROTECTED)
+    assert not sl.is_protected("", PROTECTED)          # the empty default entry protects nothing
+    assert not sl.is_protected("potted plant", [""])
+
+
+def test_protected_measured_is_avoid_whatever_the_vlm_said():
+    # On the dog (2026-11-16) llava:7b called the plant CAUTION, which Nav2 may cross.
+    final, source, low = sl.combine("CAUTION", 1.0, "STEP_OVER", 0.7)
+    assert sl.protect("potted plant", PROTECTED, final, source, low, "STEP_OVER") == ("AVOID", "protected", False)
+    # Even a confident STEP_OVER from the VLM cannot lower it.
+    final, source, low = sl.combine("STEP_OVER", 1.0, "STEP_OVER", 0.7)
+    assert sl.protect("laptop", PROTECTED, final, source, low, "STEP_OVER")[0] == "AVOID"
+
+
+def test_protected_unmeasured_is_caution_not_avoid():
+    # No LiDAR height: one signal only, so it never blocks cells on its own.
+    assert sl.protect("vase", PROTECTED, "UNKNOWN", "none", True, "UNKNOWN") == ("CAUTION", "protected_unmeasured", True)
+    assert sl.protect("vase", PROTECTED, "CAUTION", "vlm_unmeasured", True, "UNKNOWN")[0] == "CAUTION"
+
+
+def test_unprotected_class_is_unchanged():
+    assert sl.protect("cable", PROTECTED, "STEP_OVER", "agree", False, "STEP_OVER") == ("STEP_OVER", "agree", False)
+    assert sl.protect("chair", PROTECTED, "AVOID", "geometry", False, "AVOID") == ("AVOID", "geometry", False)

@@ -84,19 +84,37 @@ remote="${SSH_CONNECTION:+1}"
 echo "Before ($(hostname)):"
 state
 echo
-echo "Writing $NM_CONF (sudo)..."
-printf '# fix_wifi_powersave.sh: power saving stalls the Go2 Wi-Fi link\n[connection]\nwifi.powersave = 2\n' |
-    sudo tee "$NM_CONF" >/dev/null
 
+nm_want="$(printf '# fix_wifi_powersave.sh: power saving stalls the Go2 Wi-Fi link\n[connection]\nwifi.powersave = 2\n')"
 opts=""
 loaded rtw88_core && opts+="options rtw88_core disable_lps_deep=y\n"
 for m in $RTL_FAMILY; do
     loaded "$m" && opts+="options $m rtw_power_mgnt=0 rtw_ips_mode=0\n"
 done
+mod_want="$(printf "# fix_wifi_powersave.sh: Realtek USB dongle power saving stalls the link\n%b" "$opts")"
+
+# Already done and in effect: change nothing. Reloading the driver again only dropped the
+# Wi-Fi, and on the workstation it did not come back without a restart (2026-11-16).
+live_ok=1
+if loaded rtw88_core && [ "$(cat /sys/module/rtw88_core/parameters/disable_lps_deep 2>/dev/null)" != Y ]; then
+    live_ok=0
+fi
+for m in $RTL_FAMILY; do
+    if loaded "$m" && [ "$(cat "/sys/module/$m/parameters/rtw_power_mgnt" 2>/dev/null)" != 0 ]; then
+        live_ok=0
+    fi
+done
+if [ "$(cat "$NM_CONF" 2>/dev/null)" = "$nm_want" ] && { [ -z "$opts" ] || [ "$(cat "$MOD_CONF" 2>/dev/null)" = "$mod_want" ]; } \
+   && [ "$live_ok" = 1 ]; then
+    echo "Power saving is already off and in effect: nothing changed, Wi-Fi not reloaded."
+    exit 0
+fi
+
+echo "Writing $NM_CONF (sudo)..."
+printf '%s\n' "$nm_want" | sudo tee "$NM_CONF" >/dev/null
 if [ -n "$opts" ]; then
     echo "Writing $MOD_CONF (sudo)..."
-    printf "# fix_wifi_powersave.sh: Realtek USB dongle power saving stalls the link\n${opts}" |
-        sudo tee "$MOD_CONF" >/dev/null
+    printf '%s\n' "$mod_want" | sudo tee "$MOD_CONF" >/dev/null
 fi
 
 if [ -n "$remote" ]; then

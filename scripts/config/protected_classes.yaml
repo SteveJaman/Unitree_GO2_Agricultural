@@ -1,0 +1,23 @@
+# Classes the robot must never touch, chosen by the operator (vlm_heuristic_node.py).
+#
+# A detection of one of these classes (YOLO's COCO name, or the sim stand-in's) is
+# published AVOID (blocked in the Nav2 costmap) when the LiDAR measured it, at least
+# CAUTION when it did not, with protected_margin (m) of extra keep-out around it. The
+# VLM is not asked about these and cannot lower them. Spelling: case and "_" vs " "
+# do not matter ("potted plant" = "Potted_Plant").
+#
+# Edit the list to change what is protected; wifi_3d_nav.sh --semantic copies this file
+# into the session (or TRAV_PROTECTED_FILE=other.yaml). An empty list turns the rule off.
+vlm_heuristic_node:
+  ros__parameters:
+    protected_classes:
+      - potted plant     # COCO: the lab's plants (a leg hit one, 2026-11-16)
+      - vase
+      - laptop
+      - cell phone
+      - tv
+      - person
+      - cat
+      - dog
+      - wine glass
+    protected_margin: 0.10

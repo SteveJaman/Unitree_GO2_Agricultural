@@ -9,7 +9,7 @@ const CODE_KEY = 'go2-hub-code';
 export function parseHash(hash = window.location.hash) {
   const h = hash.replace(/^#/, '');
   const code = h.match(/(?:^|[?&/])code=(\d{4,8})/)?.[1] || null;
-  const route = h.match(/^\/(system(?:\/logs)?|settings)/)?.[1] || 'map';
+  const route = h.match(/^\/(system(?:\/logs)?|settings|decisions(?:\/(?:how|results))?)/)?.[1] || 'map';
   return { route, code };
 }
 

@@ -85,7 +85,10 @@ Other entry points:
   usable on a machine without 3D acceleration. After a run, export a solid
   presentation mesh. **System** tab: why the dog isn't moving, every log, a
   copyable debug report. **Settings** tab: collision threshold and speed,
-  changed live.
+  changed live. **Decisions** tab: every object the robot tracks with its
+  measured height, the VLM's answer, the decision and why; a downloadable
+  timeline; the protected object types, editable live; and how it decides and
+  the results, in plain language (plays a sample when the robot is offline).
 - **Camera obstacles:** `--camera-obstacles` turns monocular depth, scaled by
   the LiDAR, into Nav2 obstacles (glass, table legs). `--fusion` colours the
   map from the calibrated camera.
