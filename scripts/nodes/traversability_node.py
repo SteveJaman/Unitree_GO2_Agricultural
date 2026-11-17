@@ -33,6 +33,7 @@ import math
 import os
 import sys
 import threading
+import types
 import time
 import urllib.error
 import urllib.request
@@ -119,6 +120,11 @@ class Traversability(Node):
         p('depth_stride', 4)                # use every Nth depth pixel
         p('map_frame', 'lidar3d_map')
         p('base_frame', 'base_link')
+        p('log_path', '')                   # JSONL run log (empty = off)
+        p('crop_dir', '')                   # folder for the crops sent to the VLM (empty = off)
+        p('sim_camera', False)
+        p('cam_hfov', 1.2)
+        p('cam_mount', [0.327, 0.0, 0.043])
         p('base_height', 0.30)              # m, base_link above the floor (TF floor guess)
         p('max_range', 5.0)                 # m around the robot that is analysed
         p('min_range', 0.6)                 # m: ignore points this close (the robot's own body)
@@ -146,6 +152,10 @@ class Traversability(Node):
         self.src = str(gp('height_source'))
         self.depth_timeout, self.stride = float(gp('depth_timeout')), max(1, int(gp('depth_stride')))
         self.map_frame, self.base_frame = gp('map_frame'), gp('base_frame')
+        self.log_path = str(gp('log_path'))
+        self.crop_dir = str(gp('crop_dir'))
+        self.sim_camera, self.cam_hfov = bool(gp('sim_camera')), float(gp('cam_hfov'))
+        self.cam_mount = [float(v) for v in gp('cam_mount')]
         self.base_height, self.max_range = float(gp('base_height')), float(gp('max_range'))
         self.min_range = float(gp('min_range'))
         self.accum_s = float(gp('accum_s'))
@@ -307,13 +317,25 @@ class Traversability(Node):
         if cv2 is None:
             return None
         msg, info = self.image, self.info
-        if msg is None or info is None:
+        if msg is None:
             return None
-        try:
-            R, tr = transform_matrix(self.tf_buffer.lookup_transform(
-                self.map_frame, msg.header.frame_id, Time()).transform)
-        except TransformException:
-            return None
+        if info is None or self.sim_camera:
+            f = (msg.width / 2.0) / math.tan(self.cam_hfov / 2.0)
+            info = types.SimpleNamespace(width=msg.width, height=msg.height, k=[
+                f, 0.0, msg.width / 2.0, 0.0, f, msg.height / 2.0, 0.0, 0.0, 1.0])
+            try:
+                Rb, tb = transform_matrix(self.tf_buffer.lookup_transform(
+                    self.map_frame, self.base_frame, Time()).transform)
+            except TransformException:
+                return None
+            R = np.column_stack([-Rb[:, 1], -Rb[:, 2], Rb[:, 0]])
+            tr = tb + Rb @ np.array(self.cam_mount)
+        else:
+            try:
+                R, tr = transform_matrix(self.tf_buffer.lookup_transform(
+                    self.map_frame, msg.header.frame_id, Time()).transform)
+            except TransformException:
+                return None
         (x0, y0), (x1, y1) = t.bbox
         corners = np.array([(x, y, z) for x in (x0, x1) for y in (y0, y1)
                             for z in (floor_z, floor_z + t.height)])
@@ -343,6 +365,10 @@ class Traversability(Node):
             ok, jpg = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if not ok:
                 return
+            if self.crop_dir:
+                os.makedirs(self.crop_dir, exist_ok=True)
+                with open(os.path.join(self.crop_dir, f'track{t.id}_{int(time.time())}.jpg'), 'wb') as cf:
+                    cf.write(jpg.tobytes())
             body = json.dumps({
                 'model': self.vlm_model, 'prompt': tc.build_prompt(t.height), 'stream': False,
                 'format': 'json', 'images': [base64.b64encode(jpg.tobytes()).decode('ascii')],
@@ -415,9 +441,20 @@ class Traversability(Node):
              'n_pts': t.n_pts, 'decision': t.decision,
              'vlm': t.verdict} for t in trusted]}
         self.status_pub.publish(String(data=json.dumps(status)))
+        if self.log_path:
+            rec = {'t': round(time.time(), 2), 'vlm': bool(self.use_vlm), 'step_limit': self.step_limit,
+                   'base': [round(bx, 3), round(by, 3), round(yaw, 3)], 'floor': round(floor_z, 3),
+                   'tracks': [{'id': t.id, 'x': round(t.x, 2), 'y': round(t.y, 2),
+                               'h': round(t.height, 3), 'n': t.n_pts, 'seen': t.seen_count,
+                               'dec': t.decision, 'v': t.verdict} for t in tracks]}
+            try:
+                with open(self.log_path, 'a') as lf:
+                    lf.write(json.dumps(rec) + '\n')
+            except OSError as e:
+                self.get_logger().warn(f'cannot write {self.log_path}: {e}', throttle_duration_sec=10.0)
         self.get_logger().info(
             f'[{self.active_source}] floor {floor_z:+.3f} m, ' + (', '.join(
-                f'#{t.id} {t.height * 100:.0f}cm {t.decision}' for t in trusted) or 'no objects'),
+                f'#{t.id} ({t.x:.2f},{t.y:.2f}) {t.height * 100:.0f}cm n={t.n_pts} {t.decision}' for t in trusted) or 'no objects'),
             throttle_duration_sec=5.0)
 
     def gait_mode(self, trusted, bx, by, yaw):
