@@ -111,3 +111,9 @@ def test_resume_only_once_the_object_is_behind_the_rear_feet():
     assert not co.is_clear(c, (0.0, 0.0, 0.0))[0]
     assert not co.is_clear(c, (0.9, 0.0, 0.0))[0]                     # body past it, rear feet not
     assert co.is_clear(c, (1.10, 0.0, 0.0))[0]                        # 0.84 < 1.10 - 0.22
+
+
+def test_executor_sim_command_runs_the_crawl_in_the_container():
+    cmd = ex.crawl_command({"id": "9", "height": 0.06, "depth": 0.08, "gap": 0.12}, sim=True)
+    assert "python3 /tmp/go2-trav/step_over_crawl.py --sim --step-over" in cmd
+    assert ". /tmp/go2-trav/env.sh" in cmd and "--resume-session" not in cmd and "ssh" not in cmd

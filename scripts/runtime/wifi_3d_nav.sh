@@ -300,11 +300,11 @@ if [ "${TRAV_CRAWL}" != "off" ] && [ "${TRAV_SEMANTIC}" != "true" ]; then
     echo "[wifi_3d_nav] ERROR: --step-over-crawl requires --semantic (it steps over the objects the traversability nodes measure)" >&2
     exit 2
 fi
-if [ "${TRAV_CRAWL}" = "crawl" ] && [ "${SIM}" = "true" ]; then
-    echo "[wifi_3d_nav] ERROR: --step-over-crawl crawl drives the real dog's joints; in --sim use dry or align" >&2
+if [ "${TRAV_CRAWL}" = "crawl" ] && [ "${SIM}" = "true" ] && [ "${SIM_GAIT:-1}" = "0" ]; then
+    echo "[wifi_3d_nav] ERROR: --sim --step-over-crawl crawl replays the crawl on the sim's legs: needs SIM_GAIT=1" >&2
     exit 2
 fi
-if [ "${TRAV_CRAWL}" = "crawl" ]; then
+if [ "${TRAV_CRAWL}" = "crawl" ] && [ "${SIM}" != "true" ]; then
     echo "[wifi_3d_nav] [WARN] --step-over-crawl crawl: the dog leaves sport mode and crawls over objects on its path" \
          "(Unitree's balance OFF while it does). Someone by the dog with the remote (docs/hardware/step_over_crawl.md)." >&2
 fi
@@ -706,6 +706,8 @@ start_traversability() {
     docker cp "${SCRIPT_DIR}/traversability_nodes.sh" "${CONTAINER_NAME}:${TRAV_D}/traversability_nodes.sh" >/dev/null || return 1
     docker cp "${REPO_DIR}/scripts/config/ollama.yaml" "${CONTAINER_NAME}:${TRAV_D}/ollama.yaml" >/dev/null || return 1
     # The operator's protected classes (never touched: AVOID in the costmap).
+    # The low-level step-over, for --sim --step-over-crawl crawl (runs here against the sim's legs).
+    docker cp "${REPO_DIR}/scripts/robot/step_over_crawl.py" "${CONTAINER_NAME}:${TRAV_D}/step_over_crawl.py" >/dev/null || true
     docker cp "${TRAV_PROTECTED_FILE:-${REPO_DIR}/scripts/config/protected_classes.yaml}" \
         "${CONTAINER_NAME}:${TRAV_D}/protected_classes.yaml" >/dev/null \
         || echo "[3d] WARN: no protected classes (${TRAV_PROTECTED_FILE:-scripts/config/protected_classes.yaml} not copied)"
@@ -1273,8 +1275,11 @@ start_arm_state
 EXECUTOR_PID=""
 if [ "${TRAV_CRAWL}" = "crawl" ]; then
     mkdir -p "${NAV2_WIFI_DIR}/ws/log/3d/step_over"
+    # --sim: the crawl replays on the Gazebo legs inside go2-lidar3d instead of SSH to the dog.
+    exec_args=()
+    [ "${SIM}" = "true" ] && exec_args=(--sim)
     python3 -u "${REPO_DIR}/scripts/tools/step_over_executor.py" "${NAV2_WIFI_DIR}/ws/log/3d/step_over" \
-        > "${TWIN_LOG_DIR}/step_over_executor.log" 2>&1 &
+        "${exec_args[@]}" > "${TWIN_LOG_DIR}/step_over_executor.log" 2>&1 &
     EXECUTOR_PID=$!
 fi
 # Before the watcher starts: it prints phase 4 at once.

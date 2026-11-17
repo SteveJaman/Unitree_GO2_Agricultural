@@ -359,6 +359,18 @@ def dense(plan, dt=0.02):
     return out
 
 
+def dense_bodies(plan, dt=0.02):
+    """The body (x, y) at each dense() sample, same order (the sim moves the body by it)."""
+    out = []
+    for i in range(1, len(plan.keys)):
+        k0, k1 = plan.keys[i - 1], plan.keys[i]
+        n = max(1, int(round(k1["t"] / dt)))
+        for j in range(1, n + 1):
+            s = smooth(j / n)
+            out.append(tuple(a + (b - a) * s for a, b in zip(k0["body"], k1["body"])))
+    return out
+
+
 def over_object_clearance(plan, samples):
     """Lowest height (m) any foot has above the object's top while it is over the object
     (foot centre within FOOT_R of the object along x); None if no foot passes over."""
@@ -666,6 +678,127 @@ class LowLevel:
               f"or --restand)")
 
 
+class SimLowLevel(LowLevel):
+    """--sim: the same moves in the Gazebo sim (gazebo/run_sim.sh with SIM_GAIT=1). The leg
+    joints go to /sim/leg/<joint>/cmd_pos (Gazebo joint position controllers) and the body
+    follows the plan through the sim's velocity input (TCP 17999, like Nav2's). The sim's
+    legs carry nothing (the body is held by VelocityControl, gravity off), so this shows
+    the foot paths and the contacts with objects, not balance: no sag, no tilt, no fall.
+    Needs the sim session's ROS DDS settings in the environment (go2-lidar3d)."""
+
+    DT = 0.02
+    NAMES = [f"{leg}_{j}_joint" for leg in LEGS for j in ("hip", "thigh", "calf")]
+
+    def __init__(self, iface=None):          # noqa: D401 - no SDK, no robot
+        import socket
+        import struct
+        import threading
+
+        import rclpy
+        from rclpy.executors import SingleThreadedExecutor
+        from sensor_msgs.msg import JointState
+        from std_msgs.msg import Bool, Float64
+
+        if not rclpy.ok():
+            rclpy.init()
+        self.node = rclpy.create_node("step_over_crawl_sim")
+        self.Float64, self.Bool = Float64, Bool
+        self.pubs = [self.node.create_publisher(Float64, f"/sim/leg/{n}/cmd_pos", 10) for n in self.NAMES]
+        self.ext_pub = self.node.create_publisher(Bool, "/sim/legs/external", 10)
+        self.q_meas = None
+        self.node.create_subscription(JointState, "/joint_states", self._on_js, 10)
+        ex = SingleThreadedExecutor()
+        ex.add_node(self.node)
+        threading.Thread(target=ex.spin, daemon=True).start()
+        self.vel = struct.Struct("!fff")
+        self.sock = socket.create_connection(("127.0.0.1", 17999), timeout=3.0)
+        self.state, self.state_t = True, time.monotonic()
+        self.kp, self.phase, self.log, self.log_n = self.KP, "", None, 0
+        self.ki, self.i_corr, self.I_MAX, self.i_fade, self.q_ref = 0.0, [0.0] * 12, 0.35, 0.0, None
+        self.ff_target, self.ff_gain, self.ff_height, self.ff_mass, self.ff_com = 0.0, 0.0, 0.30, 17.0, (0.0, 0.0)
+        self.tau, self.lean_ref, self.lean_limit, self.max_temp, self.n_checks = [0.0] * 12, None, 0.0, 99, 0
+        self.mode_name, self.last_q = "sim", None
+        self.body_ref, self.body_prev, self.body_t, self.v = None, None, 0.0, (0.0, 0.0)
+        self.sport = None
+
+    def _on_js(self, msg):
+        d = dict(zip(msg.name, msg.position))
+        if all(n in d for n in self.NAMES):
+            self.q_meas = [d[n] for n in self.NAMES]
+
+    def wait_state(self, timeout=5.0):
+        end = time.monotonic() + timeout
+        while self.q_meas is None and time.monotonic() < end:
+            time.sleep(0.05)
+        if self.q_meas is None:
+            raise RuntimeError("no /joint_states with the leg joints: is the sim up with SIM_GAIT=1?")
+
+    def q_now(self):
+        return list(self.last_q if self.last_q is not None else self.q_meas)
+
+    def tilt_deg(self):
+        return 0.0
+
+    def rp_deg(self):
+        return (0.0, 0.0)
+
+    def max_motor_temp(self):
+        return 30
+
+    def check(self, max_tilt):
+        self.state_t = time.monotonic()
+
+    def integrate(self, q_ref):
+        return list(q_ref)
+
+    def release_sport(self):
+        self.ext_pub.publish(self.Bool(data=True))
+        print("[crawl] sim: the trot paused; the crawl drives the Gazebo leg joints")
+
+    def send(self, q, kp, kd):
+        for p, v in zip(self.pubs, q):
+            p.publish(self.Float64(data=float(v)))
+        self.last_q = list(q)
+        now = time.monotonic()
+        if self.body_ref is None:
+            self.v, self.body_prev = (0.0, 0.0), None
+        elif self.body_prev is None:
+            self.v, self.body_prev, self.body_t = (0.0, 0.0), self.body_ref, now
+        elif self.body_ref != self.body_prev:
+            dt = max(now - self.body_t, 1e-3)
+            self.v = ((self.body_ref[0] - self.body_prev[0]) / dt, (self.body_ref[1] - self.body_prev[1]) / dt)
+            self.body_prev, self.body_t = self.body_ref, now
+        try:
+            self.sock.sendall(self.vel.pack(float(self.v[0]), float(self.v[1]), 0.0))
+        except OSError:
+            pass
+        self._log(q)
+
+    def _log(self, q_cmd):
+        if self.log is None:
+            return
+        self.log_n += 1
+        if self.log_n % 2:
+            return
+        self.log_w.writerow([f"{time.monotonic() - self.log_t0:.3f}", self.phase, self.kp, self.ki, "0.00", "0.00"]
+                            + [f"{v:.4f}" for v in q_cmd] + ["+0.0000"] * 12 + ["+0.0000"] * 12 + ["+0.00"] * 12)
+
+    def safe_stop(self, why, crouch_s=0.8, max_crouch_tilt=35.0):
+        print(f"\n[crawl] STOP (sim): {why}")
+        self.damp()
+
+    def damp(self, seconds=0.5):
+        try:
+            self.sock.sendall(self.vel.pack(0.0, 0.0, 0.0))
+        except OSError:
+            pass
+
+    def hand_back(self):
+        self.damp()
+        self.ext_pub.publish(self.Bool(data=False))
+        print("[crawl] sim: the trot drives the legs again")
+
+
 def run_check(a):
     """Read only: /lowstate rate, joint angles, tilt and the current motion mode."""
     ll = LowLevel(a.iface)
@@ -804,11 +937,13 @@ def run_stand(a):
     if a.lift and print_lift(a, lift):
         sys.exit("[crawl] the lift plan has problems: not started")
     crawl = dense(lo_plan) if a.leg_over else []
+    bodies = dense_bodies(lo_plan) if a.leg_over else []
     if a.step_over:
         plan = Plan(a).build()
         if print_plan(plan):
             sys.exit("[crawl] the crawl plan has problems: not started")
         crawl = dense(plan)
+        bodies = dense_bodies(plan)
         last = len(plan.keys) - 1
         if a.stop_after:
             # Stop only with every foot on the floor: at the next "down" or body re-centre.
@@ -816,7 +951,8 @@ def run_stand(a):
             while last < len(plan.keys) - 1 and not (plan.keys[last]["name"].endswith(" down")
                                                      or plan.keys[last]["swing"] is None):
                 last += 1
-            crawl = [c for c in crawl if c[0] <= last]
+            keep = [k for k, c in enumerate(crawl) if c[0] <= last]
+            crawl, bodies = [crawl[k] for k in keep], [bodies[k] for k in keep]
         print(f"[crawl] running keyframes 1-{last} of {len(plan.keys) - 1} "
               f"({sum(plan.keys[i]['t'] for i in range(1, last + 1)):.0f} s)")
     what = (("lift " + a.lift) if a.lift else ("leg-over " + a.leg_over) if a.leg_over
@@ -827,7 +963,8 @@ def run_stand(a):
     print("        a hand on it the first time. Ctrl+C at any time: joints go soft, the dog settles.")
     if not a.yes and input("Type 'yes' to start: ").strip().lower() != "yes":
         sys.exit("[crawl] not started")
-    ll = LowLevel(a.iface)
+    sim = getattr(a, "sim", False)
+    ll = SimLowLevel() if sim else LowLevel(a.iface)
     ll.wait_state()
     hot = ll.max_motor_temp()
     if hot > a.start_temp:
@@ -841,8 +978,12 @@ def run_stand(a):
         ll.release_sport()
         released = True
         q = ll.q_now()
-        print(f"[crawl] lying pose read; standing up ({a.ramp:.1f} s)...")
-        q = ll.ramp(LIE_DOWN, a.ramp, a.max_tilt, q_from=q)
+        q_sim0 = q
+        if sim:
+            print(f"[crawl] sim: from the trot's stand to the crawl's ({a.ramp:.1f} s)...")
+        else:
+            print(f"[crawl] lying pose read; standing up ({a.ramp:.1f} s)...")
+            q = ll.ramp(LIE_DOWN, a.ramp, a.max_tilt, q_from=q)
         q = ll.ramp(q_stand, a.ramp, a.max_tilt, q_from=q)
         ll.ki = a.ki          # integral correction from the stand on (0: off)
         ll.ff_height, ll.ff_mass, ll.ff_com = a.stand_height, a.mass, (a.com_x, a.com_y)
@@ -858,7 +999,9 @@ def run_stand(a):
         if crawl:
             ll.kp, shown = a.kp_lift, None
 
-            for i, name, q_k, _p, _f in crawl:
+            for k_s, (i, name, q_k, _p, _f) in enumerate(crawl):
+                if sim:
+                    ll.body_ref = bodies[k_s]
                 if i != shown:
                     shown = i
                     ll.phase = f"{i} {name}"
@@ -887,11 +1030,17 @@ def run_stand(a):
                   f"(change: roll {r - r0:+.1f}, pitch {p - p0:+.1f})")
             ll.phase, ll.kp = "settle", ll.KP
             ll.hold(q, 1.0, a.max_tilt)
-        print("[crawl] lying down...")
         ll.ki, ll.i_fade = 0.0, a.ramp / 3          # the correction fades as the dog lies down
         ll.ff_target, ll.lean_ref = 0.0, None       # feed-forward fades too; no lean abort lying down
-        ll.phase = "lying down"
-        q = ll.ramp(LIE_DOWN, a.ramp, a.max_tilt, q_from=q)
+        if sim:
+            ll.body_ref = None
+            print("[crawl] sim: back to the trot's stand...")
+            ll.phase = "back to the trot"
+            q = ll.ramp(q_sim0, a.ramp, a.max_tilt, q_from=q)
+        else:
+            print("[crawl] lying down...")
+            ll.phase = "lying down"
+            q = ll.ramp(LIE_DOWN, a.ramp, a.max_tilt, q_from=q)
         ll.damp(1.0)
         print("[crawl] done")
     except (KeyboardInterrupt, RuntimeError) as ex:
@@ -901,11 +1050,13 @@ def run_stand(a):
             ll.log.close()
         if released:
             ll.hand_back()
-            if a.restand or a.resume_session:
+            if sim:
+                pass                                    # the sim's trot is back; nothing to restand
+            elif a.restand or a.resume_session:
                 ll.sport.StandUp()
                 time.sleep(1.5)
                 ll.sport.BalanceStand()
-            if a.resume_session:
+            if a.resume_session and not sim:
                 # Back to how the navigation session's sport bridge left the dog: ClassicWalk,
                 # the remote ignored (wifi_3d_nav.sh --semantic --step-over-crawl).
                 time.sleep(1.0)
@@ -980,6 +1131,8 @@ def main():
                     help="--lift: joint stiffness from the body shift on (the stand uses 60)")
     ap.add_argument("--ki", type=float, default=1.0,
                     help="--stand/--lift: integral correction, rad/s per rad of error (0: pure PD)")
+    ap.add_argument("--sim", action="store_true",
+                    help="drive the Gazebo sim's leg joints and body instead of the dog (SIM_GAIT=1)")
     ap.add_argument("--stop-after", type=int, default=0,
                     help="--step-over: run keyframes 1..N (rounded up to feet-down), then lie down")
     ap.add_argument("--log", default="", help="--stand/--lift: CSV of roll, pitch, joint commands and lag")

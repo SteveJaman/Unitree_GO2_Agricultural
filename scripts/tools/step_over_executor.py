@@ -15,6 +15,12 @@ on the dog and writes REQUEST_DIR/result_<id>.json: {"ok", "returncode", "summar
 older than --max-age s is not run (a stale file from an earlier session).
 
   step_over_executor.py REQUEST_DIR [--robot unitree@IP] [--dry]
+  step_over_executor.py REQUEST_DIR --sim     # Gazebo: the crawl replays on the sim's legs
+
+--sim (wifi_3d_nav.sh --sim --step-over-crawl crawl): instead of SSH to the dog, runs
+step_over_crawl.py --sim inside the go2-lidar3d container with the session's DDS settings
+(/tmp/go2-trav/env.sh, written by traversability_nodes.sh); it drives the Gazebo leg joints
+and the body (gazebo/sim, SIM_GAIT=1). The sim shows the foot paths and contacts, not balance.
 """
 
 import argparse
@@ -38,14 +44,22 @@ def robot_target(arg):
     return f"unitree@{ip}" if ip else ""
 
 
-def crawl_command(req):
-    """The command run on the dog for a request (values range-checked)."""
+SIM_CONTAINER = os.environ.get("CONTAINER_NAME", "go2-lidar3d")
+
+
+def crawl_command(req, sim=False):
+    """The command for a request (values range-checked): on the dog, or (sim) the shell
+    line run inside the sim's go2-lidar3d container."""
     h, d, gap = float(req["height"]), float(req["depth"]), float(req["gap"])
     if not (0.02 <= h <= 0.15 and 0.01 <= d <= 0.15 and 0.0 <= gap <= 0.30):
         raise ValueError(f"out of range: height {h}, depth {d}, gap {gap}")
     rid = "".join(c for c in str(req["id"]) if c.isalnum())
-    return (f"~/go2-agri-lowlevel/crawl.sh --step-over --object-height {h:.3f} --object-depth {d:.3f} "
-            f"--object-distance {gap:.3f} --resume-session --yes --log ~/go2-agri-lowlevel/nav_{rid}.csv")
+    args = f"--step-over --object-height {h:.3f} --object-depth {d:.3f} --object-distance {gap:.3f}"
+    if sim:
+        return ("set -a; . /tmp/go2-trav/env.sh; set +a; . /opt/ros/humble/setup.bash; "
+                f"python3 /tmp/go2-trav/step_over_crawl.py --sim {args} --yes "
+                f"--log /ws/log/3d/step_over/nav_{rid}.csv")
+    return f"~/go2-agri-lowlevel/crawl.sh {args} --resume-session --yes --log ~/go2-agri-lowlevel/nav_{rid}.csv"
 
 
 def judge(returncode, output):
@@ -58,7 +72,7 @@ def judge(returncode, output):
     return ok, summary.replace("[crawl] ", "")
 
 
-def handle(path, target, dry, max_age):
+def handle(path, target, dry, max_age, sim=False):
     req = json.load(open(path))
     rid = req["id"]
     out_path = os.path.join(os.path.dirname(path), f"result_{rid}.json")
@@ -67,7 +81,7 @@ def handle(path, target, dry, max_age):
         res = {"ok": False, "returncode": None, "summary": f"request older than {max_age:.0f} s: not run"}
     else:
         try:
-            cmd = crawl_command(req)
+            cmd = crawl_command(req, sim)
         except (KeyError, ValueError) as ex:
             cmd, res = None, {"ok": False, "returncode": None, "summary": f"bad request: {ex}"}
         if cmd and dry:
@@ -75,8 +89,9 @@ def handle(path, target, dry, max_age):
             res = {"ok": True, "returncode": 0, "summary": "dry run: nothing run on the dog"}
         elif cmd:
             print(f"[executor] {req.get('object')}: running the crawl on {target}", flush=True)
-            p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", target, cmd],
-                               capture_output=True, text=True, timeout=900)
+            argv = (["docker", "exec", SIM_CONTAINER, "bash", "-c", cmd] if sim else
+                    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", target, cmd])
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=900)
             output = p.stdout + p.stderr
             ok, summary = judge(p.returncode, output)
             res = {"ok": ok, "returncode": p.returncode, "summary": summary,
@@ -94,16 +109,17 @@ def main():
     ap.add_argument("--robot", default="", help="user@ip (default: the session's cached robot IP)")
     ap.add_argument("--dry", action="store_true", help="answer requests without running anything")
     ap.add_argument("--max-age", type=float, default=30.0)
+    ap.add_argument("--sim", action="store_true", help="replay the crawl on the Gazebo sim's legs")
     a = ap.parse_args()
     os.makedirs(a.request_dir, exist_ok=True)
-    target = robot_target(a.robot)
+    target = f"the sim ({SIM_CONTAINER})" if a.sim else robot_target(a.robot)
     if not target and not a.dry:
         sys.exit("[executor] robot IP unknown (no ~/.cache/go2_wifi_nav/robot_ip): --robot unitree@IP")
     print(f"[executor] watching {a.request_dir} for step-over requests ({'dry' if a.dry else target})", flush=True)
     while True:
         for path in sorted(glob.glob(os.path.join(a.request_dir, "request_*.json"))):
             try:
-                handle(path, target, a.dry, a.max_age)
+                handle(path, target, a.dry, a.max_age, a.sim)
             except Exception as ex:  # noqa: BLE001 - keep serving; the coordinator times out
                 print(f"[executor] {path}: {ex}", flush=True)
         time.sleep(0.5)

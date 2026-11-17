@@ -390,3 +390,11 @@ def test_leg_over_plan_is_clean_and_runs_on_a_fake_robot(monkeypatch):
     assert ll.calls == ["release", "hand_back"]
     beyond = plan.joints([k for k in plan.keys if k["name"].startswith("FR held beyond")][0])[0]
     assert any(all(abs(x - y) < 0.02 for x, y in zip(q, beyond)) for q, _ in ll.sent)
+
+
+def test_dense_bodies_line_up_with_the_samples():
+    plan = sc.Plan(args(stability_margin=0.05)).build()
+    samples, bodies = sc.dense(plan), sc.dense_bodies(plan)
+    assert len(samples) == len(bodies)
+    # The body ends where the last keyframe puts it.
+    assert all(abs(a - b) < 1e-9 for a, b in zip(bodies[-1], plan.keys[-1]["body"]))
