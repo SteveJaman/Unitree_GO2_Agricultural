@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts", "nod
 from object_box_fusion import (  # noqa: E402
     Tracks, classify_height, fuse_detection, ground_point, oriented_box, project)
 
+import object_box_fusion as obf  # noqa: E402
+
 K = (468.0, 468.0, 320.0, 180.0)
 
 
@@ -147,3 +149,30 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+K = (468.0, 468.0, 320.0, 180.0)
+
+
+def test_in_camera_view_centre_and_range():
+    assert obf.in_camera_view((2.0, 0.0, 0.0), K, 6.0)
+    assert not obf.in_camera_view((0.3, 0.0, 0.0), K, 6.0)       # nearer than 0.5 m
+    assert not obf.in_camera_view((5.0, 0.0, 0.0), K, 6.0)       # beyond the 4 m cap
+    assert not obf.in_camera_view((2.0, 3.0, 0.0), K, 6.0)       # outside the image
+
+
+def test_in_camera_view_keeps_objects_near_the_dog():
+    # 1.0 m ahead, low: inside the image, but within near_keep it is not "should be seen",
+    # so its track (and AVOID mark) is not expired while the dog walks up to it.
+    c = (1.0, 0.0, -0.3)
+    assert obf.in_camera_view(c, K, 6.0)
+    assert not obf.in_camera_view(c, K, 6.0, near_keep=1.5)
+    assert obf.in_camera_view((2.0, 0.0, -0.3), K, 6.0, near_keep=1.5)
+
+
+def test_in_camera_view_edge_margin():
+    # Near the bottom edge: in view with a 5 % margin, not with 15 %.
+    fx, fy, cx, cy = K
+    z = -(0.92 * cy) * 2.0 / fy        # projects at v = 1.92 cy
+    assert obf.in_camera_view((2.0, 0.0, z), K, 6.0, margin=0.05)
+    assert not obf.in_camera_view((2.0, 0.0, z), K, 6.0, margin=0.15)

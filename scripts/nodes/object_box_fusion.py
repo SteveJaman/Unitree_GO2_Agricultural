@@ -43,6 +43,28 @@ def project(points_cam, fx, fy, cx, cy):
     return cx - fx * points_cam[:, 1] / depth, cy - fy * points_cam[:, 2] / depth
 
 
+def in_camera_view(c, K, max_range, near_keep=0.0, margin=0.05):
+    """Should the camera be detecting this track right now? c: its point in the camera
+    frame (x forward). False when it is beyond max_range (capped at 4 m), nearer than
+    0.5 m, within near_keep m (horizontally) of the camera, or projects within margin
+    (a fraction of the half-image) of the image edge.
+
+    near_keep: a low object 0.6-1.2 m ahead sits at the bottom edge of the image, where
+    the detector often misses it; counting it as "in view" made the track expire 3 s
+    later and its AVOID mark went with it while the dog walked on (2026-11-16, a leg
+    hit a plant). Within near_keep the track is kept until max_age."""
+    fx, fy, cx, cy = K
+    if not 0.5 < c[0] < min(max_range, 4.0):
+        return False
+    if near_keep > 0 and math.hypot(c[0], c[1]) < near_keep:
+        return False
+    u, v = project(np.asarray(c, float)[None, :], fx, fy, cx, cy)
+    return bool(
+        margin * cx < u[0] < (2 - margin) * cx
+        and margin * cy < v[0] < (2 - margin) * cy
+    )
+
+
 def clusters(points_map, radius):
     """Connected groups of points in the floor plane, as index arrays."""
     tree = cKDTree(points_map[:, :2])
@@ -363,6 +385,9 @@ def main():
             # Forget moved objects (Tracks.prune); 0 = never, as in the sim trials.
             p("track_view_timeout_s", 0.0)  # robot: 3.0
             p("track_max_age_s", 0.0)  # robot: 60.0
+            # Remember objects near the dog (in_camera_view): robot 1.5 m, margin 0.15.
+            p("track_keep_near_m", 0.0)
+            p("view_margin", 0.05)
             gp = lambda k: self.get_parameter(k).value  # noqa: E731
             self.map_frame, self.cam_frame = gp("map_frame"), gp("camera_frame")
             self.floor_z, self.min_points = float(gp("floor_z")), int(gp("min_points"))
@@ -375,6 +400,8 @@ def main():
             self.max_range, self.dry_run = float(gp("max_range")), bool(gp("dry_run"))
             self.view_timeout = float(gp("track_view_timeout_s"))
             self.max_age = float(gp("track_max_age_s"))
+            self.keep_near = float(gp("track_keep_near_m"))
+            self.view_margin = float(gp("view_margin"))
             self.unknown_range = float(gp("unknown_range"))
             self.K = (
                 float(gp("fx")),
@@ -485,16 +512,13 @@ def main():
                             det["class"], det["score"], float(p[0]), float(p[1]), now
                         )
             if self.view_timeout > 0 or self.max_age > 0:
-                fx, fy, cx, cy = self.K
 
                 def in_view(t):
-                    # Camera frame x forward (project()): in range and inside the image.
                     z = t["z"] if t.get("height") is not None else 0.2
                     c = rot @ np.array([t["x"], t["y"], z]) + trans
-                    if not 0.5 < c[0] < min(self.max_range, 4.0):
-                        return False
-                    u, v = project(c[None, :], fx, fy, cx, cy)
-                    return 0.05 * cx < u[0] < 1.95 * cx and 0.05 * cy < v[0] < 1.95 * cy
+                    return in_camera_view(
+                        c, self.K, self.max_range, self.keep_near, self.view_margin
+                    )
 
                 n = self.tracks.prune(now, in_view, self.view_timeout, self.max_age)
                 if n:

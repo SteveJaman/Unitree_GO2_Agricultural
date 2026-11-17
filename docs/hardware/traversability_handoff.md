@@ -61,6 +61,48 @@ step height.
 **Still to do:** walk over objects of known height (2, 3, 5 cm) in `ClassicWalk`, filmed
 from the side, to confirm the 3 cm limit.
 
+## First drive with objects (2026-11-16): a leg hit a plant; protected classes added
+
+A `--semantic` session on the dog drove among small items and fake plants. The dog went
+around the small items and one leg hit a plant. From the session logs
+(`ws/log/3d/traversability/`):
+
+- **The VLM labelled everything CAUTION.** `llava:7b` (the robot's model in
+  `scripts/config/hardware.yaml`) answered CAUTION for every object: potted plant,
+  vase, person, phone, suitcase, chair. The sim evaluation had shown the same:
+  CAUTION for 26 of 28 crops, accuracy 0.25
+  ([traversability_sim.md](../simulation/traversability_sim.md)). CAUTION is cost 200,
+  which Nav2 avoids when it can but may still cross. Only AVOID (254) blocks.
+- **Boxes from an uncalibrated camera.** No `config/camera/front_camera.yaml`: the boxes
+  used the 110° lens estimate, so a mark can sit beside its object.
+- **The gait decisions are logged only.** STOP and CAREFUL never reach the dog (no
+  `unitree_sdk2py` in the container, and the firmware has no foot-lift API). Only the
+  costmap steers.
+- **Going around small items is the 3 cm limit at work:** 3–22 cm is CAUTION in the
+  height band, so the planner takes a cheaper route around.
+
+**Protected classes.** `scripts/config/protected_classes.yaml` lists classes the robot
+must never touch (potted plant, vase, laptop, cell phone, tv, person, cat, dog, wine
+glass). `vlm_heuristic_node.py` publishes a detection of one of them as **AVOID** when the
+LiDAR measured it, and at least CAUTION when it did not. It adds `protected_margin`
+(0.10 m) of keep-out around it. The VLM is not asked about these and cannot lower them.
+The operator edits the list, or passes `TRAV_PROTECTED_FILE=other.yaml`. The rule also
+runs with `TRAV_VLM=0`. Check it in a session:
+`ros2 topic echo /semantic/labels_json` shows `"source": "protected"` and cost 254 for
+a plant. Not yet run on the dog.
+
+**Objects are remembered near the dog.** The box fusion keeps a world-fixed track per
+object, but on the robot it forgot a track the camera "should" see and had not
+matched for 3 s. A low object 0.6–1.2 m ahead sits at the bottom edge of the image,
+where YOLO often misses it, so the track expired, and its AVOID mark with it, as the
+dog walked up to it. Now tracks within 1.5 m of the dog (`track_keep_near_m`) are kept
+until `track_max_age_s` (60 s), and "in view" needs the object 15 % inside the image
+edge (`view_margin`). Not yet run on the dog. Memory across sessions would also need
+the map frame to persist; each session starts a new map.
+
+Still open: the robot's VLM model (llava:7b labels everything CAUTION; `qwen2.5vl` was
+0.64 in the sim evaluation), and the camera calibration.
+
 ## Before every hardware session: pre-session checks
 
 Run these with the robot's stack up and the legs idle. Do not continue past a
