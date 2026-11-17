@@ -185,7 +185,7 @@ cmd_up() {
         -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID:-64}" \
         -e SIM_GUI="$gui" -e SIM_ARM="$SIM_ARM" -e SIM_ARM_IFACE="$SIM_ARM_IFACE" \
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
-        -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
+        -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_DEPTH="${SIM_DEPTH:-0}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 0}" \
         -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
         -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \

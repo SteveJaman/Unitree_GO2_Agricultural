@@ -118,6 +118,8 @@ class Traversability(Node):
         p('height_source', 'auto')          # lidar | depth | auto
         p('depth_timeout', 3.0)             # s without depth before auto falls back to LiDAR
         p('depth_stride', 4)                # use every Nth depth pixel
+        p('sim_depth', False)               # sim depth camera: no camera_info, camera_link axes
+        p('depth_hfov', 1.2)                # rad, used with sim_depth
         p('map_frame', 'lidar3d_map')
         p('base_frame', 'base_link')
         p('log_path', '')                   # JSONL run log (empty = off)
@@ -151,6 +153,7 @@ class Traversability(Node):
 
         self.src = str(gp('height_source'))
         self.depth_timeout, self.stride = float(gp('depth_timeout')), max(1, int(gp('depth_stride')))
+        self.sim_depth, self.depth_hfov = bool(gp('sim_depth')), float(gp('depth_hfov'))
         self.map_frame, self.base_frame = gp('map_frame'), gp('base_frame')
         self.log_path = str(gp('log_path'))
         self.crop_dir = str(gp('crop_dir'))
@@ -228,24 +231,34 @@ class Traversability(Node):
     # ------------------------------------------------------------ height source
     def depth_points(self):
         msg, info = self.depth_msg, self.depth_info or self.info
-        if msg is None or info is None:
+        if msg is None or (info is None and not self.sim_depth):
             return None
         d = depth_meters(msg)
         if d is None:
             self.get_logger().warn(f'unsupported depth encoding {msg.encoding!r}', once=True)
             return None
         try:
-            R, t = transform_matrix(self.tf_buffer.lookup_transform(
-                self.map_frame, msg.header.frame_id, Time()).transform)
+            if self.sim_depth:
+                Rb, tb = transform_matrix(self.tf_buffer.lookup_transform(
+                    self.map_frame, self.base_frame, Time()).transform)
+                R = np.column_stack([-Rb[:, 1], -Rb[:, 2], Rb[:, 0]])
+                t = tb + Rb @ np.array([0.327, 0.0, 0.043])
+            else:
+                R, t = transform_matrix(self.tf_buffer.lookup_transform(
+                    self.map_frame, msg.header.frame_id, Time()).transform)
         except TransformException:
             return None
         s = self.stride
         d = d[::s, ::s]
         v, u = np.meshgrid(np.arange(0, msg.height, s), np.arange(0, msg.width, s), indexing='ij')
         ok = np.isfinite(d) & (d > 0.2) & (d < self.max_range)
-        sx = msg.width / info.width if info.width else 1.0
-        sy = msg.height / info.height if info.height else 1.0
-        fx, fy, cx, cy = info.k[0] * sx, info.k[4] * sy, info.k[2] * sx, info.k[5] * sy
+        if self.sim_depth or info is None:
+            fx = fy = (msg.width / 2.0) / math.tan(self.depth_hfov / 2.0)
+            cx, cy = msg.width / 2.0, msg.height / 2.0
+        else:
+            sx = msg.width / info.width if info.width else 1.0
+            sy = msg.height / info.height if info.height else 1.0
+            fx, fy, cx, cy = info.k[0] * sx, info.k[4] * sy, info.k[2] * sx, info.k[5] * sy
         z = d[ok].astype(np.float64)
         cam = np.stack([(u[ok] - cx) / fx * z, (v[ok] - cy) / fy * z, z], axis=1)
         return cam @ R.T + t
@@ -259,6 +272,7 @@ class Traversability(Node):
                 self.active_source = 'depth'
                 return pts
             if self.src == 'depth':
+                self.get_logger().warn('no depth points: frames/TF missing (depth_msg ' + ('seen' if self.depth_msg is not None else 'NONE') + ')', throttle_duration_sec=10.0)
                 return None
         self.active_source = 'lidar'
         fresh = [p for _, p in self.clouds if len(p)]

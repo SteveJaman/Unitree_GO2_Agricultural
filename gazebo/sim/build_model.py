@@ -325,6 +325,13 @@ def build(go2_root, d1_root, mesh_root, out_dir, mount, stand, sensor_from_base=
   <camera><horizontal_fov>1.2</horizontal_fov><image><width>640</width><height>360</height><format>R8G8B8</format></image>
   <clip><near>0.05</near><far>40</far></clip></camera>
 </sensor></gazebo>""")
+    if camera and os.environ.get("SIM_DEPTH", "0") == "1":
+        gz(robot, """<gazebo reference="sim_camera"><sensor name="front_depth" type="depth_camera">
+  <topic>/camera/depth/image_raw</topic><gz_frame_id>camera_link</gz_frame_id>
+  <update_rate>5</update_rate><always_on>1</always_on>
+  <camera><horizontal_fov>1.2</horizontal_fov><image><width>320</width><height>180</height></image>
+  <clip><near>0.1</near><far>8</far></clip></camera>
+</sensor></gazebo>""")
 
     plugins = [
         f"""<plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
