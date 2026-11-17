@@ -229,6 +229,50 @@ full cycle with no object, then foam, several times in a row with no stop. Until
 use `dry` (proves detection and selection) and `align` (proves the hand-off) in normal
 sessions.
 
+## Feed-forward and the one-leg step-over (2026-11-16, evening)
+
+| Run | Settings | Result |
+|---|---|---|
+| `--stand`, 0.28 m | feed-forward 0.8, `--ki 1.0` | joint error **0.011 rad** RMS (0.139 without feed-forward), roll 0.0°, pitch −0.1° |
+| `--leg-over FR`, no object | feed-forward 0.8 | forward step and the hold beyond were level (≤ 1.4°); lifting the foot again leaned to 6°: the abort lowered the dog safely. The rear-left calf got 16 N m and over-extended: the centre of mass is not where the model puts it (the arm). |
+| `--leg-over FR`, no object | **feed-forward 0.4** | complete; worst lean 4.9° |
+| **`--leg-over FR` over a 6 cm × 5 cm object** | feed-forward 0.4 | **complete**: the foot rose 11 cm, crossed the object and landed beyond it, held 5 s, came back; worst lean 4.6°, back within 0.5° |
+
+The rear hip motors run hot: 61–72 °C after a few runs, and they keep heating while the
+dog **stands** in sport mode. Lie it down between runs; it cools about 1 °C a minute.
+
+## Video run sheet
+
+Do these on the dog in this order. The lines run on the dog (`ssh unitree@<dog-ip>`);
+`~/go2-agri-lowlevel/` has the script and the SDK.
+
+1. **Before filming:** the dog lying down, motors cool. `crawl.sh --check` prints the joint
+   states, and `crawl.sh --stand` refuses to start above 55 °C (`--start-temp`). Someone by
+   the dog, remote ready.
+2. **Per-leg control:** stand, shift onto three feet, front-right foot up 10 cm and down
+   (about 30 s):
+
+   ```bash
+   ~/go2-agri-lowlevel/crawl.sh --lift FR --lift-margin 0.075 --kp-lift 80 --ki 1.0 --ff 0.4 --yes
+   ```
+
+3. **The step-over shot.** Put an object about 6 cm high and 5 cm deep on the floor, its
+   near edge about 6 cm in front of the front-right foot, straight ahead of it. Then:
+
+   ```bash
+   ~/go2-agri-lowlevel/crawl.sh --leg-over FR --stand-height 0.28 --lift-margin 0.075 \
+       --object-distance 0.06 --object-depth 0.05 --object-height 0.06 --landing-margin 0.03 \
+       --ff 0.4 --ki 1.0 --kp-lift 80 --lean-abort 6 --max-tilt 12 --yes
+   ```
+
+   Film from the side, at foot height, so the foot's clearance over the object shows.
+4. **Perception beside it:** a `--semantic` session with `--step-over-crawl dry`. RViz or
+   the dashboard shows the labelled objects, and the terminal shows "would step over …".
+5. Between takes, lie the dog down and wait for `--check` to show the rear hips under 55 °C.
+
+**Not ready to film:** the full crawl (`--step-over`). It fell twice before the
+feed-forward existed, and has not run since.
+
 ## The poster's claims on the real dog
 
 | Poster claim | Real-dog evidence | How to film it |
@@ -237,7 +281,7 @@ sessions.
 | Protected objects: the VLM can only make it more careful | the plant is AVOID, cost 254 (2026-11-16) | the dog goes around the plant |
 | Gait supervisor picks the foot lift | `--step-over-crawl dry` logs "would step over" | terminal with the log beside the dog |
 | Per-leg control (foot lift) | `--lift` on each leg: 10 cm, level within 2.3° | `--lift FR` (≈30 s) |
-| Stepping over an object | `--leg-over FR` over a 6 cm object (planned, not yet run); the crawl over foam (not yet run) | `--leg-over FR`; then `--step-over` once it passes |
+| Stepping over an object | **`--leg-over FR` over a 6 cm object: done 2026-11-16**, lean at most 4.6°; the full crawl (`--step-over`) not yet passed | `--leg-over FR` (≈45 s) |
 
 ## Risks
 
