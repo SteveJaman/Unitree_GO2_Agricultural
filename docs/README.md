@@ -52,6 +52,9 @@ then [architecture](architecture.md), then [status](status.md).
 |---|---|
 | [D1 arm](hardware/d1_arm.md) | Arm protocol, joint control, calibration, Teach & Playback, Wi-Fi, MoveIt 2 |
 | [Traversability handoff](hardware/traversability_handoff.md) | Traversability on the real Go2: measurements, pre-session checks, safety gates |
+| [Learned locomotion plan](hardware/learned_locomotion_plan.md) | Plan for per-leg step-over on the real Go2 with a learned walking controller (foot-swing height input) |
+| [Step over by crawling](hardware/step_over_crawl.md) | `step_over_crawl.py`: low-level per-leg step-over on the real Go2 (`--plan`, `--stand`; not yet run on the dog) |
+| [Real-dog decision test](hardware/real_decision_test.md) | Plan: measure detection, height, label and gait decisions on the real Go2 against ruler-measured objects |
 
 ## Simulation
 

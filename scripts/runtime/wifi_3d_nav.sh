@@ -50,6 +50,12 @@
 #                sport_client with scripts/config/hardware.yaml, still dry_run: logs
 #                "[DRY_RUN] would send FootRaiseHeight(...)"
 #   --send-gait  (requires --hardware) dry_run false: FootRaiseHeight reaches the legs.
+#   --step-over-crawl [dry|align|crawl]  (requires --semantic) step OVER low objects on the
+#                path with the low-level crawl (scripts/nodes/step_over_coordinator.py,
+#                scripts/robot/step_over_crawl.py): dry (default) only logs which objects it
+#                would step over; align pauses Nav2 and lines the dog up, no crawl; crawl
+#                (real dog only) also runs the crawl on the dog, then resumes the goal.
+#                docs/hardware/step_over_crawl.md.
 #                Pre-session checks and the staged rollout: traversability_handoff.md.
 # On exit the gait is set back to NORMAL before the nodes stop.
 #
@@ -150,7 +156,8 @@
 #                            The camera path needs the calibration (TWIN_CAMERA_INFO_FILE,
 #                            default config/camera/front_camera.yaml; --sim: sim_front_camera.yaml)
 #                            and is skipped without it
-#   TRAV_VLM=1               0 = no VLM labels (boxes and gait only)
+#   TRAV_VLM=1               0 = no VLM labels (boxes, gait and the protected classes only)
+#   TRAV_PROTECTED_FILE=scripts/config/protected_classes.yaml   classes never touched (AVOID)
 #   TRAV_OLLAMA_URL=http://localhost:11434 (WSL --sim: the Windows host, the default gateway)
 #   TRAV_SDK_IFACE=          network interface for unitree_sdk2py (--hardware)
 #   Logs: $NAV2_WIFI_DIR/ws/log/3d/traversability/ (gait.log, clusterer.log, fusion.log, vlm.log, ...)
@@ -193,6 +200,7 @@ RESUME="false"
 TRAV_SEMANTIC="false"   # --semantic   traversability costmap layout (add-traversability-layers.sh)
 TRAV_HARDWARE="false"   # --hardware   sport_client backend armed, still dry_run
 TRAV_SEND_GAIT="false"  # --send-gait  dry_run false
+TRAV_CRAWL="off"        # --step-over-crawl [dry|align|crawl]
 SIM="false"
 EXPORT_DB=""
 PASSTHRU=()
@@ -242,6 +250,8 @@ while [ $# -gt 0 ]; do
         --avoid)      export GO2_SPORT_AVOID=1 ;;
         --hardware)   TRAV_HARDWARE="true" ;;
         --send-gait)  TRAV_SEND_GAIT="true" ;;
+        --step-over-crawl)
+            case "${2:-}" in dry|align|crawl) TRAV_CRAWL="$2"; shift ;; *) TRAV_CRAWL="dry" ;; esac ;;
         --world)      SIM_WORLD_ARG="${2:-}"; [ $# -ge 2 ] && shift ;;
         -h|--help)    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *)            PASSTHRU+=("$1") ;;
@@ -286,6 +296,19 @@ if [ "${TRAV_SEND_GAIT}" = "true" ] && [ "${TRAV_HARDWARE}" != "true" ]; then
     echo "[wifi_3d_nav] ERROR: --send-gait requires --hardware (dry_run false only means something with the sport_client backend)" >&2
     exit 2
 fi
+if [ "${TRAV_CRAWL}" != "off" ] && [ "${TRAV_SEMANTIC}" != "true" ]; then
+    echo "[wifi_3d_nav] ERROR: --step-over-crawl requires --semantic (it steps over the objects the traversability nodes measure)" >&2
+    exit 2
+fi
+if [ "${TRAV_CRAWL}" = "crawl" ] && [ "${SIM}" = "true" ]; then
+    echo "[wifi_3d_nav] ERROR: --step-over-crawl crawl drives the real dog's joints; in --sim use dry or align" >&2
+    exit 2
+fi
+if [ "${TRAV_CRAWL}" = "crawl" ]; then
+    echo "[wifi_3d_nav] [WARN] --step-over-crawl crawl: the dog leaves sport mode and crawls over objects on its path" \
+         "(Unitree's balance OFF while it does). Someone by the dog with the remote (docs/hardware/step_over_crawl.md)." >&2
+fi
+export TRAV_CRAWL
 if [ "${TRAV_HARDWARE}" = "true" ]; then
     [ -f "${TRAV_HW_CONFIG}" ] || { echo "[wifi_3d_nav] ERROR: ${TRAV_HW_CONFIG} not found" >&2; exit 2; }
     GAIT_ENABLE_HARDWARE="true"
@@ -682,6 +705,10 @@ start_traversability() {
     done
     docker cp "${SCRIPT_DIR}/traversability_nodes.sh" "${CONTAINER_NAME}:${TRAV_D}/traversability_nodes.sh" >/dev/null || return 1
     docker cp "${REPO_DIR}/scripts/config/ollama.yaml" "${CONTAINER_NAME}:${TRAV_D}/ollama.yaml" >/dev/null || return 1
+    # The operator's protected classes (never touched: AVOID in the costmap).
+    docker cp "${TRAV_PROTECTED_FILE:-${REPO_DIR}/scripts/config/protected_classes.yaml}" \
+        "${CONTAINER_NAME}:${TRAV_D}/protected_classes.yaml" >/dev/null \
+        || echo "[3d] WARN: no protected classes (${TRAV_PROTECTED_FILE:-scripts/config/protected_classes.yaml} not copied)"
     [ "${TRAV_HARDWARE}" = "true" ] && { docker cp "${TRAV_HW_CONFIG}" "${CONTAINER_NAME}:${TRAV_D}/hardware.yaml" >/dev/null || return 1; }
     [ "${TRAV_CAMERA}" = 1 ] && { docker cp "${TRAV_CAMERA_INFO}" "${CONTAINER_NAME}:${TRAV_D}/camera.yaml" >/dev/null || return 1; }
     [ -n "${TRAV_WORLD_FILE}" ] && { docker cp "${TRAV_WORLD_FILE}" "${CONTAINER_NAME}:${TRAV_D}/world_objects.json" >/dev/null || return 1; }
@@ -703,6 +730,7 @@ start_traversability() {
         -e TRAV_WORLD_JSON="$( [ -n "${TRAV_WORLD_FILE}" ] && echo "${TRAV_D}/world_objects.json" )" -e TRAV_STAND_IN="${stand_in}" \
         -e TRAV_OLLAMA_URL="${TRAV_OLLAMA_URL:-}" -e TRAV_HW_CONFIG="${TRAV_D}/hardware.yaml" -e TRAV_STEP_OVER="${TRAV_STEP_OVER}" -e TRAV_VLM_MODEL="${TRAV_VLM_MODEL:-}" \
         -e GAIT_ENABLE_HARDWARE="${GAIT_ENABLE_HARDWARE}" -e GAIT_DRY_RUN="${GAIT_DRY_RUN}" -e TRAV_SDK_IFACE="${TRAV_SDK_IFACE:-}" \
+        -e TRAV_CRAWL="${TRAV_CRAWL}" \
         -e TRAV_HOST_UID="$(id -u)" -e TRAV_HOST_GID="$(id -g)" \
         "${CONTAINER_NAME}" bash "${TRAV_D}/traversability_nodes.sh" start 2>&1 | sed 's/^/    /'
     return "${PIPESTATUS[0]}"
@@ -976,7 +1004,7 @@ fi
 # --semantic: what the traversability nodes get (traversability_nodes.sh starts them
 # once the session's DDS settings are known, in start_twin_when_ready).
 TRAV_NODE_FILES=(low_object_clusterer.py gait_supervisor.py object_box_fusion.py vlm_heuristic_node.py
-                 semantic_labeler.py sim_box_detector.py yolo_json_node.py)
+                 semantic_labeler.py sim_box_detector.py yolo_json_node.py step_over_coordinator.py)
 TRAV_CAMERA_NOTE="off"
 TRAV_WORLD_FILE=""
 if [ "${TRAV_SEMANTIC}" = "true" ]; then
@@ -1168,6 +1196,7 @@ case "${DRIVE}" in
     diff)   echo "  Drive       : diff (forward arcs; recovery only steps back)" ;;
 esac
 echo "  Costmap     : ${TRAV_COSTMAP}"
+[ "${TRAV_CRAWL}" = "off" ] || echo "  Step over   : ${TRAV_CRAWL} (step_over_coordinator; log ws/log/3d/traversability/crawl.log)"
 if [ "${TRAV_SEMANTIC}" = "true" ]; then
     if [ "${SIM}" = "true" ]; then
         TRAV_GAIT_NOTE="gazebo: the sim's legs follow /gait/command"
@@ -1219,6 +1248,7 @@ cleanup() {
     # Normally already done by wifi_nav.sh's GO2_STOP_HOOK; a no-op then.
     [ "${TRAV_SEMANTIC}" = "true" ] && { bash -c "$(trav_stop_cmd)" >/dev/null 2>&1 || true; }
     kill_battery_manager
+    [ -n "${EXECUTOR_PID:-}" ] && { kill "${EXECUTOR_PID}" 2>/dev/null || true; }
     if [ -n "${ARM_STATE_PID}" ]; then
         kill "${ARM_STATE_PID}" 2>/dev/null || true   # stops a running orbit scan first
         wait "${ARM_STATE_PID}" 2>/dev/null || true
@@ -1238,6 +1268,15 @@ trap 'exit 143' TERM
 
 mkdir -p "${TWIN_LOG_DIR}"
 start_arm_state
+# --step-over-crawl crawl: the laptop runs the crawl on the dog over SSH when the
+# coordinator asks (the containers have no SSH to the dog).
+EXECUTOR_PID=""
+if [ "${TRAV_CRAWL}" = "crawl" ]; then
+    mkdir -p "${NAV2_WIFI_DIR}/ws/log/3d/step_over"
+    python3 -u "${REPO_DIR}/scripts/tools/step_over_executor.py" "${NAV2_WIFI_DIR}/ws/log/3d/step_over" \
+        > "${TWIN_LOG_DIR}/step_over_executor.log" 2>&1 &
+    EXECUTOR_PID=$!
+fi
 # Before the watcher starts: it prints phase 4 at once.
 progress 3 "Starting the navigation session (SSH to the dog, Point-LIO, relay, Nav2, RViz)..."
 start_twin_when_ready &
