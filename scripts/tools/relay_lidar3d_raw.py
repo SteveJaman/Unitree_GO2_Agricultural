@@ -18,7 +18,8 @@ few seconds no longer ends the session.
 Edits (tagged TAG; originals kept as <file>.pre-raw):
   * ws/scripts/robot_relay_wifi.py: the relay publisher (it runs on the dog, copied
     there by mapping.sh every session) renames the three topics when GO2_LIDAR3D_RAW=1.
-  * mapping.sh: passes GO2_LIDAR3D_RAW to the dog (ssh does not pass the environment).
+  * mapping.sh: passes GO2_LIDAR3D_RAW to the dog (ssh does not pass the environment),
+    both to the sensors relay and into the Jetson SLAM container's docker exec.
 Run by wifi_nav.sh before every session, like mapping_stop_timeouts.py.
 """
 
@@ -49,6 +50,13 @@ EDITS = {
     MAPPING: [(
         '  "exec env GO2_HOST_IP=$robot_host_ip GO2_RELAY_DOMAIN_ID=$relay_domain ',
         '  "exec env GO2_LIDAR3D_RAW=${GO2_LIDAR3D_RAW:-0} GO2_HOST_IP=$robot_host_ip GO2_RELAY_DOMAIN_ID=$relay_domain ',
+    ), (
+        # SLAM on the Jetson: its relay (the one that streams Point-LIO) runs inside the
+        # go2-lidar3d-onboard container, started by this docker exec. Without the variable
+        # it kept the usual topic names, the levelling node got no odometry or scans, and
+        # the dog still sank under the floor in RViz (2026-11-17: level.log "odom 0").
+        '"exec docker exec -e GO2_LIDAR3D_BACKEND=$backend ',
+        '"exec docker exec -e GO2_LIDAR3D_RAW=${GO2_LIDAR3D_RAW:-0} -e GO2_LIDAR3D_BACKEND=$backend ',
     )],
 }
 
