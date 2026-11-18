@@ -35,8 +35,26 @@ sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart doc
 After that, `SIM_GL=auto` picks `nvidia` by itself. Ollama already runs the VLM on the
 Quadro (8 GB), so the two share its memory.
 
-## RViz
+## RViz (real dog and sim)
 
-RViz runs in the `go2-lidar3d` container (go2-nav2-wifi), which was created without
-`/dev/dri` and starts RViz with `LIBGL_ALWAYS_SOFTWARE=1`. It still draws on the CPU.
-Moving it to the GPU means recreating that container with the device added.
+RViz runs in the `go2-lidar3d` container (go2-nav2-wifi). That container was created
+without `/dev/dri`, and RViz was started with `LIBGL_ALWAYS_SOFTWARE=1`, so the point
+clouds, costmaps and robot model were drawn on the CPU. During auto explore, together
+with RTAB-Map, YOLO and the VLM, that froze the workstation (2026-11-18).
+
+`scripts/tools/rviz_gpu.py` fixes it. `wifi_nav.sh` runs it before every session:
+
+- `docker/docker-compose.lidar3d.yml` gives the container `/dev/dri` and the video and
+  render groups (`GO2_VIDEO_GID`, `GO2_RENDER_GID`, from this computer's groups);
+- both RViz launches in `mapping.sh` (and the sim's in `wifi_nav.sh`) pass
+  `LIBGL_ALWAYS_SOFTWARE=${GO2_RVIZ_SOFTWARE_GL:-0}`.
+
+A `go2-lidar3d` made before this has no `/dev/dri`. The next session removes it and
+creates it again with `setup-lidar3d.sh --laptop`, which takes a minute or two. The
+packages a session installs into it (numpy, OpenCV) are installed again then.
+
+Checked 2026-11-18: in the recreated container, `rviz2` reports `OpenGl version: 4.6`
+from the Intel graphics. Software drawing (llvmpipe) reports 4.5.
+
+`GO2_RVIZ_SOFTWARE_GL=1 ./scripts/runtime/wifi_3d_nav.sh ...` brings back software
+drawing if RViz misbehaves on the GPU.

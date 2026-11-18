@@ -135,6 +135,7 @@
 #   TWIN_YOLO_MODEL=/opt/yolo/yolo11s.pt  TWIN_YOLO_RATE=2  TWIN_YOLO_CLASSES=chair,...|all
 #   TWIN_VLM_URL=http://localhost:11434/api/generate  TWIN_VLM_MODEL=llava:7b  TWIN_VLM_PERIOD=5
 #   TWIN_BATTERY_LOW=15  TWIN_BATTERY_RESUME=20  TWIN_DOCK="0 0 0" (x y yaw in lidar3d_map)
+#   GO2_VLM_MAX_GB=4  unload the VLM model when Ollama's llama-server holds more (GO2_VLM_GUARD=0: off)
 #   TWIN_VLM_ACT=1 (0 = VLM only reports)  TWIN_VLM_CONFIRM=2 (BLOCKED answers in a row)
 #   TWIN_TELEOP=1 (dashboard Drive pad; 0 = off)
 #   TWIN_RELAX_COSTMAP=1 (relax-costmap.sh at start: clear stray LiDAR marks, faster
@@ -1251,6 +1252,7 @@ cleanup() {
     [ "${TRAV_SEMANTIC}" = "true" ] && { bash -c "$(trav_stop_cmd)" >/dev/null 2>&1 || true; }
     kill_battery_manager
     [ -n "${EXECUTOR_PID:-}" ] && { kill "${EXECUTOR_PID}" 2>/dev/null || true; }
+    [ -n "${VLM_GUARD_PID:-}" ] && { kill "${VLM_GUARD_PID}" 2>/dev/null || true; }
     if [ -n "${ARM_STATE_PID}" ]; then
         kill "${ARM_STATE_PID}" 2>/dev/null || true   # stops a running orbit scan first
         wait "${ARM_STATE_PID}" 2>/dev/null || true
@@ -1270,6 +1272,18 @@ trap 'exit 143' TERM
 
 mkdir -p "${TWIN_LOG_DIR}"
 start_arm_state
+# The VLM's llama-server (Ollama on this computer) grows ~1 GB of RAM a minute while it
+# gets camera images; the workstation froze at ~7 GB (2026-11-17/18). The guard unloads
+# the model above GO2_VLM_MAX_GB (4) or when RAM runs low; the next request reloads it (7 s).
+VLM_GUARD_PID=""
+vlm_url="${TWIN_VLM_URL:-${TRAV_OLLAMA_URL:-http://localhost:11434}}"
+if { [ "${TWIN_VLM}" = 1 ] || [ "${TRAV_SEMANTIC}" = "true" ]; } &&
+   [[ "${vlm_url}" == *://localhost* || "${vlm_url}" == *://127.0.0.1* ]] && [ "${GO2_VLM_GUARD:-1}" = 1 ]; then
+    python3 -u "${REPO_DIR}/scripts/tools/ollama_mem_guard.py" --url "${vlm_url}" --parent $$ \
+        > "${TWIN_LOG_DIR}/vlm_guard.log" 2>&1 &
+    VLM_GUARD_PID=$!
+    echo "[3d] VLM memory guard: unload above ${GO2_VLM_MAX_GB:-4} GB (log ${TWIN_LOG_DIR}/vlm_guard.log)"
+fi
 # --step-over-crawl crawl: the laptop runs the crawl on the dog over SSH when the
 # coordinator asks (the containers have no SSH to the dog).
 EXECUTOR_PID=""

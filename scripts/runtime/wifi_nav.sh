@@ -483,6 +483,19 @@ container_dds_bind() {
 
 ensure_container() {
     local cur_host cur_robot
+    # RViz on the GPU (scripts/tools/rviz_gpu.py): go2-lidar3d gets /dev/dri, RViz starts
+    # without LIBGL_ALWAYS_SOFTWARE. Software RViz froze the workstation (2026-11-18).
+    # GO2_RVIZ_SOFTWARE_GL=1: software again. A container made before this has no
+    # /dev/dri and is recreated once (runtime pip/apt installs are redone below).
+    python3 "${SCRIPT_DIR}/../tools/rviz_gpu.py" "${NAV2_WIFI_DIR}" || true
+    export GO2_VIDEO_GID GO2_RENDER_GID
+    GO2_VIDEO_GID="$(getent group video | cut -d: -f3)"; GO2_VIDEO_GID="${GO2_VIDEO_GID:-44}"
+    GO2_RENDER_GID="$(getent group render | cut -d: -f3)"; GO2_RENDER_GID="${GO2_RENDER_GID:-${GO2_VIDEO_GID}}"
+    if container_exists && [ -d /dev/dri ] && [ "${GO2_RVIZ_SOFTWARE_GL:-0}" != 1 ] &&
+       ! docker inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}} {{end}}' "${CONTAINER_NAME}" 2>/dev/null | grep -q /dev/dri; then
+        echo "[container] ${CONTAINER_NAME} has no GPU access (RViz drew on the CPU): recreating it"
+        docker rm -f "${CONTAINER_NAME}" >/dev/null
+    fi
     if container_exists && [ "${SIM}" != "true" ]; then
         cur_host="$(container_env GO2_HOST_IP)"
         cur_robot="$(container_env GO2_ROBOT_IP)"
@@ -1322,7 +1335,7 @@ if [ "${SIM}" = "true" ]; then
     fi
     xuser="$(getent passwd "$(docker exec "${CONTAINER_NAME}" id -u)" | cut -d: -f1)"
     [ -n "${xuser}" ] && xhost "+SI:localuser:${xuser}" >/dev/null 2>&1 || true
-    docker exec -e GO2_HOST_IP="${GO2_HOST_IP}" -e GO2_ROBOT_IP="${GO2_ROBOT_IP}" -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" -e GO2_LIDAR3D_NAV="${sim_nav}" -e GO2_LIDAR3D_PLAN="${sim_plan}" -e GO2_LIDAR3D_BACKEND=pointlio -e DISPLAY="${DISPLAY}" -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 -e LIBGL_ALWAYS_SOFTWARE=1 -e XDG_CONFIG_HOME=/tmp/go2-mapping-config "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh start lidar3d-viz --owner "${SIM_OWNER}" || true
+    docker exec -e GO2_HOST_IP="${GO2_HOST_IP}" -e GO2_ROBOT_IP="${GO2_ROBOT_IP}" -e GO2_RELAY_DOMAIN_ID="${GO2_RELAY_DOMAIN_ID}" -e GO2_LIDAR3D_NAV="${sim_nav}" -e GO2_LIDAR3D_PLAN="${sim_plan}" -e GO2_LIDAR3D_BACKEND=pointlio -e DISPLAY="${DISPLAY}" -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 -e LIBGL_ALWAYS_SOFTWARE="${GO2_RVIZ_SOFTWARE_GL:-0}" -e XDG_CONFIG_HOME=/tmp/go2-mapping-config "${CONTAINER_NAME}" bash /ws/scripts/go2-session.sh start lidar3d-viz --owner "${SIM_OWNER}" || true
 else
     # X11 FIX: Explicitly grant Docker access to the display
     echo "[rviz] Granting X11 access to Docker..."
