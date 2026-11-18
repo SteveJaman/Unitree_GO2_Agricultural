@@ -108,6 +108,7 @@ the host, so the host needs `python3 -m pip install --user cyclonedds`.
 |---|---|---|
 | `SIM_GUI` | `0` | `1` opens the Gazebo window. On the old 4-core VM the window slowed the sim to ~14 % of real time, so the robot crawled and goals timed out. `up` prints the real-time factor and warns below 0.8 |
 | `SIM_RENDER_ENGINE` | `ogre2` | Use `ogre` if the window is black |
+| `SIM_GL` | `auto` | `nvidia`, `intel` or `software`: who draws ([GPU rendering](gpu_rendering.md)) |
 | `SIM_ARM` | `1` | Create `simarm0` and run the D1 emulator |
 | `SIM_ARM_SUBNET` | `192.168.123` | Change if a real arm adapter already uses it |
 | `SIM_LIDAR_HZ` | `5` | Lidar rate. Each scan is rendered in software and stalls physics: on the old 4-core VM 10 Hz ran the sim at 0.43× real time, 5 Hz at 0.85×. Nav2's costmap only needs a scan every 0.8 s |
@@ -153,6 +154,7 @@ These are deliberate. They're listed so test results aren't over-read:
 | `no lidar frame after 240 s` | Software rendering is slow: `SIM_TIMEOUT=600`, or `SIM_GUI=0`, or `SIM_RENDER_ENGINE=ogre` |
 | Robot crawls, explorer goals time out, Nav2 commands 0.3 m/s | Sim below real time (see the real-time factor from `up`). Nav2 runs on wall-clock time. Use `SIM_GUI=0` and close heavy apps |
 | Gazebo window black or crashes | `SIM_RENDER_ENGINE=ogre ./gazebo/run_sim.sh up` |
+| Gazebo crashes or draws garbage on the GPU | `SIM_GL=software ./gazebo/run_sim.sh up` |
 | `<arm iface> already uses 192.168.123.x` | Real arm adapter is configured: unplug it, or `SIM_ARM_SUBNET=192.168.124` |
 | Arm scripts: `DDS discovery failed` on `simarm0` | Check `ip link show simarm0` shows `MULTICAST,UP`. Then check `./gazebo/run_sim.sh logs` for `D1 ARM EMULATOR READY` |
 | RViz dog tilted (~20°) and heading ~120° off in `--sim` | The sim and `go2_odom_tf` use different lidar mounts. Check that `./gazebo/run_sim.sh logs` says `sensor_from_base from /nav2_cfg/lidar3d_robot_viz.yaml`, then restart the sim (`./gazebo/run_sim.sh down`). `tf2_echo lidar3d_map base_link` should show roll and pitch at 0 |

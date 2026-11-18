@@ -61,6 +61,7 @@ then [architecture](architecture.md), then [status](status.md).
 | Document | Contents |
 |---|---|
 | [Gazebo simulation](simulation/gazebo.md) | Go2 + D1 in Gazebo Harmonic: setup, what is simulated, worlds |
+| [GPU rendering](simulation/gpu_rendering.md) | `SIM_GL`: Gazebo on the Intel or NVIDIA graphics instead of the CPU |
 | [Indoor lab world](simulation/lab_office.md) | The furnished 7-room lab world and the drive-mode trials |
 | [Traversability in simulation](simulation/traversability_sim.md) | Height bands, gait, backstop and semantic layer: the full sim record |
 | [Hydroponic station trial](simulation/hydroponic_trial.md) | End-to-end MoveIt 2 + Nav2 mission at a hydroponic rack |

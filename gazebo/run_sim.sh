@@ -23,6 +23,12 @@
 #   SIM_ARM=1             create simarm0 + run the D1 emulator (0 = no arm)
 #   SIM_ARM_IFACE=simarm0 SIM_ARM_SUBNET=192.168.123
 #   SIM_RENDER_ENGINE=ogre2  (try ogre if the window stays black)
+#   SIM_GL=auto           who draws Gazebo's sensors and window:
+#                           nvidia   = the NVIDIA card (needs nvidia-container-toolkit)
+#                           intel    = the Intel graphics through /dev/dri (no install)
+#                           software = the CPU (llvmpipe): slow, can freeze the desktop
+#                           auto     = nvidia if Docker has the nvidia runtime, else intel
+#                                      if /dev/dri exists, else software
 #   SIM_CAMERA=1          0 = no front camera (0.51x -> 0.85x real time on the old 4-core VM)
 #   SIM_LIDAR_HZ=5        lidar rate; 10 Hz halved the sim speed on the old 4-core VM
 #   SIM_WORLD=agri_rooms  field + building with rooms (agri_field = field only,
@@ -91,6 +97,38 @@ resolve_sensor_from_base() {
         echo "[sim] WARN: ${yaml} not found; using build_model.py's built-in lidar mount." >&2
         echo "[sim]       If the laptop uses a different mount, the robot pose in RViz will be wrong." >&2
     fi
+}
+
+# Who renders (SIM_GL above). Sets SIM_GL_USED and appends docker run args to the named array.
+# The image sets LIBGL_ALWAYS_SOFTWARE=1; Mesa reads 0 as false, so passing 0 turns it off.
+gl_args() {
+    local -n _out=$1
+    local want="${SIM_GL:-auto}" have_nv=0
+    docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"' && have_nv=1
+    if [ "$want" = auto ]; then
+        if [ "$have_nv" = 1 ]; then want=nvidia
+        elif [ -d /dev/dri ]; then want=intel
+        else want=software; fi
+    fi
+    case "$want" in
+        nvidia)
+            [ "$have_nv" = 1 ] || die "SIM_GL=nvidia: Docker has no nvidia runtime (install nvidia-container-toolkit, docs/simulation/gpu_rendering.md)"
+            # The desktop runs on the Intel graphics: PRIME offload sends GL to the NVIDIA card.
+            _out+=(--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -e LIBGL_ALWAYS_SOFTWARE=0
+                   -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia
+                   -e __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json)
+            [ -d /dev/dri ] && _out+=(--device /dev/dri) ;;
+        intel)
+            [ -d /dev/dri ] || die "SIM_GL=intel: no /dev/dri on this computer"
+            _out+=(--device /dev/dri -e LIBGL_ALWAYS_SOFTWARE=0)
+            local g
+            for g in video render; do
+                getent group "$g" >/dev/null && _out+=(--group-add "$(getent group "$g" | cut -d: -f3)")
+            done ;;
+        software) _out+=(-e LIBGL_ALWAYS_SOFTWARE=1) ;;
+        *) die "SIM_GL must be auto, nvidia, intel or software (got '${want}')" ;;
+    esac
+    SIM_GL_USED="$want"
 }
 
 sim_running() { docker ps --format '{{.Names}}' | grep -x "$NAME" >/dev/null; }
@@ -180,7 +218,7 @@ cmd_up() {
         xhost "+SI:localuser:$(id -un)" >/dev/null 2>&1 || true
     fi
     local dev_args=()
-    if [ -d /dev/dri ]; then dev_args=(--device /dev/dri --group-add video); fi
+    gl_args dev_args
     local sensor_args=()
     if [ -f "$SIM_SENSOR_YAML" ]; then
         sensor_args=(-v "$SIM_SENSOR_YAML:/nav2_cfg/lidar3d_robot_viz.yaml:ro"
@@ -196,7 +234,7 @@ cmd_up() {
                      -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}")
     fi
 
-    echo "[sim] starting ${NAME} (GUI=${gui}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
+    echo "[sim] starting ${NAME} (GUI=${gui}, GL=${SIM_GL_USED}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
     docker run -d --name "$NAME" --network host --ipc host \
         --user "$(id -u):$(id -g)" "${dev_args[@]}" \
         -e GO2_HOST_IP="$GO2_HOST_IP" -e GO2_ROBOT_IP="${GO2_ROBOT_IP:-$GO2_HOST_IP}" \
@@ -211,7 +249,7 @@ cmd_up() {
         -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" "${moveit_args[@]}" \
         "$IMAGE" >/dev/null
 
-    echo "[sim] waiting for the first lidar frame (up to ${SIM_TIMEOUT} s; software rendering is slow)..."
+    echo "[sim] waiting for the first lidar frame (up to ${SIM_TIMEOUT} s; ${SIM_GL_USED} rendering)..."
     local t=0
     while [ "$t" -lt "$SIM_TIMEOUT" ]; do
         if ! sim_running; then

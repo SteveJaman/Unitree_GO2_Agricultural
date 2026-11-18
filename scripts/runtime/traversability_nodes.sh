@@ -172,10 +172,12 @@ do_start() {
         gait_args+=(-p backend:=gazebo -p dry_run:=true)
     fi
     # --step-over-crawl: picks objects on the path to step over with the low-level crawl.
+    # Its lower limit is the REAL dog's step (3 cm), in the sim too: the crawl is for the
+    # real dog, and in --sim the coordinator shows what the dog would decide.
     case "${TRAV_CRAWL:-off}" in
         dry|align|crawl)
             bg crawl python3 "${D}/step_over_coordinator.py" --ros-args -p mode:="${TRAV_CRAWL}" \
-                -p h_min:="${step}" -p request_dir:="$(dirname "${LOG}")/step_over" ;;
+                -p h_min:="${TRAV_CRAWL_STEP:-0.03}" -p request_dir:="$(dirname "${LOG}")/step_over" ;;
     esac
     # HIGH_STEP when an object + foot_margin (0.02) fits under the foot: clearance = step + margin.
     gait_args+=(-p foot_clearance:="$(python3 -c "print(float('${step}') + 0.02)")")

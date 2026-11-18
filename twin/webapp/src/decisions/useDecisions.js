@@ -82,7 +82,8 @@ export function useDecisions() {
   const sendProtected = usePublisher('/semantic/protected_classes_set', 'std_msgs/msg/String');
 
   const push = (e) => setEvents((ev) => [{ t: Date.now() / 1000, ...e }, ...ev].slice(0, MAX_EVENTS));
-  const limits = { step: stepOver?.limits?.h_min ?? meta.step ?? 0.03, lethal: 0.22 };
+  // The session's own step limit (labels): 0.03 m on the real dog, 0.12 m in the sim.
+  const limits = { step: meta.step ?? stepOver?.limits?.h_min ?? 0.03, lethal: 0.22 };
 
   // live
   useTopic('/semantic/labels_json', 'std_msgs/msg/String', (m) => {
