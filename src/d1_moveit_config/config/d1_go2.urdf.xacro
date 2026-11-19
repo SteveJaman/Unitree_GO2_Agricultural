@@ -15,17 +15,36 @@
                   the <ros2_control> block: demo.launch.py starts no ros2_control.
     end_effector  gripper (default): the D1's two-finger gripper, tool frame
                   tool0 between the fingertips.
-                  camera: no gripper; a mock depth camera (RealSense D405 size)
-                  on tool0 at the wrist flange, frames camera_link (x out of the
-                  lens) and camera_optical_frame (z out of the lens).
+                  camera: no gripper; a mock depth camera on tool0 at the wrist
+                  flange, frames camera_link (x out of the lens) and
+                  camera_optical_frame (z out of the lens).
+    camera_model  end_effector:=camera only. d405 (default): RealSense D405
+                  size, 424x240, 87 deg. d435i: RealSense D435i size, 640x480,
+                  69 deg (its colour field of view), 10 Hz; the simulation
+                  republishes it under the real driver's /camera/* topics
+                  (docs/ai_and_vision/plant_detection.md).
+    claw_camera   end_effector:=gripper only. true: a RealSense D435i (modelled to Intel's
+                  drawing: 90 x 25 x 25 mm aluminium body with rounded ends, black
+                  front glass with the two IR imagers 50 mm apart, the IR projector
+                  and the RGB lens; USB-C and tripod mount) on a bracket on top of
+                  the claw's end, looking along it, as on the lab arm. Frames
+                  camera_link (x out of the lens) and camera_optical_frame; in
+                  Gazebo the same 640x480 10 Hz RGB-D sensor as camera_model d435i.
     use_mock_hardware   kept for old command lines; false = hardware gazebo.
 -->
 <robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="use_mock_hardware" default="true"/>
   <xacro:arg name="hardware" default="mock"/>
   <xacro:arg name="end_effector" default="gripper"/>
+  <xacro:arg name="camera_model" default="d405"/>
+  <xacro:arg name="claw_camera" default="false"/>
   <xacro:property name="hardware" value="$(arg hardware)"/>
   <xacro:property name="end_effector" value="$(arg end_effector)"/>
+  <xacro:property name="camera_model" value="$(arg camera_model)"/>
+  <xacro:property name="claw_camera" value="$(arg claw_camera)"/>
+  <!-- SIM_REALISM=1 in the simulation container: effort-controlled arm under gravity
+       (Gazebo only; the real and mock arms never see it) -->
+  <xacro:property name="realism" value="${hardware == 'gazebo' and '$(optenv SIM_REALISM 0)' == '1'}"/>
 
   <link name="world"/>
 
@@ -53,7 +72,7 @@
 
   <!-- The arm: the D1-550 description, gripper or not (config/d1_550_arm.xacro) -->
   <xacro:include filename="$(find d1_moveit_config)/config/d1_550_arm.xacro"/>
-  <xacro:d1_550_arm end_effector="${end_effector}"/>
+  <xacro:d1_550_arm end_effector="${end_effector}" realism="${realism}"/>
 
   <!-- go2_trunk -> D1 base_link -->
   <joint name="go2_to_d1" type="fixed">
@@ -74,25 +93,54 @@
     </joint>
   </xacro:if>
 
-  <xacro:if value="${end_effector == 'camera'}">
-    <!-- tool0 = the wrist flange, where the gripper body was mounted -->
-    <link name="tool0"/>
-    <joint name="link6_to_tool0" type="fixed">
-      <parent link="Empty_Link6"/><child link="tool0"/>
-      <origin xyz="0.035 -0.0004 0.0031" rpy="0 0 0"/>
-    </joint>
-    <!-- Mock depth camera, RealSense D405 size (42 x 42 x 23 mm), lens 25 mm past the flange -->
-    <link name="camera_link">
-      <inertial><mass value="0.06"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/></inertial>
-      <visual><origin xyz="-0.0115 0 0"/><geometry><box size="0.023 0.042 0.042"/></geometry>
-        <material name="camera_black"><color rgba="0.08 0.08 0.09 1"/></material></visual>
-      <visual><origin xyz="0.0005 0 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.008" length="0.002"/></geometry>
-        <material name="lens_blue"><color rgba="0.15 0.3 0.6 1"/></material></visual>
-      <collision><origin xyz="-0.0115 0 0"/><geometry><box size="0.023 0.042 0.042"/></geometry></collision>
+  <xacro:if value="${end_effector == 'gripper' and claw_camera in ('true', True)}">
+    <!-- D435i on the claw. camera_link: the centre of the front glass (lens plane), x out of
+         it, y to the camera's left, z up. Body 90 (y) x 25 (z) x 25 (x) mm; the IR imagers
+         50 mm apart, RGB beside the left imager (Intel D435i datasheet, fig. 4-1). -->
+    <link name="claw_camera_bracket">
+      <inertial><mass value="0.02"/><inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/></inertial>
+      <visual><origin xyz="0 0 0"/><geometry><box size="0.036 0.050 0.004"/></geometry>
+        <material name="bracket_black"><color rgba="0.05 0.05 0.06 1"/></material></visual>
+      <visual><origin xyz="0.016 0 0.006"/><geometry><box size="0.004 0.030 0.012"/></geometry>
+        <material name="bracket_black"/></visual>
+      <collision><origin xyz="0 0 0"/><geometry><box size="0.036 0.050 0.004"/></geometry></collision>
     </link>
-    <joint name="tool0_to_camera" type="fixed">
-      <parent link="tool0"/><child link="camera_link"/>
-      <origin xyz="0.025 0 0" rpy="0 0 0"/>
+    <joint name="link6_to_claw_bracket" type="fixed">
+      <parent link="Empty_Link6"/><child link="claw_camera_bracket"/>
+      <origin xyz="0.058 0 0.039" rpy="0 0 0"/>
+    </joint>
+    <link name="camera_link">
+      <inertial><origin xyz="-0.0125 0 0"/><mass value="0.072"/>
+        <inertia ixx="4.5e-5" ixy="0" ixz="0" iyy="7.5e-6" iyz="0" izz="4.5e-5"/></inertial>
+      <!-- aluminium body: a 65 mm box and two half-round ends -->
+      <visual><origin xyz="-0.0125 0 0"/><geometry><box size="0.025 0.065 0.025"/></geometry>
+        <material name="d435_alu"><color rgba="0.62 0.63 0.66 1"/></material></visual>
+      <visual><origin xyz="-0.0125 0.0325 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0125" length="0.025"/></geometry>
+        <material name="d435_alu"/></visual>
+      <visual><origin xyz="-0.0125 -0.0325 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0125" length="0.025"/></geometry>
+        <material name="d435_alu"/></visual>
+      <!-- black front glass -->
+      <visual><origin xyz="0.0003 0 0"/><geometry><box size="0.0012 0.082 0.019"/></geometry>
+        <material name="d435_glass"><color rgba="0.02 0.02 0.03 1"/></material></visual>
+      <!-- left IR imager, IR projector, right IR imager (50 mm baseline), RGB lens -->
+      <visual><origin xyz="0.0011 0.025 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0042" length="0.0008"/></geometry>
+        <material name="d435_lens"><color rgba="0.16 0.12 0.22 1"/></material></visual>
+      <visual><origin xyz="0.0011 0.0045 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0035" length="0.0008"/></geometry>
+        <material name="d435_projector"><color rgba="0.30 0.08 0.08 1"/></material></visual>
+      <visual><origin xyz="0.0011 -0.025 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0042" length="0.0008"/></geometry>
+        <material name="d435_lens"/></visual>
+      <visual><origin xyz="0.0011 -0.0335 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.0048" length="0.0008"/></geometry>
+        <material name="d435_rgb"><color rgba="0.10 0.14 0.30 1"/></material></visual>
+      <!-- USB-C on the right end, 1/4-20 tripod mount underneath -->
+      <visual><origin xyz="-0.0125 -0.0451 0"/><geometry><box size="0.009 0.0012 0.0035"/></geometry>
+        <material name="d435_glass"/></visual>
+      <visual><origin xyz="-0.0125 0 -0.0127" rpy="0 0 0"/><geometry><cylinder radius="0.003" length="0.0006"/></geometry>
+        <material name="d435_glass"/></visual>
+      <collision><origin xyz="-0.0125 0 0"/><geometry><box size="0.025 0.090 0.025"/></geometry></collision>
+    </link>
+    <joint name="bracket_to_camera" type="fixed">
+      <parent link="claw_camera_bracket"/><child link="camera_link"/>
+      <origin xyz="0.027 0 0.0145" rpy="0 0 0"/>
     </joint>
     <link name="camera_optical_frame"/>
     <joint name="camera_to_optical" type="fixed">
@@ -102,13 +150,59 @@
     <xacro:if value="${hardware == 'gazebo'}">
       <gazebo reference="camera_link">
         <sensor name="wrist_depth" type="rgbd_camera">
-          <update_rate>5</update_rate>
+          <update_rate>10</update_rate>
           <always_on>true</always_on>
           <topic>wrist_camera</topic>
           <camera>
-            <horizontal_fov>1.52</horizontal_fov>
-            <image><width>424</width><height>240</height></image>
-            <clip><near>0.07</near><far>3.0</far></clip>
+            <horizontal_fov>1.21</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.1</near><far>10.0</far></clip>
+          </camera>
+        </sensor>
+      </gazebo>
+    </xacro:if>
+  </xacro:if>
+
+  <xacro:if value="${end_effector == 'camera'}">
+    <!-- tool0 = the wrist flange, where the gripper body was mounted -->
+    <link name="tool0"/>
+    <joint name="link6_to_tool0" type="fixed">
+      <parent link="Empty_Link6"/><child link="tool0"/>
+      <origin xyz="0.035 -0.0004 0.0031" rpy="0 0 0"/>
+    </joint>
+    <!-- Mock depth camera. depth x width x height = body along x, y, z (m); lens = distance
+         of the lens past the flange. D405: 23 x 42 x 42 mm. D435i: 25 x 90 x 25 mm. -->
+    <xacro:property name="cam" value="${dict(
+        d405=dict(depth=0.023, width=0.042, height=0.042, lens=0.025, hfov=1.52, w=424, h=240, near=0.07, far=3.0, rate=5),
+        d435i=dict(depth=0.025, width=0.090, height=0.025, lens=0.027, hfov=1.21, w=640, h=480, near=0.1, far=10.0, rate=10)
+      )[camera_model]}"/>
+    <link name="camera_link">
+      <inertial><mass value="0.06"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/></inertial>
+      <visual><origin xyz="${-cam['depth'] / 2} 0 0"/><geometry><box size="${cam['depth']} ${cam['width']} ${cam['height']}"/></geometry>
+        <material name="camera_black"><color rgba="0.08 0.08 0.09 1"/></material></visual>
+      <visual><origin xyz="0.0005 0 0" rpy="0 1.5708 0"/><geometry><cylinder radius="0.008" length="0.002"/></geometry>
+        <material name="lens_blue"><color rgba="0.15 0.3 0.6 1"/></material></visual>
+      <collision><origin xyz="${-cam['depth'] / 2} 0 0"/><geometry><box size="${cam['depth']} ${cam['width']} ${cam['height']}"/></geometry></collision>
+    </link>
+    <joint name="tool0_to_camera" type="fixed">
+      <parent link="tool0"/><child link="camera_link"/>
+      <origin xyz="${cam['lens']} 0 0" rpy="0 0 0"/>
+    </joint>
+    <link name="camera_optical_frame"/>
+    <joint name="camera_to_optical" type="fixed">
+      <parent link="camera_link"/><child link="camera_optical_frame"/>
+      <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+    </joint>
+    <xacro:if value="${hardware == 'gazebo'}">
+      <gazebo reference="camera_link">
+        <sensor name="wrist_depth" type="rgbd_camera">
+          <update_rate>${cam['rate']}</update_rate>
+          <always_on>true</always_on>
+          <topic>wrist_camera</topic>
+          <camera>
+            <horizontal_fov>${cam['hfov']}</horizontal_fov>
+            <image><width>${cam['w']}</width><height>${cam['h']}</height></image>
+            <clip><near>${cam['near']}</near><far>${cam['far']}</far></clip>
           </camera>
         </sensor>
       </gazebo>
@@ -117,5 +211,5 @@
 
   <xacro:include filename="$(find d1_moveit_config)/config/d1_go2.ros2_control.xacro"/>
   <xacro:d1_ros2_control hardware="${'gazebo' if hardware == 'gazebo' or '$(arg use_mock_hardware)' == 'false' else 'mock'}"
-                         end_effector="${end_effector}"/>
+                         end_effector="${end_effector}" realism="${realism}"/>
 </robot>

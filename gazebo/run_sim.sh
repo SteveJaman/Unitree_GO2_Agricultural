@@ -7,6 +7,7 @@
 #   ./gazebo/run_sim.sh status   container state + last log lines
 #   ./gazebo/run_sim.sh logs     follow the simulation log
 #   ./gazebo/run_sim.sh shell    shell inside the sim container
+#   ./gazebo/run_sim.sh gui      (re)open the Gazebo window on a running simulation
 #
 # What "up" gives you (what the real Jetson + arm would):
 #   * DDS domain 64 on GO2_HOST_IP: /lidar3d/odom, /lidar3d/registered,
@@ -41,6 +42,15 @@
 #                         setup_gazebo.sh --moveit), D1-550 with a camera instead of the gripper; needs
 #                         SIM_ARM=0 and D1_ARM_DIR (~/files/unitree-D1-550-Robot-ARM). Arm stack on
 #                         ROS domain SIM_ARM_DOMAIN (66). docs/simulation/hydroponic_trial.md
+#   SIM_WRIST_CAMERA=d405 SIM_MOVEIT=1: wrist camera model. d435i = RealSense D435i (640x480, 10 Hz),
+#                         republished as /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw
+#                         and their camera_info, like the real driver (docs/ai_and_vision/plant_detection.md)
+#   SIM_ARM_EE=camera     SIM_MOVEIT=1: camera = the wrist camera instead of the gripper; claw = the
+#                         gripper with a RealSense D435i on the claw (same sensor and topics as d435i)
+#   SIM_REALISM=0         1 = the arm on effort (torque) control under gravity, with servo-like gains,
+#                         joint damping and friction (it sags and lags like the real D1), and the dog
+#                         with acceleration lag and a gait-synchronised body bob (with SIM_GAIT=1:
+#                         the legs trot). docs/simulation/servo_demo.md
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match
@@ -231,7 +241,8 @@ cmd_up() {
         [ "$SIM_ARM" = 1 ] && die "SIM_MOVEIT=1 needs SIM_ARM=0: ros2_control drives the arm, not the D1 emulator"
         [ -d "$D1_ARM_DIR/d1_550_description" ] || die "SIM_MOVEIT=1: no ${D1_ARM_DIR}/d1_550_description (docs/hardware/d1_arm.md: git clone ... unitree-D1-550-Robot-ARM)"
         moveit_args=(-v "$REPO_DIR/src:/moveit_src:ro" -v "$D1_ARM_DIR:/moveit_d1:ro"
-                     -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}")
+                     -e SIM_MOVEIT=1 -e SIM_ARM_DOMAIN="${SIM_ARM_DOMAIN:-66}"
+                     -e SIM_WRIST_CAMERA="${SIM_WRIST_CAMERA:-d405}" -e SIM_ARM_EE="${SIM_ARM_EE:-camera}")
     fi
 
     echo "[sim] starting ${NAME} (GUI=${gui}, GL=${SIM_GL_USED}, arm=${SIM_ARM}, DDS ${GO2_HOST_IP} domain ${GO2_RELAY_DOMAIN_ID:-64})"
@@ -243,7 +254,7 @@ cmd_up() {
         -e SIM_RENDER_ENGINE="${SIM_RENDER_ENGINE:-ogre2}" \
         -e SIM_CAMERA="${SIM_CAMERA:-1}" -e SIM_LIDAR_HZ="${SIM_LIDAR_HZ:-5}" -e SIM_WORLD="${SIM_WORLD:-agri_rooms}" -e SIM_SPAWN="${SIM_SPAWN:--4.5 0 0}" -e SIM_D1_MOUNT="${SIM_D1_MOUNT:-0.0 0 0.057 0 0 3.14159}" \
         -e SIM_SENSOR_FROM_BASE="${SIM_SENSOR_FROM_BASE:-}" \
-        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" -e SIM_CONTACTS="${SIM_CONTACTS:-0}" -e SIM_GAIT="${SIM_GAIT:-0}" -e SIM_CHASE="${SIM_CHASE:-0}" \
+        -e SIM_DRIFT_YAW="${SIM_DRIFT_YAW:-0}" -e SIM_DRIFT_SCALE="${SIM_DRIFT_SCALE:-0}" -e SIM_CONTACTS="${SIM_CONTACTS:-0}" -e SIM_GAIT="${SIM_GAIT:-0}" -e SIM_REALISM="${SIM_REALISM:-0}" -e SIM_CHASE="${SIM_CHASE:-0}" \
         -e DISPLAY="${DISPLAY:-}" -e QT_X11_NO_MITSHM=1 -e HOME=/tmp/simhome \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -v "$GZ_DIR:/sim:ro" "${sensor_args[@]}" "${moveit_args[@]}" \
@@ -292,6 +303,10 @@ case "${1:-}" in
     status) if sim_running; then echo "[sim] ${NAME} running"; docker logs --tail 15 "$NAME" 2>&1; else echo "[sim] not running"; fi ;;
     logs)   docker logs -f "$NAME" ;;
     shell)  docker exec -it "$NAME" bash ;;
+    gui)    sim_running || die "not running"
+            xhost "+SI:localuser:$(id -un)" >/dev/null 2>&1 || true
+            docker exec -d "$NAME" bash -c 'export GZ_PARTITION=go2sim GZ_IP=127.0.0.1 GZ_SIM_RESOURCE_PATH=/sim/models/furniture:/sim/models/items:/sim/models/plants:/sim/worlds/models; source /opt/ros/humble/setup.bash; gz sim -g --render-engine "${SIM_RENDER_ENGINE:-ogre2}" > /tmp/sim-gen/gui.log 2>&1'
+            echo "[sim] Gazebo window opening" ;;
     -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
-    *) die "unknown command: $1 (up|down|status|logs|shell)" ;;
+    *) die "unknown command: $1 (up|down|status|logs|shell|gui)" ;;
 esac

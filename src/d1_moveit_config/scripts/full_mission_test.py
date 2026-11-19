@@ -263,6 +263,7 @@ class GzSide:
 class Mission:
     def __init__(self, a):
         self.a = a
+        self.phase = 'idle'   # before any subscription: _joints reads it (fast joint states, SIM_REALISM)
         self.world = json.load(open(a.world_json))
         self.kin = Kinematics(a.urdf)
         os.makedirs(os.path.join(a.out, 'screens'), exist_ok=True)

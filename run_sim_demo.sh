@@ -1,0 +1,1 @@
+scripts/runtime/run_sim_demo.sh

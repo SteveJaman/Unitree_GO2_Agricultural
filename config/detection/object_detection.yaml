@@ -1,0 +1,41 @@
+# Parameters of the plant detector (src/object_detection_rgbd), used by
+# scripts/runtime/plant_detection.sh (go2-lidar3d) and plant_detection_host.sh.
+# The topics are the RealSense D435i driver's; the Gazebo wrist camera
+# (SIM_WRIST_CAMERA=d435i) publishes the same names. docs/ai_and_vision/plant_detection.md
+/**:
+  ros__parameters:
+    # Inputs
+    image_topic: /camera/color/image_raw
+    depth_image_topic: /camera/aligned_depth_to_color/image_raw
+    camera_info_topic: /camera/color/camera_info
+    use_rgbd: false                 # true needs realsense2_camera_msgs and /camera/rgbd
+
+    # Outputs
+    detected_objects_topic: /detected_objects          # vision_msgs/Detection2DArray
+    annotated_image_topic: /annotated_image            # colour image with the 2D boxes
+    publish_markers_topic: /detected_objects_3d        # MarkerArray: 3D box wireframes (RViz)
+    detections_3d_topic: /detections_3d                # vision_msgs/Detection3DArray
+    output_pointcloud_topic: /detected_objects_pointcloud
+
+    # Model
+    # YOLO11s (ultralytics), pretrained on COCO (80 classes), the model the rest of the
+    # project uses. model_type: yolov5 / model_name: yolov5s for the original YOLOv5.
+    model_type: yolo11
+    model_name: yolo11s
+    weights_path: ""                # fine-tuned weights (best.pt); "" = model_name
+    use_gpu: false
+    confidence_threshold: 0.4
+    # COCO class names to keep. With weights_path set, that model's names, e.g. ["plant"].
+    filter_classes: ["person", "potted plant"]
+
+    publish_annotated_image: true
+    publish_3d: true
+    publish_pointcloud: true
+    pointcloud_color_mode: rgb      # rgb, class or none
+
+    # 3D box from the depth inside each 2D box
+    depth_window: 0.3               # metres kept in front of and behind the object's depth
+    depth_min_fraction: 0.1         # object depth = nearest depth_window-deep slab holding >= this
+                                    # share of the box's pixels (0 = most common depth: snaps to
+                                    # the background behind thin objects such as plants)
+    extent_percentile: 2.0          # trim this percentile of stray points off each side (0 = none)

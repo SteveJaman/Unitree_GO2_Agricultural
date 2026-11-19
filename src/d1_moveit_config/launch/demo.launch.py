@@ -28,8 +28,9 @@ from moveit_configs_utils import MoveItConfigsBuilder
 REPO = os.environ.get('GO2_REPO', os.path.expanduser('~/files/Unitree_GO2_Agricultural'))
 
 
-def moveit_config(hardware, end_effector):
-    mappings = {'hardware': hardware, 'end_effector': end_effector,
+def moveit_config(hardware, end_effector, camera_model='d405', claw_camera='false'):
+    mappings = {'hardware': hardware, 'end_effector': end_effector, 'camera_model': camera_model,
+                'claw_camera': claw_camera,
                 'use_mock_hardware': 'false' if hardware == 'gazebo' else 'true'}
     if hardware == 'real':
         controllers = 'config/moveit_controllers_real.yaml'
@@ -40,7 +41,8 @@ def moveit_config(hardware, end_effector):
     return (
         MoveItConfigsBuilder('d1_go2', package_name='d1_moveit_config')
         .robot_description(file_path='config/d1_go2.urdf.xacro', mappings=mappings)
-        .robot_description_semantic(file_path='config/d1_go2.srdf', mappings={'end_effector': end_effector})
+        .robot_description_semantic(file_path='config/d1_go2.srdf',
+                                    mappings={'end_effector': end_effector, 'claw_camera': claw_camera})
         .trajectory_execution(file_path=controllers)
         .planning_pipelines(pipelines=['ompl'])
         .to_moveit_configs()
@@ -50,7 +52,8 @@ def moveit_config(hardware, end_effector):
 def gazebo_nodes(context):
     end_effector = LaunchConfiguration('end_effector').perform(context)
     use_rviz = LaunchConfiguration('use_rviz').perform(context) == 'true'
-    cfg = moveit_config('gazebo', end_effector)
+    cfg = moveit_config('gazebo', end_effector, LaunchConfiguration('camera_model').perform(context),
+                        LaunchConfiguration('claw_camera').perform(context))
     sim_time = {'use_sim_time': True}
     nodes = []
 
@@ -76,8 +79,11 @@ def gazebo_nodes(context):
     nodes.append(Node(package='robot_state_publisher', executable='robot_state_publisher',
                       name='robot_state_publisher', output='screen',
                       parameters=[cfg.robot_description, sim_time]))
+    # SIM_REALISM=1: the arm sags and lags under effort control; the state at the start of a
+    # trajectory may be a little off the last one's end, so allow for it
+    realism = {'trajectory_execution.allowed_start_tolerance': 0.05} if os.environ.get('SIM_REALISM') == '1' else {}
     nodes.append(Node(package='moveit_ros_move_group', executable='move_group', output='screen',
-                      parameters=[cfg.to_dict(), sim_time]))
+                      parameters=[cfg.to_dict(), sim_time, realism]))
     for ctrl in ['joint_state_broadcaster', 'arm_controller'] + (['gripper_controller'] if end_effector == 'gripper' else []):
         nodes.append(Node(package='controller_manager', executable='spawner', output='screen',
                           arguments=[ctrl, '--controller-manager', '/controller_manager',
@@ -96,7 +102,8 @@ def mock_nodes(context):
     # the MoveIt Setup Assistant would generate but this package does not have.
     end_effector = LaunchConfiguration('end_effector').perform(context)
     use_rviz = LaunchConfiguration('use_rviz').perform(context) == 'true'
-    cfg = moveit_config('mock', end_effector)
+    cfg = moveit_config('mock', end_effector, LaunchConfiguration('camera_model').perform(context),
+                        LaunchConfiguration('claw_camera').perform(context))
     controllers_yaml = str(cfg.package_path / 'config' / 'ros2_controllers.yaml')
     nodes = [
         Node(package='robot_state_publisher', executable='robot_state_publisher',
@@ -123,7 +130,7 @@ def real_nodes(context):
     # --real) is the only arm_controller action server and /joint_states publisher.
     end_effector = LaunchConfiguration('end_effector').perform(context)
     use_rviz = LaunchConfiguration('use_rviz').perform(context) == 'true'
-    cfg = moveit_config('real', end_effector)
+    cfg = moveit_config('real', end_effector, LaunchConfiguration('camera_model').perform(context))
     nodes = [
         Node(package='robot_state_publisher', executable='robot_state_publisher',
              name='robot_state_publisher', output='screen',
@@ -143,6 +150,10 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument('hardware', default_value='mock', description='mock, gazebo or real'),
         DeclareLaunchArgument('end_effector', default_value='gripper', description='gripper or camera'),
+        DeclareLaunchArgument('claw_camera', default_value='false',
+                              description='end_effector:=gripper: a RealSense D435i on the claw (Gazebo: its RGB-D sensor)'),
+        DeclareLaunchArgument('camera_model', default_value='d405',
+                              description='end_effector:=camera: d405 or d435i'),
         DeclareLaunchArgument('launch_gazebo', default_value='false',
                               description='hardware:=gazebo: also start Gazebo and spawn the arm'),
         DeclareLaunchArgument('world', default_value=os.path.join(REPO, 'gazebo', 'worlds', 'hydroponic_station.sdf')),

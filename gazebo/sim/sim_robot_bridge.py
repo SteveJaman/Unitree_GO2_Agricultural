@@ -14,6 +14,10 @@ This node produces the same from Gazebo (through ros_gz_bridge):
   /sim/lidar/points<- gz lidar, in the sensor frame
   /sim/cmd_vel     -> gz /model/go2/cmd_vel    (VelocityControl)
   /sim/camera/image_raw <- gz camera, republished as /camera/image_raw
+  /sim/wrist/{color,depth,camera_info} <- gz wrist RGB-D camera (SIM_MOVEIT=1),
+                 republished under the RealSense driver's names:
+                 /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw
+                 and both camera_info, frame camera_color_optical_frame
 
 The laptop's go2_odom_tf turns /lidar3d/odom into base_link using the
 measured sensor_from_base, so this node publishes
@@ -138,6 +142,125 @@ def upright_cmd(true, vx, vy, vyaw, k_att, max_att=1.5):
     v_world = (c * vx - s_ * vy, s_ * vx + c * vy, 0.0)
     qi = quat_conj(q)
     return quat_rotate(qi, v_world), quat_rotate(qi, w_world)
+
+
+def quat_rp(roll, pitch):
+    """Quaternion (x, y, z, w) of roll about x then pitch about y (body frame)."""
+    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+    return quat_mul((0.0, sp, 0.0, cp), (sr, 0.0, 0.0, cr))
+
+
+class BodyMotion:
+    """SIM_REALISM=1: how the real Go2's body moves, on top of the gliding base.
+
+    - Velocity lag: the commanded (vx, vy, vyaw) through a first-order filter (tau) with
+      acceleration limits, as the real dog speeds up and slows down (no instant steps).
+    - Gait bob: while walking, the body drops at each diagonal pair's touchdown (twice per
+      stride: z_amp), pitches at the same rate (pitch_amp) and rolls once per stride as the
+      pairs alternate (roll_amp), all scaled by speed / full_speed; the phase comes from the
+      leg animation (leg_gait.Trot) when it runs.
+    - Acceleration pitch: nose up while speeding up, down while braking (pitch_per_acc).
+    - Standing: a slow breathing sway (idle_z, idle_roll), never perfectly still.
+    step() returns the filtered velocity and the body's target offset: (dz, dz_dot, roll,
+    pitch, droll, dpitch), in m, m/s, rad, rad/s.
+    """
+
+    def __init__(self, tau=0.25, acc_lin=1.2, acc_yaw=2.5, period=0.6, z_amp=0.008,
+                 pitch_amp=math.radians(0.8), roll_amp=math.radians(1.2), full_speed=0.35,
+                 pitch_per_acc=math.radians(1.5), idle_z=0.0015, idle_roll=math.radians(0.15)):
+        self.tau, self.acc = tau, (acc_lin, acc_lin, acc_yaw)
+        self.period, self.full_speed = period, full_speed
+        self.z_amp, self.pitch_amp, self.roll_amp = z_amp, pitch_amp, roll_amp
+        self.pitch_per_acc, self.idle_z, self.idle_roll = pitch_per_acc, idle_z, idle_roll
+        self.v = [0.0, 0.0, 0.0]
+        self.acc_now = 0.0
+        self.phase = 0.0
+        self.t = 0.0
+        self.scale = 0.0
+        self.prev = None
+
+    def offset(self, t, phase, scale, acc_x):
+        tw = 2 * math.pi
+        dz = -self.z_amp * scale * math.cos(2 * tw * phase) + self.idle_z * (1 - scale) * math.sin(tw * 0.3 * t)
+        pitch = self.pitch_amp * scale * math.sin(2 * tw * phase) - self.pitch_per_acc * acc_x
+        roll = self.roll_amp * scale * math.sin(tw * phase) + self.idle_roll * (1 - scale) * math.sin(tw * 0.21 * t)
+        return dz, roll, pitch
+
+    def step(self, dt, cmd, phase=None):
+        dt = max(1e-3, min(dt, 0.2))
+        prev_vx = self.v[0]
+        for i in range(3):
+            want = self.v[i] + (cmd[i] - self.v[i]) * min(1.0, dt / self.tau)
+            lim = self.acc[i] * dt
+            self.v[i] += max(-lim, min(lim, want - self.v[i]))
+        acc_x = (self.v[0] - prev_vx) / dt
+        self.acc_now += (acc_x - self.acc_now) * min(1.0, dt / 0.15)     # smoothed for the pitch
+        speed = math.hypot(self.v[0], self.v[1]) + 0.15 * abs(self.v[2])
+        target_scale = min(1.0, speed / self.full_speed) if speed > 0.02 else 0.0
+        self.scale += (target_scale - self.scale) * min(1.0, dt / 0.3)    # bob fades in and out
+        self.t += dt
+        if phase is None:
+            self.phase = (self.phase + (dt / self.period if self.scale > 0.01 else 0.0)) % 1.0
+        else:
+            self.phase = phase
+        dz, roll, pitch = self.offset(self.t, self.phase, self.scale, self.acc_now)
+        if self.prev is None:
+            rates = (0.0, 0.0, 0.0)
+        else:
+            rates = tuple((a - b) / dt for a, b in zip((dz, roll, pitch), self.prev))
+        self.prev = (dz, roll, pitch)
+        return tuple(self.v), (dz, rates[0], roll, pitch, rates[1], rates[2])
+
+
+def realism_cmd(true, vx, vy, vyaw, k_att, z_nom, offset, k_z=4.0, max_att=1.5):
+    """Body-frame (linear, angular) velocity like upright_cmd, but towards the bobbing target
+    of BodyMotion: height z_nom + dz and roll/pitch about the level heading, each with its
+    rate fed forward (the P terms alone would lag a 3 Hz bob)."""
+    dz, dz_dot, roll, pitch, droll, dpitch = offset
+    (_, _, z), q = true
+    if q[3] < 0:
+        q = tuple(-c for c in q)
+    yaw = yaw_of(q)
+    target = quat_mul(quat_yaw(yaw), quat_rp(roll, pitch))
+    ex, ey, ez, ew = quat_mul(target, quat_conj(q))                 # current -> target, world frame
+    if ew < 0:
+        ex, ey, ez, ew = -ex, -ey, -ez, -ew
+    n = math.sqrt(ex * ex + ey * ey + ez * ez)
+    rate = min(k_att * 2 * math.atan2(n, ew), max_att) / n if n > 1e-9 else 0.0
+    c, s_ = math.cos(yaw), math.sin(yaw)
+    ff = (c * droll - s_ * dpitch, s_ * droll + c * dpitch)         # roll/pitch rates, level heading -> world
+    w_world = (ex * rate + ff[0], ey * rate + ff[1], ez * rate + vyaw)
+    vz = k_z * (z_nom + dz - z) + dz_dot
+    v_world = (c * vx - s_ * vy, s_ * vx + c * vy, vz)
+    qi = quat_conj(q)
+    return quat_rotate(qi, v_world), quat_rotate(qi, w_world)
+
+
+def wrist_wall_stamp(state, sim_ns, now_ns, max_lag_ns=2_000_000_000, keep=64):
+    """Wall-clock stamp (ns) for a wrist-camera message stamped sim_ns.
+
+    All messages of one Gazebo frame (colour, depth, camera_info: one sim stamp) get the same
+    wall stamp, cached by sim stamp, so a time synchroniser always pairs them. New frames
+    use a fixed sim-to-wall offset, re-anchored only forward (the sim fell more than
+    max_lag_ns behind the wall clock, at a real-time factor below 1) or when the sim clock
+    went back (world reset), so stamps never jump backwards within a run."""
+    frames = state["frames"]
+    if sim_ns in frames:
+        return frames[sim_ns]
+    off = state["offset"]
+    reset = bool(frames) and sim_ns < max(frames) - 1_000_000_000   # not just a late message
+    if off is None or reset or now_ns - (sim_ns + off) > max_lag_ns:
+        off = state["offset"] = now_ns - sim_ns
+        if reset:
+            frames.clear()
+    wall = sim_ns + off
+    if frames:
+        wall = max(wall, max(frames.values()) + 1)   # monotonic
+    frames[sim_ns] = wall
+    while len(frames) > keep:
+        del frames[min(frames)]
+    return wall
 
 
 def rot_matrix(q):
@@ -268,7 +391,7 @@ def run_node(params, args):
     from rclpy.qos import qos_profile_sensor_data
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry, Path
-    from sensor_msgs.msg import Image, JointState, PointCloud2, PointField
+    from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2, PointField
 
     sensor_from_base = params["sensor_from_base"]
     t_sensor_base = (tuple(sensor_from_base[:3]), tuple(sensor_from_base[3:]))
@@ -288,6 +411,20 @@ def run_node(params, args):
             # Reliable, like ros_gz_bridge published it (RViz and the VLM subscribe reliably).
             self.image_pub = self.create_publisher(Image, "/camera/image_raw", 5)
             self.create_subscription(Image, "/sim/camera/image_raw", self.on_image, 5)
+            # Wrist RGB-D camera, under the names and frame of the real D435i driver
+            # (realsense/entrypoint.sh), so one detector config serves robot and sim.
+            # Reliable like the driver. Depth stays 32FC1 metres (the driver: 16UC1 mm).
+            self.wrist_pubs = {
+                "color": self.create_publisher(Image, "/camera/color/image_raw", 5),
+                "depth": self.create_publisher(Image, "/camera/aligned_depth_to_color/image_raw", 5),
+                "color_info": self.create_publisher(CameraInfo, "/camera/color/camera_info", 5),
+                "depth_info": self.create_publisher(CameraInfo, "/camera/aligned_depth_to_color/camera_info", 5),
+            }
+            self.wrist_stamps = {"offset": None, "frames": {}}   # see wrist_wall_stamp()
+            self.wrist_frames = 0
+            self.create_subscription(Image, "/sim/wrist/color", lambda m: self.on_wrist(m, "color"), 5)
+            self.create_subscription(Image, "/sim/wrist/depth", lambda m: self.on_wrist(m, "depth"), 5)
+            self.create_subscription(CameraInfo, "/sim/wrist/camera_info", lambda m: self.on_wrist(m, "info"), 5)
             self.base = None             # (p, q) of base as reported (drifted if enabled)
             self.true_base = None         # (p, q) of base in the sim world (ground truth)
             self.drift = (args.drift_yaw, args.drift_scale)
@@ -306,7 +443,11 @@ def run_node(params, args):
                                        max_linear=args.max_linear, max_angular=args.max_angular,
                                        log=lambda m: self.get_logger().info(m))
             self.tcp.start()
-            self.create_timer(1.0 / 20, self.publish_cmd)
+            self.realism = os.environ.get("SIM_REALISM", "0") == "1"
+            self.motion = BodyMotion() if self.realism else None
+            self.z_nom = None
+            self.last_cmd_t = time.monotonic()
+            self.create_timer(1.0 / (50 if self.realism else 20), self.publish_cmd)
             self.create_timer(1.0 / 30, self.publish_joints)
             self.leg_q = dict(zip(params["leg_joint_names"], params["leg_joint_positions"]))
             self.true_twist = (0.0, 0.0, 0.0)
@@ -367,6 +508,26 @@ def run_node(params, args):
             msg.header.stamp = self.get_clock().now().to_msg()
             self.image_pub.publish(msg)
 
+        def on_wrist(self, msg, kind):
+            # One fixed sim-to-wall offset, not now(): the colour and depth image of a
+            # frame carry the same sim stamp and must keep one stamp, or nothing that
+            # pairs them by time (message_filters) ever matches.
+            sim_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+            wall_ns = wrist_wall_stamp(self.wrist_stamps, sim_ns, self.get_clock().now().nanoseconds)
+            msg.header.stamp.sec, msg.header.stamp.nanosec = divmod(wall_ns, 1_000_000_000)
+            msg.header.frame_id = "camera_color_optical_frame"
+            if kind == "info":
+                self.wrist_pubs["color_info"].publish(msg)
+                self.wrist_pubs["depth_info"].publish(msg)
+                return
+            self.wrist_pubs[kind].publish(msg)
+            if kind == "color":
+                self.wrist_frames += 1
+                if self.wrist_frames == 1:
+                    self.get_logger().info(
+                        f"wrist camera {msg.width}x{msg.height} -> /camera/color/image_raw, "
+                        "/camera/aligned_depth_to_color/image_raw")
+
         def on_points(self, msg):
             if self.base is None or self.last_odom_stamp is None:
                 return
@@ -395,6 +556,19 @@ def run_node(params, args):
         def publish_cmd(self):
             vx, vy, vyaw = self.tcp.current()
             t = Twist()
+            if self.realism and self.true_base is not None:
+                now = time.monotonic()
+                dt, self.last_cmd_t = now - self.last_cmd_t, now
+                if self.z_nom is None:
+                    self.z_nom = float(params.get("spawn_z", self.true_base[0][2]))
+                phase = getattr(self, "trot", None)
+                phase = phase.phase if phase is not None else None
+                (vx, vy, vyaw), offset = self.motion.step(dt, (vx, vy, vyaw), phase)
+                lin, ang = realism_cmd(self.true_base, vx, vy, vyaw, max(args.upright_gain, 4.0), self.z_nom, offset)
+                t.linear.x, t.linear.y, t.linear.z = (float(v) for v in lin)
+                t.angular.x, t.angular.y, t.angular.z = (float(v) for v in ang)
+                self.cmd_pub.publish(t)
+                return
             if args.upright_gain > 0 and self.true_base is not None:
                 lin, ang = upright_cmd(self.true_base, vx, vy, vyaw, args.upright_gain)
                 t.linear.x, t.linear.y, t.linear.z = (float(v) for v in lin)

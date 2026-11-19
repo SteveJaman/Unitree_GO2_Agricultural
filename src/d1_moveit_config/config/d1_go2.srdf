@@ -7,6 +7,8 @@
 <robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="end_effector" default="gripper"/>
   <xacro:property name="end_effector" value="$(arg end_effector)"/>
+  <xacro:arg name="claw_camera" default="false"/>
+  <xacro:property name="claw_camera" value="$(arg claw_camera)"/>
 
   <xacro:if value="${end_effector == 'gripper'}">
     <group name="arm">
@@ -23,6 +25,18 @@
       <joint name="Joint_L" value="0"/><joint name="Joint_R" value="0"/>
     </group_state>
     <end_effector name="gripper" parent_link="Empty_Link6" group="gripper" parent_group="arm"/>
+    <xacro:if value="${claw_camera in ('true', True)}">
+      <!-- D435i on the claw (urdf claw_camera:=true): bolted to the gripper body -->
+      <disable_collisions link1="Empty_Link6" link2="claw_camera_bracket" reason="Adjacent"/>
+      <disable_collisions link1="claw_camera_bracket" link2="camera_link" reason="Adjacent"/>
+      <disable_collisions link1="Empty_Link6" link2="camera_link" reason="Never"/>
+      <disable_collisions link1="Empty_Link5" link2="camera_link" reason="Never"/>
+      <disable_collisions link1="Empty_Link5" link2="claw_camera_bracket" reason="Never"/>
+      <disable_collisions link1="Empty_Link_L" link2="camera_link" reason="Never"/>
+      <disable_collisions link1="Empty_Link_R" link2="camera_link" reason="Never"/>
+      <disable_collisions link1="Empty_Link_L" link2="claw_camera_bracket" reason="Never"/>
+      <disable_collisions link1="Empty_Link_R" link2="claw_camera_bracket" reason="Never"/>
+    </xacro:if>
   </xacro:if>
 
   <xacro:if value="${end_effector == 'camera'}">

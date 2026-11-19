@@ -45,6 +45,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Live camera](ai_and_vision/camera.md) | Go2 camera relay and who uses the feed |
 | [Camera–LiDAR fusion](ai_and_vision/camera_lidar_fusion.md) | Camera calibration, LiDAR overlay check, `--fusion`, `--camera-obstacles` |
 | [RealSense D435i](ai_and_vision/realsense.md) | The D435i on the Go2: boot service and topics |
+| [Plant detection (3D boxes)](ai_and_vision/plant_detection.md) | YOLO11s + aligned depth on the D435i: `/detections_3d`, `plant_detection.sh` (from the test branch) |
 
 ## Hardware
 
@@ -54,6 +55,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Traversability handoff](hardware/traversability_handoff.md) | Traversability on the real Go2: measurements, pre-session checks, safety gates |
 | [Learned locomotion plan](hardware/learned_locomotion_plan.md) | Plan for per-leg step-over on the real Go2 with a learned walking controller (foot-swing height input) |
 | [Step over by crawling](hardware/step_over_crawl.md) | `step_over_crawl.py`: low-level per-leg step-over on the real Go2 (`--plan`, `--stand`; not yet run on the dog) |
+| [Arm distance servo test](hardware/arm_servo_test.md) | `arm_servo_test.sh`: RealSense YOLO depth holds the D1 tool 0.5 m from an object |
 | [Height drift](hardware/z_drift.md) | Why Point-LIO sinks, the levelling fix, the walk test and `z_drift_monitor.py` |
 | [Workstation freezes](hardware/workstation_freeze.md) | The VLM's RAM growth, RViz and Gazebo on the CPU: causes and guards |
 | [Real-dog decision test](hardware/real_decision_test.md) | Plan: measure detection, height, label and gait decisions on the real Go2 against ruler-measured objects |
@@ -67,6 +69,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Indoor lab world](simulation/lab_office.md) | The furnished 7-room lab world and the drive-mode trials |
 | [Traversability in simulation](simulation/traversability_sim.md) | Height bands, gait, backstop and semantic layer: the full sim record |
 | [Hydroponic station trial](simulation/hydroponic_trial.md) | End-to-end MoveIt 2 + Nav2 mission at a hydroponic rack |
+| [Final demo: NFT 4-6 servo](simulation/servo_demo.md) | `run_sim_demo.sh`: our NFT 4-6 with lettuce, RealSense on the arm, distance servo trials, data and graphs |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),

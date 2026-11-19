@@ -43,8 +43,15 @@ export HOME="${HOME:-/tmp/simhome}"
 # including the arm emulator (which runs with a cleaned environment).
 export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
 # model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
-export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items:$SIM/models/plants:$SIM/worlds/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
+# SIM_ARM_EE=camera (default): the wrist camera instead of the gripper (SIM_WRIST_CAMERA
+# d405 / d435i); claw: the gripper with a RealSense D435i on the claw (as on the lab arm)
+if [ "${SIM_ARM_EE:-camera}" = claw ]; then
+    EE_ARGS="end_effector:=gripper claw_camera:=true"
+else
+    EE_ARGS="end_effector:=camera camera_model:=${SIM_WRIST_CAMERA:-d405}"
+fi
 ARM_ARGS=()
 if [ "${SIM_MOVEIT:-0}" = 1 ]; then
     # MoveIt drives the arm through gz_ros2_control (go2-sim-moveit image):
@@ -69,7 +76,7 @@ if [ "${SIM_MOVEIT:-0}" = 1 ]; then
     # shellcheck disable=SC1091
     source /opt/gz_ros2_control/setup.bash
     xacro "$MWS/install/d1_moveit_config/share/d1_moveit_config/config/d1_go2.urdf.xacro" \
-        hardware:=gazebo end_effector:=camera > "$GEN/d1_moveit.urdf"
+        hardware:=gazebo $EE_ARGS > "$GEN/d1_moveit.urdf"
     ARM_ARGS=(--arm-urdf "$GEN/d1_moveit.urdf" --arm-mesh-root "$MWS/install/d1_550_description/share")
 fi
 
@@ -97,11 +104,15 @@ src, dst, topics_out, world = sys.argv[1:]
 gait = os.environ.get("SIM_GAIT", "0") == "1"
 tree = ET.parse(src)
 links = []
+ARM_LINKS = ("base_link", "Empty_Link", "tool0", "camera_link", "claw_camera_bracket", "camera_optical_frame")
 for link in tree.getroot().find("model").findall("link"):
     if gait:
         # The body is carried by VelocityControl, not by the feet. Feet use bitmask 2,
-        # so they touch objects and pass through the floor (bitmask 1).
-        ET.SubElement(link, "gravity").text = "0"
+        # so they touch objects and pass through the floor (bitmask 1). The arm keeps its
+        # gravity: under effort control (SIM_REALISM=1) it hangs on its joints like the
+        # real one, and VelocityControl holds the body's height against its weight.
+        if not link.get("name", "").startswith(ARM_LINKS):
+            ET.SubElement(link, "gravity").text = "0"
         for col in link.findall("collision"):
             if "foot" in col.get("name"):
                 surface = col.find("surface") if col.find("surface") is not None else ET.SubElement(col, "surface")
@@ -171,7 +182,8 @@ if [ "${SIM_MOVEIT:-0}" = 1 ]; then
     # robot description from robot_state_publisher when it loads, so this
     # starts first.
     export ROS_DOMAIN_ID="${SIM_ARM_DOMAIN:-66}" RMW_IMPLEMENTATION=rmw_cyclonedds_cpp CYCLONEDDS_URI="file://$GEN/cyclonedds.xml"
-    ros2 launch d1_moveit_config demo.launch.py hardware:=gazebo end_effector:=camera use_rviz:=false \
+    # shellcheck disable=SC2086  # EE_ARGS is a list of launch arguments
+    ros2 launch d1_moveit_config demo.launch.py hardware:=gazebo $EE_ARGS use_rviz:=false \
         > "$GEN/moveit.log" 2>&1 &
     PIDS+=("$!")
     echo "[sim] MoveIt: move_group + controllers starting on domain ${ROS_DOMAIN_ID} (log $GEN/moveit.log)"
@@ -209,8 +221,9 @@ else
 fi
 
 if [ "$SIM_GUI" = 1 ]; then
-    gz sim -g --render-engine "$SIM_RENDER_ENGINE" &
-    PIDS+=("$!")
+    # Not in PIDS: closing the window leaves the simulation running (reopen it with
+    # ./gazebo/run_sim.sh gui).
+    gz sim -g --render-engine "$SIM_RENDER_ENGINE" > "$GEN/gui.log" 2>&1 &
 fi
 
 ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:="$SIM/sim/bridge.yaml" &

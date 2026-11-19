@@ -20,6 +20,8 @@
 #   ORBIT_ARGS="-p target:=[0.0,0.45,0.20]" ...  # more orbit_scanner parameters
 #   ./scripts/runtime/arm_moveit.sh --build      # force a rebuild first
 #   ./scripts/runtime/arm_moveit.sh --no-rviz    # headless
+#   ... --real --hold "0 0.25 0.30 0 -0.55 0"    # REAL arm: no inspection; move to these joints
+#                                                # (rad) and hold (arm_servo_test.sh uses this)
 #
 # Needs: sudo apt install ros-humble-moveit ros-humble-ros2-control ros-humble-ros2-controllers
 # The D1 description is built from D1_ARM_DIR (default ~/files/unitree-D1-550-Robot-ARM).
@@ -37,7 +39,7 @@ D1_ARM_DIR="${D1_ARM_DIR:-$HOME/files/unitree-D1-550-Robot-ARM}"
 ARM_ROS_DOMAIN_ID="${ARM_ROS_DOMAIN_ID:-78}"
 
 BUILD="auto"; INSPECT="false"; REAL="false"; RVIZ="true"; END_EFFECTOR="gripper"
-ORBIT="false"; ORBIT_TEST="false"; PLAN_ONLY="false"
+ORBIT="false"; ORBIT_TEST="false"; PLAN_ONLY="false"; HOLD=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --build)   BUILD="always" ;;
@@ -48,8 +50,9 @@ while [ $# -gt 0 ]; do
         --orbit)   ORBIT="true"; INSPECT="true"; END_EFFECTOR="camera" ;;
         --orbit-test) ORBIT="true"; ORBIT_TEST="true"; INSPECT="true"; END_EFFECTOR="camera" ;;
         --plan-only) PLAN_ONLY="true" ;;
+        --hold)    HOLD="${2:?--hold needs six joint values in rad}"; INSPECT="true"; shift ;;
         --robot)   export ARM_ROBOT="${2:?--robot needs the Go2 IP}"; shift ;;
-        -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
     shift
@@ -139,7 +142,15 @@ if [ "${INSPECT}" = "true" ]; then
     echo "[inspect] waiting for MoveIt..."
     sleep 8
 
-    if [ "${ORBIT}" = "true" ]; then
+    if [ -n "${HOLD}" ]; then
+        # No mission: move to the HOLD joints and keep MoveIt up for another node
+        # (arm_servo_test.sh: distance_servo.py). If the move fails the arm stays put.
+        read -ra HOLD_Q <<< "${HOLD}"
+        [ "${#HOLD_Q[@]}" = 6 ] || fail "--hold needs six joint values, got: ${HOLD}"
+        python3 "${REPO_ROOT}/scripts/tools/arm_go_joints.py" "${HOLD_Q[@]}" --velocity "${VELOCITY_SCALE}" \
+            || echo "[hold] WARN: the arm did not reach the hold pose; MoveIt stays up"
+        [ -z "${HOLD_READY_FILE:-}" ] || touch "${HOLD_READY_FILE}"
+    elif [ "${ORBIT}" = "true" ]; then
         read -ra EXTRA <<< "${ORBIT_ARGS:-}"
         ORBIT_PARAMS=(--ros-args)
         [ "${PLAN_ONLY}" = "true" ] && ORBIT_PARAMS+=(-p plan_only:=true)
@@ -152,7 +163,8 @@ if [ "${INSPECT}" = "true" ]; then
     fi
 
     [ "${REAL}" = "true" ] && echo "[real] the arm stays enabled and holding; fold it with start_arm.sh fold"
-    echo "[inspect] done. Ctrl+C to close RViz."
+    if [ -n "${HOLD}" ]; then echo "[hold] MoveIt is up. Ctrl+C to stop it and RViz."
+    else echo "[inspect] done. Ctrl+C to close RViz."; fi
     wait ${LAUNCH_PID}
 else
     exec ros2 launch d1_moveit_config demo.launch.py "${LAUNCH_ARGS[@]}"

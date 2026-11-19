@@ -22,11 +22,17 @@ Usage:
         -p out_domain_id:=78 -p show:=true
 
 Parameters: model (yolo11s.pt), target_class ('' = any class), min_confidence (0.5),
-depth_window (5), color_topic, depth_topic, out_domain_id (-1), device ('' = auto),
-show (false: an OpenCV window with the box and distance).
+depth_mode (center: the median of a depth_window square at the box centre, 5 px; box: the
+box_percentile-th (25) of the depths in the central box_fraction (0.5) of the box, the
+front of a leafy plant), color_topic, depth_topic (a topic not ending in /compressed or
+/compressedDepth is read as a raw Image: rgb8/bgr8 colour, 32FC1 m or 16UC1 mm depth, as
+the Gazebo wrist camera publishes them), out_domain_id (-1), device ('' = auto),
+show (false: an OpenCV window with the box and distance), annotated_topic ('': the same
+picture published as a bgr8 Image, e.g. for run_sim_demo.sh --video).
 """
 
 import struct
+import time
 
 import cv2
 import numpy as np
@@ -34,14 +40,23 @@ import rclpy
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Float32
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def decode_color(msg):
-    """sensor_msgs/CompressedImage (JPEG/PNG) -> BGR uint8 image."""
+    """sensor_msgs/CompressedImage (JPEG/PNG) or sensor_msgs/Image (rgb8/bgr8) -> BGR uint8 image."""
+    if isinstance(msg, Image):
+        enc = msg.encoding.lower()
+        if enc not in ("rgb8", "bgr8"):
+            raise ValueError(f'unhandled colour encoding "{msg.encoding}"')
+        img = np.frombuffer(bytes(msg.data), np.uint8).reshape(msg.height, msg.step)[
+            :, : msg.width * 3
+        ]
+        img = img.reshape(msg.height, msg.width, 3)
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if enc == "rgb8" else img.copy()
     img = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"cannot decode colour image ({msg.format})")
@@ -82,6 +97,76 @@ def decode_compressed_depth(msg):
     raise ValueError(f'unhandled depth encoding "{encoding}"')
 
 
+def decode_depth(msg):
+    """Depth in metres (float32, 0 = no data) from a raw sensor_msgs/Image (32FC1 metres, as
+    the Gazebo wrist camera; 16UC1 millimetres, as the RealSense driver) or a
+    compressedDepth CompressedImage."""
+    if not isinstance(msg, Image):
+        return decode_compressed_depth(msg)
+    enc = msg.encoding.lower()
+    if enc == "32fc1":
+        depth = np.frombuffer(bytes(msg.data), np.float32).reshape(msg.height, -1)[
+            :, : msg.width
+        ]
+        depth = np.nan_to_num(depth.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        return depth
+    if enc in ("16uc1", "mono16"):
+        raw = np.frombuffer(bytes(msg.data), np.uint16).reshape(msg.height, -1)[
+            :, : msg.width
+        ]
+        return raw.astype(np.float32) / 1000.0
+    raise ValueError(f'unhandled raw depth encoding "{msg.encoding}"')
+
+
+def depth_in_box(depth_m, box, fraction=0.5, percentile=25.0):
+    """Distance to the front of the object: the percentile-th of the valid depths in the
+    central fraction of the box (x1, y1, x2, y2), or None.
+
+    For a plant the box centre often falls between leaves onto whatever is behind it (in the
+    simulation, with the camera on the claw: 0.83 m read for a lettuce 0.69 m away); a low
+    percentile over the box's middle measures the leaves nearest the camera instead."""
+    h, w = depth_m.shape[:2]
+    x1, y1, x2, y2 = box
+    cx, cy, hw, hh = (
+        (x1 + x2) / 2,
+        (y1 + y2) / 2,
+        (x2 - x1) * fraction / 2,
+        (y2 - y1) * fraction / 2,
+    )
+    c0, c1 = max(0, int(cx - hw)), min(w, int(cx + hw) + 1)
+    r0, r1 = max(0, int(cy - hh)), min(h, int(cy + hh) + 1)
+    patch = depth_m[r0:r1, c0:c1]
+    good = patch[np.isfinite(patch) & (patch > 0.0)]
+    return float(np.percentile(good, percentile)) if good.size >= 5 else None
+
+
+def iou(a, b):
+    """Intersection over union of two (x1, y1, x2, y2, ...) boxes."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def choose_box(cands, last, w, h, by_confidence=False, min_iou=0.3):
+    """The box to follow among cands ((x1, y1, x2, y2, label, conf)): the most confident
+    (by_confidence), else the one overlapping last most (IoU >= min_iou), else the
+    largest."""
+    if not cands:
+        return None
+    if by_confidence:
+        return max(cands, key=lambda c: c[5])
+    if last is not None:
+        best = max(cands, key=lambda c: iou(c, last))
+        if iou(best, last) >= min_iou:
+            return best
+    # nothing followed yet: the largest box, the nearest plant (the one the arm is at). The
+    # box nearest the image centre picked plants further back on the rack, which sit nearer
+    # the horizon than the target when the camera is below it.
+    return max(cands, key=lambda c: (c[2] - c[0]) * (c[3] - c[1]))
+
+
 def depth_at(depth_m, u, v, window):
     """Median of the valid (> 0, finite) depths in a window x window square at (u, v), or None."""
     h, w = depth_m.shape[:2]
@@ -101,11 +186,21 @@ class YoloDepthTracker(Node):
         d("target_class", "")
         d("min_confidence", 0.5)
         d("depth_window", 5)
+        d(
+            "depth_mode", "center"
+        )  # center: median around the box centre; box: see depth_in_box
+        d("box_fraction", 0.5)
+        d("box_percentile", 25.0)
         d("color_topic", "/camera/color/image_raw/compressed")
         d("depth_topic", "/camera/aligned_depth_to_color/image_raw/compressedDepth")
         d("out_domain_id", -1)
         d("device", "")
         d("show", False)
+        d("select", "track")  # track | confidence (see best_box)
+        d("track_timeout_s", 1.0)
+        d(
+            "annotated_topic", ""
+        )  # '' = off; else a bgr8 Image with the box and distance (demo video)
         self.p = lambda n: self.get_parameter(n).value
 
         from ultralytics import YOLO  # slow import: after the parameters are checked
@@ -128,30 +223,61 @@ class YoloDepthTracker(Node):
         else:
             self.pub = self.create_publisher(Float32, "/object_distance", 10)
 
+        # .../compressed: CompressedImage; anything else: a raw Image. On the Go2's camera
+        # service the compressed colour topic carried nothing (2026-11-18), the raw one ~10 Hz.
+        color_type = (
+            CompressedImage if self.p("color_topic").endswith("/compressed") else Image
+        )
         color = Subscriber(
             self,
-            CompressedImage,
+            color_type,
             self.p("color_topic"),
             qos_profile=qos_profile_sensor_data,
         )
+        # .../compressedDepth: CompressedImage; anything else: a raw Image (the simulation).
+        depth_type = (
+            CompressedImage
+            if self.p("depth_topic").endswith("/compressedDepth")
+            else Image
+        )
         depth = Subscriber(
             self,
-            CompressedImage,
+            depth_type,
             self.p("depth_topic"),
             qos_profile=qos_profile_sensor_data,
         )
-        self.sync = ApproximateTimeSynchronizer([color, depth], queue_size=5, slop=0.05)
+        # Colour ~10 Hz, compressed depth ~1.3 Hz and later (PNG on the Jetson): a colour
+        # queue of 30 still holds the frame that matches a late depth image.
+        self.sync = ApproximateTimeSynchronizer(
+            [color, depth], queue_size=30, slop=0.05
+        )
         self.sync.registerCallback(self.on_frames)
+        self.last_box, self.last_box_t = None, 0.0
+        self.annotated_pub = (
+            self.create_publisher(Image, self.p("annotated_topic"), 2)
+            if self.p("annotated_topic")
+            else None
+        )
         self.frames = 0
+        self.pairs = 0
+        self.create_timer(10.0, self.report)
         self.get_logger().info(
             f'YOLO {self.p("model")}, target "{target or "any"}"; /object_distance on domain '
             f'{out_domain if out_domain >= 0 else "of the camera"}'
         )
 
+    def report(self):
+        """Every 10 s: synced colour+depth pairs, so a silent /object_distance can be told apart."""
+        self.get_logger().info(
+            f"{self.pairs / 10.0:.1f} colour+depth pairs/s, {self.frames} detections so far"
+        )
+        self.pairs = 0
+
     def on_frames(self, color_msg, depth_msg):
+        self.pairs += 1
         try:
             img = decode_color(color_msg)
-            depth = decode_compressed_depth(depth_msg)
+            depth = decode_depth(depth_msg)
         except ValueError as e:
             self.get_logger().warn(str(e), throttle_duration_sec=5.0)
             return
@@ -168,7 +294,15 @@ class YoloDepthTracker(Node):
         if box is not None:
             x1, y1, x2, y2, label, conf = box
             u, v = int(round((x1 + x2) / 2)), int(round((y1 + y2) / 2))
-            dist = depth_at(depth, u, v, self.p("depth_window"))
+            if self.p("depth_mode") == "box":
+                dist = depth_in_box(
+                    depth,
+                    (x1, y1, x2, y2),
+                    float(self.p("box_fraction")),
+                    float(self.p("box_percentile")),
+                )
+            else:
+                dist = depth_at(depth, u, v, self.p("depth_window"))
             if dist is not None:
                 self.pub.publish(Float32(data=dist))
             self.frames += 1
@@ -177,17 +311,24 @@ class YoloDepthTracker(Node):
                     f'{label} {conf:.2f} at ({u}, {v}): '
                     f'{f"{dist:.3f} m" if dist is not None else "no depth"}'
                 )
-        if self.p("show"):
-            self.draw(img, box, dist)
+        if self.p("show") or self.annotated_pub is not None:
+            self.draw(img, box, dist, color_msg.header)
 
     def best_box(self, img):
-        """(x1, y1, x2, y2, label, confidence) of the most confident wanted detection, or None."""
+        """(x1, y1, x2, y2, label, confidence) of the tracked wanted detection, or None.
+
+        select:=track (default): stay on the object followed so far (the box overlapping the
+        last one most, IoU >= 0.3); when there is none (start, or lost for more than
+        track_timeout_s) take the largest box, the nearest plant (the one the arm is at).
+        With several plants in view, picking the most confident box each frame jumps from
+        plant to plant (seen in the simulation with the camera on the claw).
+        select:=confidence: the most confident box, every frame."""
         kw = {"verbose": False, "conf": float(self.p("min_confidence"))}
         if self.p("device"):
             kw["device"] = self.p("device")
         result = self.model(img, **kw)[0]
         target = self.p("target_class").strip()
-        best = None
+        cands = []
         for xyxy, cls, conf in zip(
             result.boxes.xyxy.tolist(),
             result.boxes.cls.tolist(),
@@ -196,11 +337,25 @@ class YoloDepthTracker(Node):
             label = self.names[int(cls)]
             if target and label != target:
                 continue
-            if best is None or conf > best[5]:
-                best = (*xyxy, label, conf)
+            cands.append((*xyxy, label, conf))
+        h, w = img.shape[:2]
+        best = choose_box(
+            cands,
+            self.last_box if self.p("select") == "track" else None,
+            w,
+            h,
+            by_confidence=self.p("select") == "confidence",
+        )
+        now = time.monotonic()
+        if best is not None:
+            self.last_box, self.last_box_t = best, now
+        elif self.last_box is not None and now - self.last_box_t > float(
+            self.p("track_timeout_s")
+        ):
+            self.last_box = None
         return best
 
-    def draw(self, img, box, dist):
+    def draw(self, img, box, dist, header=None):
         if box is not None:
             x1, y1, x2, y2, label, conf = box
             cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
@@ -218,13 +373,25 @@ class YoloDepthTracker(Node):
                 (0, 255, 0),
                 2,
             )
-        cv2.imshow("yolo_depth_tracker", img)
-        cv2.waitKey(1)
+        if self.annotated_pub is not None:
+            out = Image(
+                header=header,
+                height=img.shape[0],
+                width=img.shape[1],
+                encoding="bgr8",
+                step=img.shape[1] * 3,
+                data=img.tobytes(),
+            )
+            self.annotated_pub.publish(out)
+        if self.p("show"):
+            cv2.imshow("yolo_depth_tracker", img)
+            cv2.waitKey(1)
 
     def shutdown(self):
         if self.out_node is not None:
             self.out_node.destroy_node()
-            rclpy.shutdown(context=self.out_ctx)
+            # Ctrl+C already shut every context down (rclpy's signal handler).
+            rclpy.try_shutdown(context=self.out_ctx)
 
 
 def main():
@@ -238,8 +405,7 @@ def main():
         node.shutdown()
         node.destroy_node()
         cv2.destroyAllWindows()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

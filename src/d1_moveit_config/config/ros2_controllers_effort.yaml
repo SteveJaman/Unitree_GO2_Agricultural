@@ -1,0 +1,38 @@
+# Gazebo with SIM_REALISM=1 (d1_go2.ros2_control.xacro): the arm on effort control, so
+# gravity, inertia, joint damping and friction act on it, as on the real D1's servos.
+# PID gains per joint, sized to the D1-550 link masses (d1_550_arm.xacro) and effort
+# limits (3.33 N m Joint1-3, 1.67 N m Joint4-6): with the arm reaching out, Joint2 holds
+# ~1.5 N m of gravity, sags ~1.5 deg on p alone and creeps back on i (a servo's integral),
+# with a slight overshoot (damping ratio ~0.5) and a visible lag behind the trajectory.
+controller_manager:
+  ros__parameters:
+    update_rate: 250          # the physics step (4 ms): the PD loop needs it on light wrist links
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    gripper_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+arm_controller:
+  ros__parameters:
+    joints: [Joint1, Joint2, Joint3, Joint4, Joint5, Joint6]
+    command_interfaces: [effort]
+    state_interfaces: [position, velocity]
+    allow_nonzero_velocity_at_trajectory_end: false
+    gains:
+      Joint1: {p: 40.0, i: 10.0, d: 1.2, i_clamp: 0.8}
+      Joint2: {p: 60.0, i: 30.0, d: 1.5, i_clamp: 1.5}
+      Joint3: {p: 50.0, i: 25.0, d: 1.0, i_clamp: 1.2}
+      Joint4: {p: 8.0, i: 4.0, d: 0.04, i_clamp: 0.3}
+      Joint5: {p: 10.0, i: 5.0, d: 0.06, i_clamp: 0.4}
+      Joint6: {p: 6.0, i: 3.0, d: 0.03, i_clamp: 0.3}
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 0.0
+
+gripper_controller:
+  ros__parameters:
+    joints: [Joint_L, Joint_R]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
