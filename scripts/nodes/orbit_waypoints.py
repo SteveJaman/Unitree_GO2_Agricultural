@@ -10,9 +10,11 @@ Frame (MoveIt's world): the dog at the origin, the arm along +x, the plant centr
 P = (d, 0, h_p), z up. A camera pose of a waypoint (azimuth az, elevation el, radius r):
     C = P + r (-cos el cos az, cos el sin az, sin el),  the camera's x axis looking at P,
 its z axis as near to up as the look-at allows; az = 0 is between the dog and the plant.
-Shells (elevations relative to the plant centroid): under -20 deg, eq 0 deg, top +30 deg.
+Shells (elevations relative to the plant centroid): under -20 deg, eq 0 deg, top +15 deg
+(--top-el; the top shell was +20..+40 deg with waypoints at +30, out of reach in every cell of
+the first frontier, 2026-11-19: reduced to +10..+15 deg).
     eq:    az -90 -60 -30 0 30 60 90        (the 180 deg arc)
-    top:   az -60 -30 0 30 60   (el +30)    (includes the "top pose at az 0" of the eq set)
+    top:   az -60 -30 0 30 60   (el +15)    (includes the "top pose at az 0" of the eq set)
     under: az -60 -30 0 30 60   (el -20)
 fixed order: eq left to right, then top, then under (no reordering: deferred).
 
@@ -73,7 +75,7 @@ from sensor_msgs.msg import JointState  # noqa: E402
 REACH = 0.605
 SHELLS = {
     "eq": (0.0, [-90, -60, -30, 0, 30, 60, 90]),
-    "top": (30.0, [-60, -30, 0, 30, 60]),
+    "top": (15.0, [-60, -30, 0, 30, 60]),
     "under": (-20.0, [-60, -30, 0, 30, 60]),
 }
 ORDER = ("eq", "top", "under")
@@ -178,8 +180,17 @@ class Orbit(sdt.Trials):
         self.m.gz.node.subscribe(
             Clock, f"/world/{self.world['world']}/clock", self._clock
         )
-        self.h_p = float(self.world["target_plant"]["center"][2])
-        self.plant_xy = self.world["target_plant"]["center"][:2]
+        # the plant to orbit: --plant NAME (a front_plants entry of the world JSON) or the target
+        tp = self.world["target_plant"]
+        self.plant_rec = {"name": "target", "center": tp["center"], "sample_spec": None}
+        if a.plant:
+            self.plant_rec = next(
+                p for p in self.world["front_plants"] if p["name"] == a.plant
+            )
+        centre = self.plant_rec["center"]
+        self.plant = np.array(centre, float)  # for ground_truth()
+        self.h_p = float(centre[2])
+        self.plant_xy = centre[:2]
 
     # ------------------------------------------------------------ inputs
     def _js(self, msg):
@@ -668,8 +679,10 @@ class Orbit(sdt.Trials):
                 "d": a.d,
                 "r": a.r,
                 "h_p": self.h_p,
-                "plant": self.world["target_plant"],
-                "plant_center_world": self.world["target_plant"]["center"],
+                "plant": self.plant_rec["name"],
+                "species": self.world.get("species", "lettuce"),
+                "plant_center_world": list(self.plant_rec["center"]),
+                "plant_sample_spec": self.plant_rec.get("sample_spec"),
                 "dog_parked": list(m.gz.dog[:4]),
                 "analytic_limit_deg": analytic_limit(a.d, a.r),
                 "base_clear": self.base_clear(a.d),
@@ -698,6 +711,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--run-id", default="")
     ap.add_argument(
+        "--plant",
+        default="",
+        help="a front_plants name of the world JSON (default: its target plant)",
+    )
+    ap.add_argument(
         "--home",
         type=float,
         nargs=6,
@@ -707,7 +725,11 @@ def main():
     ap.add_argument("--world-json", default="/sim/worlds/cropking_nft46.json")
     ap.add_argument("--urdf", default="/tmp/sim-gen/d1_moveit.urdf")
     ap.add_argument("--vel-scale", type=float, default=0.3)
+    ap.add_argument(
+        "--top-el", type=float, default=15.0, help="top shell waypoint elevation (deg)"
+    )
     a = ap.parse_args()
+    SHELLS["top"] = (a.top_el, SHELLS["top"][1])
     o = Orbit(a)
     code = 1
     try:

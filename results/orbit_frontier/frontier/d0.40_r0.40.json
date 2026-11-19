@@ -28,7 +28,7 @@
     "stop_reason": "IK_FAIL"
    },
    "limit_deg": null,
-   "elevation_deg": 30.0
+   "elevation_deg": 15.0
   },
   "under": {
    "left": {

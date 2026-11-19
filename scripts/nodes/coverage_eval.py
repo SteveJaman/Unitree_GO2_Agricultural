@@ -108,6 +108,8 @@ def plant_samples(plant, world_sdf, n=3000):
             plant["pose"],
             plant.get("scale", [1, 1, 1]),
         )
+        if not os.path.isabs(mesh):
+            mesh = os.path.join(REPO, mesh)
     else:
         root = ET.parse(world_sdf).getroot()
         m = next(e for e in root.iter("model") if e.get("name") == plant["model"])
@@ -273,6 +275,9 @@ def main():
                         "detection_confidence": f"{fr['conf']:.3f}",
                         "box_area_px": f"{fr['area']:.0f}",
                         "seen_visible": int((fr["covered"]).sum()),
+                        "seen_idx": " ".join(
+                            map(str, np.flatnonzero(fr["covered"] & visible))
+                        ),
                         "det_region": " ".join(
                             map(str, np.flatnonzero(fr["det_region"] & visible))
                         ),

@@ -28,7 +28,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-SHELLS = {"eq": 0.0, "top": 30.0, "under": -20.0}
+SHELLS = {"eq": 0.0, "top": 15.0, "under": -20.0}   # top: +15 since 2026-11-19 (was +30)
 S_Z, L_ARM, CAM_A, CAM_B, REACH = 0.4796, 0.479, 0.163, 0.054, 0.605
 _K = {}
 

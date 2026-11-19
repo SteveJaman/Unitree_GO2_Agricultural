@@ -1,13 +1,73 @@
-# Three-shell orbit frontier (Phase 2): stopped at the gate
+# Three-shell orbit frontier (Phase 2)
 
 [← README](../../README.md) · [Docs index](../README.md) · [Sim health + species](sim_health.md) ·
-[Servo demo](servo_demo.md)
+[Servo demo](servo_demo.md) · [Equations](../theory/equations.md)
 
-**Status (2026-11-19): Phase 2 stopped.** No cell of the d × r matrix reaches all three shells
-on the lettuce: the top shell is out of reach everywhere. Per the plan's stop condition, the
-orbit executions, coverage numbers and Phases 3-8 wait for a decision on the shells (below).
+**Status (2026-11-19): Phase 2 passes with the top shell at +15°.** The first pass (top shell at
++30°) stopped at the gate: no cell reached the top shell (kept below as the record). On the
+decision to lower the top shell (option "reduce the shells' elevations"), the frontier was rerun:
+10 of 16 cells reach all three shells, and 24 orbits (9 cells × 1, the best 5 cells × 3 more)
+were executed and scored. The gate's second clause, R(θ) matching the observed limit within 5°,
+still fails in every cell (finding 4).
 
-## Question
+## Result with the top shell at +15° (current)
+
+| d (m) | r (m) | class | collision-free eq / top / under | reach-only eq / top / under | az 0 elevations reachable | planar R(θ) limit |
+|---|---|---|---|---|---|---|
+| 0.35 | 0.25-0.40 | blocked (dog vs rack) | ±46 / ±18 / ±30 … ±27 / none / none | | | |
+| **0.40** | **0.25** | all-shells | ±44 / ±9 / ±28 | ±39 / ±4 / ±11 | −30..+22° | 135.9° |
+| 0.40 | 0.30 | all-shells | ±40 / ±13 / ±23 | ±36 / ±10 / ±17 | −29..+18° | 118.9° |
+| 0.40 | 0.35 | all-shells | ±36 / ±2 / ±16 | ±33 / ±1 / ±11 | −28..+15° | 107.4° |
+| 0.40 | 0.40 | fail (top, under) | ±31 / none / none | ±28 / none / none | −16..+11° | 98.3° |
+| 0.45 | 0.25 | all-shells | ±41 / ±15 / ±25 | ±21 / ±13 / ±20 | −29..+22° | 116.7° |
+| 0.45 | 0.30 | all-shells | ±39 / ±6 / ±22 | ±34 / ±3 / ±16 | −27..+19° | 105.8° |
+| 0.45 | 0.35 | all-shells | ±36 / ±9 / ±18 | ±32 / ±7 / ±13 | −27..+17° | 97.5° |
+| 0.45 | 0.40 | fail (top) | ±32 / none / ±13 | ±29 / none / ±9 | −25..+13° | 90.6° |
+| 0.50 | 0.25 | all-shells | ±38 / ±24 / ±30 | ±32 / ±22 / ±27 | −29..+22° | 102.4° |
+| 0.50 | 0.30 | all-shells | ±37 / ±14 / ±20 | ±20 / ±11 / ±16 | −26..+20° | 95.0° |
+| 0.50 | 0.35 | all-shells | ±35 / ±4 / ±17 | ±31 / ±1 / ±8 | −25..+18° | 88.9° |
+| 0.50 | 0.40 | skipped (R(90) 0.640 m) | | ±29 / ±3 / ±10 | −24..+15° | 83.7° |
+
+Data: [`results/orbit_frontier/`](../../results/orbit_frontier/) (per-cell frontier JSON,
+`reach.json`, `frontier.md` with every column, `cells.tsv`). The +30° run is kept in
+[`results/orbit_frontier_top30/`](../../results/orbit_frontier_top30/).
+
+### Executed orbits
+
+Each orbit visits the 17 fixed waypoints (eq −90…90, top and under −60…60, step 30), skips the
+infeasible ones, and captures 5 wrist frames per executed waypoint. Coverage is E4 (visible-half
+mesh samples seen, depth-occlusion and sharpness filtered); energy the E3 index (relative).
+Data: [`results/orbit_trials.csv`](../../results/orbit_trials.csv) (per waypoint, the brief's
+schema), `orbit_trials_runs.csv` (per run and shell), `orbit_trials_frames.csv` (per frame).
+
+| d, r (m) | Runs | Executed waypoints eq / top / under | Coverage all | eq | top | under | Energy index / run |
+|---|---|---|---|---|---|---|---|
+| **0.40, 0.25** | 4 | 3 / 1 / 1 | **0.519** | 0.337 | 0.281 | 0.153 | 12.4 |
+| 0.40, 0.30 | 4 | 3 / 1 / 1 | 0.517 | 0.330 | 0.298 | 0.149 | 12.5 |
+| 0.45, 0.25 | 4 | 3 / 1 / 1 | 0.484 | 0.299 | 0.288 | 0.126 | 13.4 |
+| 0.50, 0.25 | 4 | 3 / **0** / 3 | 0.520 | 0.345 | **0** | 0.349 | 20.4 |
+| 0.50, 0.30 | 4 | 3 / **0** / **0** | 0.364 | 0.364 | 0 | 0 | 7.9 |
+| 0.40, 0.35 | 1 | 3 / 1 / 1 | 0.515 | 0.361 | 0.298 | 0.115 | 12.6 |
+| 0.45, 0.30 | 1 | 3 / 1 / 3 | 0.583 | 0.363 | 0.305 | 0.313 | 20.3 |
+| 0.45, 0.35 | 1 | 3 / 1 / 1 | 0.532 | 0.377 | 0.300 | 0.112 | 12.7 |
+| 0.50, 0.35 | 1 | 3 / 1 / 1 | 0.493 | 0.345 | 0.260 | 0.123 | 13.0 |
+
+- **(0.50, 0.25), the widest cell by the IK frontier, never executes its top waypoint**: the move
+  from the eq arc up to the top az-0 pose times out under effort control (`EXEC_FAIL(-6)`, 4/4
+  runs); (0.50, 0.30) loses top and under the same way. The frontier is a kinematic statement;
+  execution under the realistic controller is a stricter one.
+- **(0.40, 0.25) is the best cell in execution**: all three shells in every run, the highest
+  coverage among the 4-run cells together with (0.40, 0.30), lower energy. Phase 3 uses it.
+- Only the 30° waypoint grid is visited: with eq limits of ±35-44° the eq shell gets az −30/0/30,
+  and top/under limits under ±30° leave az 0 only (except under ±30° at (0.45, 0.30)).
+- Repeats differ by about 1 % in energy and 0.02-0.05 in coverage: the simulation is close to
+  deterministic, so the repeats measure simulation noise (contact, controller timing), not
+  plant-to-plant or real-world variance. Phase 3 varies the plant instead.
+- No watchdog restarts and no TRACKER_STARVED in the 24 runs.
+
+## First pass with the top shell at +30° (stopped at the gate)
+
+### Question
 
 Can the D1-550 with the D435i on its claw orbit a lettuce on the lab's NFT 4-6 from the parked
 Go2, over three elevation shells around the plant centroid (h_p = 0.844 m)?
@@ -16,12 +76,12 @@ Go2, over three elevation shells around the plant centroid (h_p = 0.844 m)?
 |---|---|---|---|
 | under | −25 to −10° | −60 −30 0 30 60 | −20° |
 | eq | −10 to +10° | −90 −60 −30 0 30 60 90 (the 180° arc) | 0° |
-| top | +20 to +40° | −60 −30 0 30 60 | +30° |
+| top | +20 to +40° (now +10 to +20°) | −60 −30 0 30 60 | +30° (now +15°) |
 
 Camera at C = P + r(−cos el cos az, cos el sin az, sin el) around P = (d, 0, h_p), looking at P,
 camera up as near vertical as the look-at allows (roll 0, ±30° tried).
 
-## Method
+### Method
 
 `scripts/runtime/run_orbit_sweep.sh` over d ∈ {0.35, 0.40, 0.45, 0.50} × r ∈ {0.25 … 0.40} m:
 
@@ -36,7 +96,7 @@ camera up as near vertical as the look-at allows (roll 0, ±30° tried).
 4. **Dog vs rack**: the parked dog's rear legs (0.37 m behind its centre) against the reservoir
    under the channels.
 
-## Result
+### Result (top +30°)
 
 | d (m) | r (m) | class | collision-free eq / top / under | reach-only eq / top / under | az 0 elevations reachable | planar R(θ) limit |
 |---|---|---|---|---|---|---|
@@ -63,7 +123,7 @@ camera rolled ±30° about its viewing axis; the reach-only check keeps it uprig
 Data: [`results/orbit_frontier/`](../../results/orbit_frontier/) (per-cell frontier JSON,
 `reach.json`, `frontier.md`, `cells.tsv`).
 
-## Findings
+### Findings
 
 1. **The top shell is out of reach.** With the camera looking down at the plant, the highest the
    claw camera gets is about +22° above the centroid, at az 0 only (d ≥ 0.40, r = 0.25); the top
@@ -80,7 +140,7 @@ Data: [`results/orbit_frontier/`](../../results/orbit_frontier/) (per-cell front
    within 5°" fails. R(θ) is a necessary condition (a radial reach bound), not the binding one.
 5. **d = 0.35 is blocked by the dog itself**: its rear legs would reach into the reservoir tub.
 
-## Decision needed (not taken)
+### Decision (taken 2026-11-19: lower the top shell to +15°)
 
 The plan's options, and what the data says about each:
 
@@ -98,7 +158,7 @@ The plan's options, and what the data says about each:
   orientation error Σ x_i × x_i*, which is zero for every 180° rotation too: it "found" solutions
   with the camera turned away (one test orbit executed them; its frames looked at the light bar).
   The error is now the axis-angle of R*·Rᵀ and a solution is accepted only within 0.02 rad;
-  the table above is from the corrected IK (frontier run `frontier4`). An earlier frontier run
+  the tables are from the corrected IK (frontier runs `frontier4`, `sweep_top15`). An earlier frontier run
   (`frontier3`) with the flawed IK showed far wider, wrong limits and is discarded.
 - **Execution under effort control.** The effort-controlled arm lags its trajectory; MoveIt's
   execution monitor (1.2 × the planned duration) cancelled slow but correct moves, so with
@@ -108,12 +168,3 @@ The plan's options, and what the data says about each:
   "RRTConnect"` is OMPL's RRTConnect.
 - **Watchdog.** A waypoint over 180 s or a Gazebo clock stalled for 10 s exits 42; the sweep
   restarts the simulation (`ABORTED_SIM_HANG`), more than 5 restarts stop it.
-
-## Not done (waits for the decision)
-
-- Orbit executions over the feasible cells (`run_orbit_sweep.sh` stage 3) and
-  `results/orbit_trials.csv`: no cell is feasible on all three shells.
-- `scripts/nodes/coverage_eval.py` is written and runs; its only test input was the orbit run with
-  the flawed IK (camera turned away, coverage ≈ 0), so it is not yet validated on real orbit frames.
-- The species datasets and detectors of Phase 3 were generated in the background
-  (`~/.cache/go2-yolo/<species>_dataset`, `<species>_yolo11s.pt`), not evaluated or committed.

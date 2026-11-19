@@ -123,7 +123,7 @@ trap 'exit 130' INT TERM
 
 if [ "$REUSE" = 0 ]; then
 log "starting the simulation session (headless Gazebo, Nav2, MoveIt; log $SESSION_LOG)"
-SIM_WORLD=cropking_nft46 SIM_SPAWN="0 0 0" SIM_MOVEIT=1 SIM_ARM=0 SIM_WRIST_CAMERA=d435i SIM_GUI="$GUI" \
+SIM_WORLD="${DEMO_WORLD:-cropking_nft46}" SIM_SPAWN="0 0 0" SIM_MOVEIT=1 SIM_ARM=0 SIM_WRIST_CAMERA=d435i SIM_GUI="$GUI" \
 SIM_ARM_EE="${SIM_ARM_EE:-claw}" SIM_REALISM="${SIM_REALISM:-1}" SIM_GAIT="${SIM_GAIT:-1}" \
 SIM_CAMERA=0 SIM_TIMEOUT=400 ARM_IFACE=simarm0 \
     setsid ./scripts/runtime/wifi_nav.sh --sim --host-ip 127.0.0.1 --no-camera --no-explore \

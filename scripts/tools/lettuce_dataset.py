@@ -122,8 +122,10 @@ def inside(a):
     world = "".join(out_lines).replace("  </world>", CAMERA_MODEL + "  </world>")
     os.makedirs("/tmp/ds", exist_ok=True)
     open("/tmp/ds/world.sdf", "w").write(world)
-    log = open("/tmp/ds/gz.log", "w")
-    gz = subprocess.Popen(["gz", "sim", "-s", "-r", "/tmp/ds/world.sdf"], stdout=log, stderr=subprocess.STDOUT)
+    def start_gz():
+        log = open("/tmp/ds/gz.log", "a")
+        return subprocess.Popen(["gz", "sim", "-s", "-r", "/tmp/ds/world.sdf"], stdout=log, stderr=subprocess.STDOUT)
+    gz = start_gz()
 
     node = Node()
     latest = {}
@@ -154,7 +156,28 @@ def inside(a):
     rng = random.Random(a.seed)
     stamp = lambda m: m.header.stamp.sec + m.header.stamp.nsec * 1e-9  # noqa: E731
     saved = boxes_total = 0
-    for n in range(a.frames):
+    fails, restarts, n = 0, 0, -1
+
+    def restart_gz(why):
+        # Gazebo stops answering set_pose after a few hundred frames (seen 2026-11-18/19):
+        # restart the server and carry on with the next frame number
+        nonlocal gz, restarts
+        restarts += 1
+        print(f"[dataset] Gazebo not answering ({why}): restart {restarts}", flush=True)
+        gz.kill()
+        gz.wait(timeout=30)
+        latest.clear()
+        gz = start_gz()
+        t_up = time.time()
+        while "img" not in latest and time.time() - t_up < 180:
+            time.sleep(0.5)
+        if "img" not in latest:
+            sys.exit("Gazebo did not come back after a restart")
+    while saved < a.frames:
+        if restarts > 20:
+            print("[dataset] more than 20 Gazebo restarts: stopping", flush=True)
+            break
+        n += 1
         x, y, z, r, p, yw = sample_pose(meta, rng, a.wrist_frac)
         q = quat(r, p, yw)
         req = Pose()
@@ -163,8 +186,12 @@ def inside(a):
         req.orientation.w, req.orientation.x, req.orientation.y, req.orientation.z = q
         ok, _ = node.request(f"/world/{meta['world']}/set_pose", req, Pose, Boolean, 2000)
         if not ok:
-            print("[dataset] set_pose failed", flush=True)
+            fails += 1
+            if fails >= 5:
+                restart_gz("5 set_pose failures in a row")
+                fails = 0
             continue
+        fails = 0
         # wait for a frame rendered after the move: both topics with the same, newer stamp
         before = stamp(latest["img"])
         t1 = time.time()
@@ -178,6 +205,10 @@ def inside(a):
                 pair = (im, bx)
                 break
         if pair is None:
+            fails += 1                                # no new frame for 5 s
+            if fails >= 3:
+                restart_gz("no new frame for 3 poses")
+                fails = 0
             continue
         im, bx = pair
         arr = np.frombuffer(im.data, np.uint8).reshape(im.height, im.width, -1)[:, :, :3]

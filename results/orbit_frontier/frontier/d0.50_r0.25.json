@@ -20,15 +20,15 @@
   },
   "top": {
    "left": {
-    "limit_deg": null,
+    "limit_deg": 24,
     "stop_reason": "IK_FAIL"
    },
    "right": {
-    "limit_deg": null,
+    "limit_deg": 24,
     "stop_reason": "IK_FAIL"
    },
-   "limit_deg": null,
-   "elevation_deg": 30.0
+   "limit_deg": 24,
+   "elevation_deg": 15.0
   },
   "under": {
    "left": {

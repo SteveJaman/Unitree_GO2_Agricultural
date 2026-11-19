@@ -8,7 +8,8 @@ orbit_frontier_table.py: the frontier table of a run_orbit_sweep.sh output folde
 
 Per cell (SWEEP_DIR/cells.tsv: analytic class; SWEEP_DIR/frontier/d*_r*.json: IK limits):
   feasible  every orbit waypoint reachable: eq to +-90, top and under to +-60 deg
-  partial   every shell has at least its az = 0 waypoint (runnable), not all waypoints
+  all-shells every shell has at least its az = 0 waypoint (runnable), not all waypoints
+  partial   (unused since the all-shells class; kept for older tables)
   fail      some shell has no reachable waypoint
   blocked   the parked dog's rear legs would hit the reservoir under the rack (not orbited)
   skipped   analytic R(90) > 0.625 m (not run)
@@ -67,6 +68,9 @@ def classify(c):
         return "fail", "", ",".join(bad)
     if all(lim[s] >= NEED[s] for s in NEED):
         return "feasible", "", ""
+    if all(lim[s] >= 0 for s in NEED):              # every shell has at least its az 0 waypoint
+        worst = min(NEED, key=lambda s: lim[s] - NEED[s])
+        return "all-shells", lim[worst], worst
     worst = min(NEED, key=lambda s: lim[s] - NEED[s])
     return "partial", lim[worst], worst
 
@@ -74,13 +78,19 @@ def classify(c):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("sweep")
-    ap.add_argument("--list", choices=("runnable", "full"))
+    ap.add_argument("--list", choices=("runnable", "full", "best"))
     a = ap.parse_args()
     cells = load(a.sweep)
+    if a.list == "best":                             # the 5 runnable cells with the widest reach
+        run = [c for c in cells if classify(c)[0] in ("feasible", "all-shells")]
+        score = lambda c: sum(c["frontier"]["shells"][s]["limit_deg"] for s in NEED)  # noqa: E731
+        for c in sorted(run, key=score, reverse=True)[:5]:
+            print(f"{c['d']:.2f} {c['r']:.2f}")
+        return
     if a.list:
         for c in cells:
             k = classify(c)[0]
-            if (a.list == "full" and k == "feasible") or (a.list == "runnable" and k in ("feasible", "partial")):
+            if (a.list == "full" and k == "feasible") or (a.list == "runnable" and k in ("feasible", "all-shells")):
                 print(f"{c['d']:.2f} {c['r']:.2f}")
         return
     rp = os.path.join(a.sweep, "reach.json")
