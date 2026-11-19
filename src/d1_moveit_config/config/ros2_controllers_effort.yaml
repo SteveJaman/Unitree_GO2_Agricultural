@@ -8,7 +8,7 @@ controller_manager:
   ros__parameters:
     update_rate: 250          # the physics step (4 ms): the PD loop needs it on light wrist links
     joint_state_broadcaster:
-      type: joint_state_broadcaster/JointStateBroadcaster
+      type: joint_state_broadcaster/JointStateBroadcaster   # publishes the effort state too (torques)
     arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
     gripper_controller:

@@ -221,19 +221,36 @@ def rack():
     return model("nft_4_6_rack", L)
 
 
-def plants(rng):
-    """One lettuce mesh per planted site; returns (sdf, {site: (x, y, base_z, sxy, sz)})."""
+SPECIES_PLANTS = {(0, k): (1.0, 1.0) for k in range(1, 6)}   # five front-channel plants per species
+SPECIES_PLANTS.update({(2, 2): (0.9, 0.9), (3, 4): (0.95, 0.95), (4, 1): (0.85, 0.85)})
+
+
+def species_info(species):
+    """(mesh uri, label, height, canopy radius) of a species (config/species_config.yaml)."""
+    import yaml
+    cfg = yaml.safe_load(open(os.path.join(os.path.dirname(os.path.dirname(HERE)), "config", "species_config.yaml")))["species"][species]
+    uri = "model://lettuce/meshes/lettuce.obj" if species == "lettuce" else f"model://{species}_plant/meshes/{species}.obj"
+    return uri, cfg["label"], cfg["plant_height_m"], cfg["canopy_radius_m"]
+
+
+def plants(rng, species=None):
+    """One plant mesh per planted site; returns (sdf, {site: (x, y, base_z, sxy, sz, yaw)}).
+    species None: the lettuce control world (PLANTS); else five front-channel plants of the
+    species and three more behind (SPECIES_PLANTS)."""
     out, sites = [], {}
-    for (i, k), (sxy, sz) in PLANTS.items():
+    uri, label, height, radius = ("model://lettuce/meshes/lettuce.obj", LETTUCE_LABEL, 0.11, 0.125) if species is None \
+        else species_info(species)    # lettuce control: collision cylinder r 0.10 (0.8 x 0.125), as before
+    prefix = "lettuce" if species is None else species
+    for (i, k), (sxy, sz) in (PLANTS if species is None else SPECIES_PLANTS).items():
         x, y = channel_x(i), site_y(k)
         base = TOP_H + 0.002
         yaw = rng.uniform(-math.pi, math.pi)
-        sites[(i, k)] = (x, y, base, sxy, sz)
-        out.append(f'    <model name="lettuce_{i}_{k}"><static>true</static><pose>{x:.4f} {y:.4f} {base:.4f} 0 0 {yaw:.3f}</pose>'
-                   f'<link name="head"><visual name="v"><geometry><mesh><uri>model://lettuce/meshes/lettuce.obj</uri>'
+        sites[(i, k)] = (x, y, base, sxy, sz, yaw)
+        out.append(f'    <model name="{prefix}_{i}_{k}"><static>true</static><pose>{x:.4f} {y:.4f} {base:.4f} 0 0 {yaw:.3f}</pose>'
+                   f'<link name="head"><visual name="v"><geometry><mesh><uri>{uri}</uri>'
                    f'<scale>{sxy:.3f} {sxy:.3f} {sz:.3f}</scale></mesh></geometry></visual>'
-                   f'<collision name="c"><pose>0 0 {0.055 * sz:.3f} 0 0 0</pose><geometry>{cyl(0.10 * sxy, 0.11 * sz)}</geometry></collision>'
-                   f'</link><plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>{LETTUCE_LABEL}</label></plugin>'
+                   f'<collision name="c"><pose>0 0 {height / 2 * sz:.3f} 0 0 0</pose><geometry>{cyl(radius * 0.8 * sxy, height * sz)}</geometry></collision>'
+                   f'</link><plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>{label}</label></plugin>'
                    f'</model>\n')
     return "".join(out), sites
 
@@ -265,11 +282,18 @@ def dock():
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--species", default=None, help="write cropking_nft46_<species>.sdf/.json with that species "
+                    "(five front-channel plants); default: the lettuce control world cropking_nft46")
+    species = ap.parse_args().species
     assets.build()
     rng = random.Random(46)
-    plant_sdf, sites = plants(rng)
+    plant_sdf, sites = plants(rng, species)
+    name = "cropking_nft46" if species is None else f"cropking_nft46_{species}"
+    uri, _, height, radius = ("model://lettuce/meshes/lettuce.obj", 1, 0.11, 0.125) if species is None else species_info(species)
     tx, ty, base = sites[(TARGET_CHANNEL, TARGET_SITE)][:3]
-    tz = base + 0.055                                   # middle of the head (the mesh is 0.11 m tall)
+    tz = base + height / 2                              # the plant's centroid height (lettuce: 0.055, its head's middle)
     front_edge = RACK_X - FRAME_X - TUBE / 2
     # Tail to the rack (+x): dog centre CAM_BEHIND + START_DIST in front of the lettuce
     wx = tx - CAM_BEHIND - START_DIST
@@ -286,7 +310,7 @@ def main():
   model://lettuce is gazebo/worlds/models/lettuce (build_lettuce_model.py).
 -->
 <sdf version="1.9">
-  <world name="cropking_nft46">
+  <world name="{name}">
     <physics name="4ms" type="ignored">
       <max_step_size>0.004</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -317,7 +341,7 @@ def main():
              camera("front", eye_front, (tx - 0.2, ty, tz - 0.05), hfov=0.95),
              camera("overview", eye_over, (2.4, 0.2, 0.6), hfov=1.2),
              "  </world>\n</sdf>\n"]
-    with open(os.path.join(HERE, "cropking_nft46.sdf"), "w", newline="\n") as f:
+    with open(os.path.join(HERE, f"{name}.sdf"), "w", newline="\n") as f:
         f.write("".join(parts))
 
     # Collision objects for MoveIt's planning scene (world frame), near the arm's side
@@ -328,16 +352,26 @@ def main():
     scene.append(b("front_rail", RACK_X - FRAME_X, RACK_Y, rail_z, TUBE, 2 * FRAME_Y + TUBE, TUBE))
     scene += [b(f"post_front_{j}", RACK_X - FRAME_X, y, POST_H / 2, TUBE, TUBE, POST_H)
               for j, y in enumerate((RACK_Y - FRAME_Y, RACK_Y + FRAME_Y))]
-    for (i, k), (x, y, bz, sxy, sz) in sites.items():
-        scene.append({"name": f"lettuce_{i}_{k}", "type": "sphere", "pose": [x, y, bz + 0.055 * sz, 0, 0, 0], "size": [0.10 * sxy]})
+    prefix = "lettuce" if species is None else species
+    for (i, k), (x, y, bz, sxy, sz, _) in sites.items():
+        scene.append({"name": f"{prefix}_{i}_{k}", "type": "sphere", "pose": [x, y, bz + height / 2 * sz, 0, 0, 0],
+                      "size": [(0.10 if species is None else max(radius, height / 2) * 0.8) * sxy]})
+    mesh_file = (os.path.join(HERE, "models", "lettuce", "meshes", "lettuce.obj") if species in (None, "lettuce")
+                 else os.path.join(os.path.dirname(HERE), "models", f"{species}_plant", "meshes", f"{species}.obj"))
+    front = [{"name": f"{prefix}_0_{k}", "site": k, "center": [x, y, bz + height / 2 * sz],
+              "sample_spec": {"mesh": os.path.relpath(mesh_file, os.path.dirname(os.path.dirname(HERE))),
+                              "pose": [x, y, bz, yaw], "scale": [sxy, sxy, sz]}}
+             for (i, k), (x, y, bz, sxy, sz, yaw) in sorted(sites.items()) if i == 0]
     meta = {
-        "world": "cropking_nft46", "generated_by": "gazebo/worlds/build_cropking_nft46_world.py",
+        "world": name, "generated_by": "gazebo/worlds/build_cropking_nft46_world.py",
+        "species": species or "lettuce", "plant_height_m": height, "plant_mesh": uri,
+        "front_plants": front,
         "system": "CropKing NFT 4-6 as in the lab: 6 x 4 ft channels (36 sites, 8 in on centre) on a green slotted-steel "
                   "frame with LED bars, 31 in to the channel tops, reservoir tub underneath",
         "bounds": [X0, X1, Y0, Y1], "dock": [DOCK[0], DOCK[1], 0.0],
         "rack": {"center": [RACK_X, RACK_Y], "front_edge_x": front_edge, "channel_top_z": TOP_H,
                  "channel_x": [channel_x(i) for i in range(CH_N)], "site_y": [site_y(k) for k in range(SITES)],
-                 "planted": [list(s) for s in PLANTS]},
+                 "planted": [list(s) for s in (PLANTS if species is None else SPECIES_PLANTS)]},
         "target_plant": {"channel": TARGET_CHANNEL, "site": TARGET_SITE, "center": [tx, ty, tz], "radius": 0.12},
         "waypoint": list(waypoint), "standoff_m": standoff,
         "arm_start": {"joints": [0.0, 0.25, 0.30, 0.0, -0.55, 0.0], "camera_behind_dog_m": CAM_BEHIND,
@@ -345,7 +379,7 @@ def main():
         "observer_cameras": {"side": "observer/side", "front": "observer/front", "overview": "observer/overview"},
         "planning_scene": scene,
     }
-    with open(os.path.join(HERE, "cropking_nft46.json"), "w", newline="\n") as f:
+    with open(os.path.join(HERE, f"{name}.json"), "w", newline="\n") as f:
         json.dump(meta, f, indent=1)
         f.write("\n")
     print(f"target lettuce ({tx:.3f}, {ty:.3f}, {tz:.3f}); waypoint ({wx:.3f}, {ty:.3f}, yaw 180), "

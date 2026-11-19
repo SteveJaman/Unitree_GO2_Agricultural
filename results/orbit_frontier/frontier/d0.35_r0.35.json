@@ -1,0 +1,46 @@
+{
+ "d": 0.35,
+ "r": 0.35,
+ "h_p": 0.8444,
+ "analytic_limit_deg": 119.6024859539893,
+ "R90": 0.49497474683058323,
+ "base_clear": false,
+ "shells": {
+  "eq": {
+   "left": {
+    "limit_deg": 34,
+    "stop_reason": "IK_FAIL"
+   },
+   "right": {
+    "limit_deg": 34,
+    "stop_reason": "IK_FAIL"
+   },
+   "limit_deg": 34,
+   "elevation_deg": 0.0
+  },
+  "top": {
+   "left": {
+    "limit_deg": null,
+    "stop_reason": "IK_FAIL"
+   },
+   "right": {
+    "limit_deg": null,
+    "stop_reason": "IK_FAIL"
+   },
+   "limit_deg": null,
+   "elevation_deg": 30.0
+  },
+  "under": {
+   "left": {
+    "limit_deg": 8,
+    "stop_reason": "IK_FAIL"
+   },
+   "right": {
+    "limit_deg": 8,
+    "stop_reason": "IK_FAIL"
+   },
+   "limit_deg": 8,
+   "elevation_deg": -20.0
+  }
+ }
+}

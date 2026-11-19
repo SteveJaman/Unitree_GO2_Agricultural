@@ -6,6 +6,9 @@ nothing on the rack).
 
   python3 scripts/tools/lettuce_dataset.py --frames 600            # -> ~/.cache/go2-yolo/lettuce_dataset
   python3 scripts/tools/lettuce_dataset.py --frames 600 --train    # + fine-tune yolo11s -> lettuce_yolo11s.pt
+  python3 scripts/tools/lettuce_dataset.py --world cropking_nft46_basil --label 2 --class-name basil \
+      --out ~/.cache/go2-yolo/basil_dataset --frames 350 --prefix basil_ --wrist-frac 0.6 \
+      --train --epochs 30 --from-weights ~/.cache/go2-yolo/lettuce_yolo11s.pt   # a species, from the lettuce model
 
 How: Gazebo itself renders and labels. The world (gazebo/worlds/cropking_nft46.sdf; every
 lettuce carries the gz Label system, label 1) gets one extra static camera model with a
@@ -108,8 +111,8 @@ def inside(a):
     import numpy as np
     from PIL import Image as PILImage
 
-    meta = json.load(open("/sim/worlds/cropking_nft46.json"))
-    world = open("/sim/worlds/cropking_nft46.sdf").read().replace("@RENDER_ENGINE@", "ogre2")
+    meta = json.load(open(f"/sim/worlds/{a.world}.json"))
+    world = open(f"/sim/worlds/{a.world}.sdf").read().replace("@RENDER_ENGINE@", "ogre2")
     # the observer cameras only cost render time here
     out_lines, skip = [], False
     for line in world.splitlines(keepends=True):
@@ -158,7 +161,7 @@ def inside(a):
         req.name = "dataset_cam"
         req.position.x, req.position.y, req.position.z = x, y, z
         req.orientation.w, req.orientation.x, req.orientation.y, req.orientation.z = q
-        ok, _ = node.request("/world/cropking_nft46/set_pose", req, Pose, Boolean, 2000)
+        ok, _ = node.request(f"/world/{meta['world']}/set_pose", req, Pose, Boolean, 2000)
         if not ok:
             print("[dataset] set_pose failed", flush=True)
             continue
@@ -180,13 +183,16 @@ def inside(a):
         arr = np.frombuffer(im.data, np.uint8).reshape(im.height, im.width, -1)[:, :, :3]
         rows = []
         for b in bx.annotated_box:
-            if b.label != 1:
+            if b.label != a.label:
                 continue
             x0, y0 = b.box.min_corner.x, b.box.min_corner.y
             x1, y1 = b.box.max_corner.x, b.box.max_corner.y
             x0, y0, x1, y1 = max(0, x0), max(0, y0), min(W - 1, x1), min(H - 1, y1)
             if x1 - x0 < 10 or y1 - y0 < 8:
                 continue
+            patch = arr[int(y0):int(y1) + 1, int(x0):int(x1) + 1]
+            if patch.size and float(patch.std()) < 4.0:
+                continue                      # a blank patch: the camera is inside or behind an occluder
             rows.append(f"0 {(x0 + x1) / 2 / W:.5f} {(y0 + y1) / 2 / H:.5f} {(x1 - x0) / W:.5f} {(y1 - y0) / H:.5f}")
         split = "val" if n % 8 == 0 else "train"
         PILImage.fromarray(arr).save(f"{out}/images/{split}/{a.prefix}{n:05d}.jpg", quality=92)
@@ -200,8 +206,8 @@ def inside(a):
         gz.wait(timeout=20)
     except subprocess.TimeoutExpired:
         gz.kill()
-    open(f"{out}/data.yaml", "w").write(f"path: {out}\ntrain: images/train\nval: images/val\nnames:\n  0: lettuce\n")
-    print(f"[dataset] done: {saved} frames, {boxes_total} lettuce boxes", flush=True)
+    open(f"{out}/data.yaml", "w").write(f"path: {out}\ntrain: images/train\nval: images/val\nnames:\n  0: {a.class_name}\n")
+    print(f"[dataset] done: {saved} frames, {boxes_total} {a.class_name} boxes", flush=True)
     os._exit(0)
 
 
@@ -214,12 +220,13 @@ def host(a):
     dev = ["--device", "/dev/dri"] if os.path.exists("/dev/dri") else []
     cmd = ["docker", "run", "--rm", "--network", "host", "--ipc", "host", *dev,
            "-e", f"GZ_PARTITION=lettuce{os.getpid()}", "-e", "GZ_IP=127.0.0.1", "-e", "HOME=/tmp",
-           "-e", "GZ_SIM_RESOURCE_PATH=/sim/worlds/models",
+           "-e", "GZ_SIM_RESOURCE_PATH=/sim/worlds/models:/sim/models",
            "-e", f"DISPLAY={os.environ.get('DISPLAY', ':0')}", "-e", "QT_X11_NO_MITSHM=1", "-v", "/tmp/.X11-unix:/tmp/.X11-unix:rw",
            "-v", f"{REPO}/gazebo:/sim:ro", "-v", f"{REPO}/scripts/tools:/tools:ro", "-v", f"{out}:/out",
            "--user", f"{os.getuid()}:{os.getgid()}", "--group-add", "video", IMAGE,
            "bash", "-c", f"source /opt/ros/humble/setup.bash 2>/dev/null; python3 -u /tools/lettuce_dataset.py --inside "
-                         f"--frames {a.frames} --seed {a.seed} --wrist-frac {a.wrist_frac} --prefix {a.prefix}"]
+                         f"--frames {a.frames} --seed {a.seed} --wrist-frac {a.wrist_frac} --prefix {a.prefix} "
+                         f"--world {a.world} --label {a.label} --class-name {a.class_name}"]
     if subprocess.call(cmd) != 0:
         sys.exit("dataset generation failed")
     if a.train:
@@ -230,18 +237,19 @@ def train(out, a):
     from ultralytics import YOLO
     # data.yaml is written inside the container (path /out): point it at the host folder
     open(os.path.join(out, "data.yaml"), "w").write(
-        f"path: {out}\ntrain: images/train\nval: images/val\nnames:\n  0: lettuce\n")
+        f"path: {out}\ntrain: images/train\nval: images/val\nnames:\n  0: {a.class_name}\n")
     os.makedirs(CACHE, exist_ok=True)
     base = os.path.join(CACHE, "yolo11s.pt") if os.path.exists(os.path.join(CACHE, "yolo11s.pt")) else "yolo11s.pt"
     if a.from_weights:
         base = os.path.expanduser(a.from_weights)   # fine-tune an earlier lettuce model
     model = YOLO(base)
     model.train(data=os.path.join(out, "data.yaml"), epochs=a.epochs, imgsz=640, batch=16, device=0 if a.device == "" else a.device,
-                project=os.path.join(CACHE, "runs"), name="lettuce", exist_ok=True, patience=15, plots=False,
+                project=os.path.join(CACHE, "runs"), name=a.class_name, exist_ok=True, patience=15, plots=False,
                 hsv_h=0.02, hsv_s=0.5, hsv_v=0.4, degrees=5, fliplr=0.5, mosaic=1.0, verbose=False)
-    best = os.path.join(CACHE, "runs", "lettuce", "weights", "best.pt")
-    shutil.copy(best, os.path.join(CACHE, "lettuce_yolo11s.pt"))
-    print(f"[dataset] weights: {os.path.join(CACHE, 'lettuce_yolo11s.pt')}", flush=True)
+    best = os.path.join(CACHE, "runs", a.class_name, "weights", "best.pt")
+    dst = os.path.join(CACHE, f"{a.class_name}_yolo11s.pt")
+    shutil.copy(best, dst)
+    print(f"[dataset] weights: {dst}", flush=True)
 
 
 def main():
@@ -257,6 +265,9 @@ def main():
     ap.add_argument("--wrist-frac", type=float, default=0.35, help="share of frames copying the claw camera at the rack")
     ap.add_argument("--prefix", default="f", help="image file prefix (several runs into one --keep dataset)")
     ap.add_argument("--from-weights", default="", help="start training from these weights instead of yolo11s.pt")
+    ap.add_argument("--world", default="cropking_nft46", help="gazebo/worlds/<world>.sdf/.json (species: cropking_nft46_<species>)")
+    ap.add_argument("--label", type=int, default=1, help="gz Label of the class (config/species_config.yaml)")
+    ap.add_argument("--class-name", default="lettuce", help="class name; the weights go to ~/.cache/go2-yolo/<class>_yolo11s.pt")
     ap.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     a = ap.parse_args()
     if a.inside:

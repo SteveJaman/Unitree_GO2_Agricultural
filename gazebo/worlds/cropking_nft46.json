@@ -1,6 +1,57 @@
 {
  "world": "cropking_nft46",
  "generated_by": "gazebo/worlds/build_cropking_nft46_world.py",
+ "species": "lettuce",
+ "plant_height_m": 0.11,
+ "plant_mesh": "model://lettuce/meshes/lettuce.obj",
+ "front_plants": [
+  {
+   "name": "lettuce_0_0",
+   "site": 0,
+   "center": [
+    2.571375,
+    -0.618,
+    0.81415
+   ],
+   "sample_spec": {
+    "mesh": "gazebo/worlds/models/lettuce/meshes/lettuce.obj",
+    "pose": [
+     2.571375,
+     -0.618,
+     0.7894,
+     0.5568170303266249
+    ],
+    "scale": [
+     0.38,
+     0.38,
+     0.45
+    ]
+   }
+  },
+  {
+   "name": "lettuce_0_3",
+   "site": 3,
+   "center": [
+    2.571375,
+    -0.008400000000000074,
+    0.8444
+   ],
+   "sample_spec": {
+    "mesh": "gazebo/worlds/models/lettuce/meshes/lettuce.obj",
+    "pose": [
+     2.571375,
+     -0.008400000000000074,
+     0.7894,
+     2.4395602732131536
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   }
+  }
+ ],
  "system": "CropKing NFT 4-6 as in the lab: 6 x 4 ft channels (36 sites, 8 in on centre) on a green slotted-steel frame with LED bars, 31 in to the channel tops, reservoir tub underneath",
  "bounds": [
   -1.5,

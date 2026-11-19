@@ -81,7 +81,11 @@ def gazebo_nodes(context):
                       parameters=[cfg.robot_description, sim_time]))
     # SIM_REALISM=1: the arm sags and lags under effort control; the state at the start of a
     # trajectory may be a little off the last one's end, so allow for it
-    realism = {'trajectory_execution.allowed_start_tolerance': 0.05} if os.environ.get('SIM_REALISM') == '1' else {}
+    # and lags its trajectory like a real servo arm: MoveIt's execution monitor (1.2 x the planned
+    # duration) would cancel moves that are only slow, so allow 3 x + 3 s
+    realism = {'trajectory_execution.allowed_start_tolerance': 0.05,
+               'trajectory_execution.allowed_execution_duration_scaling': 3.0,
+               'trajectory_execution.allowed_goal_duration_margin': 3.0} if os.environ.get('SIM_REALISM') == '1' else {}
     nodes.append(Node(package='moveit_ros_move_group', executable='move_group', output='screen',
                       parameters=[cfg.to_dict(), sim_time, realism]))
     for ctrl in ['joint_state_broadcaster', 'arm_controller'] + (['gripper_controller'] if end_effector == 'gripper' else []):

@@ -12,6 +12,7 @@
       <command_interface name="${command}"/>
       <state_interface name="position"><param name="initial_value">${initial}</param></state_interface>
       <state_interface name="velocity"/>
+      <xacro:if value="${command == 'effort'}"><state_interface name="effort"/></xacro:if>
     </joint>
   </xacro:macro>
 
