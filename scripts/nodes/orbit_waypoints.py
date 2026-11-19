@@ -593,6 +593,11 @@ class Orbit(sdt.Trials):
         for shell in shells:
             el, azs = SHELLS[shell]
             for az in azs:
+                if (
+                    a.only_k and k not in a.only_k
+                ):  # a policy's subset (autonomy_policy.py --plan)
+                    k += 1
+                    continue
                 self.check_clock()
                 self.wp_t0 = time.monotonic()
                 row = {
@@ -727,6 +732,13 @@ def main():
     ap.add_argument("--vel-scale", type=float, default=0.3)
     ap.add_argument(
         "--top-el", type=float, default=15.0, help="top shell waypoint elevation (deg)"
+    )
+    ap.add_argument(
+        "--only-k",
+        type=int,
+        nargs="*",
+        default=None,
+        help="execute only these waypoint indices (same numbering; e.g. an early-stop plan)",
     )
     a = ap.parse_args()
     SHELLS["top"] = (a.top_el, SHELLS["top"][1])

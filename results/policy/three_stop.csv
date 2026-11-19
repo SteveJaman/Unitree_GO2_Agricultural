@@ -1,0 +1,21 @@
+species,run_id,mode,full_waypoints,full_frames,full_energy,full_coverage,full_detections,policy_waypoints,policy_frames,policy_energy,policy_coverage,policy_detections,energy_saving,coverage_loss_abs,coverage_loss_rel,same_detection_set,stops,accept
+lettuce,cropking_nft46_lettuce_lettuce_0_1_d0.40_r0.25,three_stop,6,30,15.4343,0.4820,eq top under,3,15,7.3905,0.3376,eq top under,0.5212,0.1444,0.2996,1,,0
+lettuce,cropking_nft46_lettuce_lettuce_0_2_d0.40_r0.25,three_stop,5,25,12.3171,0.4571,eq top under,3,15,7.1897,0.3840,eq top under,0.4163,0.0731,0.1600,1,,0
+lettuce,cropking_nft46_lettuce_lettuce_0_3_d0.40_r0.25,three_stop,5,25,12.3285,0.5090,eq top under,3,15,7.2165,0.4133,eq top under,0.4146,0.0957,0.1880,1,,0
+lettuce,cropking_nft46_lettuce_lettuce_0_4_d0.40_r0.25,three_stop,5,25,12.4551,0.5302,eq top under,3,15,7.3319,0.4704,eq top under,0.4113,0.0597,0.1127,1,,0
+lettuce,cropking_nft46_lettuce_lettuce_0_5_d0.40_r0.25,three_stop,6,30,17.3259,0.4592,eq top under,3,15,7.5253,0.3109,eq top under,0.5657,0.1483,0.3231,1,,0
+basil,cropking_nft46_basil_basil_0_1_d0.40_r0.25,three_stop,7,35,18.8410,0.7579,eq under,2,10,7.1180,0.1901,eq under,0.6222,0.5678,0.7492,1,,0
+basil,cropking_nft46_basil_basil_0_2_d0.40_r0.25,three_stop,6,30,18.4601,0.7839,eq under,2,10,8.3869,0.5835,eq under,0.5457,0.2004,0.2557,1,,0
+basil,cropking_nft46_basil_basil_0_3_d0.40_r0.25,three_stop,7,35,16.3527,0.7958,eq under,2,10,4.0893,0.4869,eq under,0.7499,0.3089,0.3881,1,,0
+basil,cropking_nft46_basil_basil_0_4_d0.40_r0.25,three_stop,7,35,16.3514,0.8266,eq under,2,10,4.1557,0.5606,eq under,0.7459,0.2660,0.3218,1,,0
+basil,cropking_nft46_basil_basil_0_5_d0.40_r0.25,three_stop,7,35,16.3390,0.7605,eq under,2,10,4.0636,0.2834,eq under,0.7513,0.4771,0.6273,1,,0
+spinach,cropking_nft46_spinach_spinach_0_1_d0.40_r0.25,three_stop,7,35,17.0379,0.7475,eq top under,3,15,6.5667,0.3825,eq top under,0.6146,0.3650,0.4883,1,,0
+spinach,cropking_nft46_spinach_spinach_0_2_d0.40_r0.25,three_stop,6,30,15.0158,0.7588,eq top under,3,15,6.4675,0.5303,eq top under,0.5693,0.2285,0.3011,1,,0
+spinach,cropking_nft46_spinach_spinach_0_3_d0.40_r0.25,three_stop,7,35,18.2702,0.8463,eq top under,3,15,6.6492,0.7057,eq top under,0.6361,0.1407,0.1662,1,,0
+spinach,cropking_nft46_spinach_spinach_0_4_d0.40_r0.25,three_stop,7,35,18.2135,0.8243,eq top under,3,15,6.6061,0.6401,eq top under,0.6373,0.1842,0.2234,1,,0
+spinach,cropking_nft46_spinach_spinach_0_5_d0.40_r0.25,three_stop,8,40,20.9893,0.7495,eq top under,3,15,6.7336,0.4250,eq top under,0.6792,0.3245,0.4330,1,,0
+strawberry,cropking_nft46_strawberry_strawberry_0_1_d0.40_r0.25,three_stop,8,40,19.7170,0.7629,eq top under,3,15,6.4379,0.4116,eq top under,0.6735,0.3513,0.4605,1,,0
+strawberry,cropking_nft46_strawberry_strawberry_0_2_d0.40_r0.25,three_stop,7,35,18.0321,0.8331,eq top under,3,15,6.3945,0.6326,eq top under,0.6454,0.2005,0.2406,1,,0
+strawberry,cropking_nft46_strawberry_strawberry_0_3_d0.40_r0.25,three_stop,7,35,18.1194,0.8094,eq top under,3,15,6.5433,0.5911,eq top under,0.6389,0.2182,0.2696,1,,0
+strawberry,cropking_nft46_strawberry_strawberry_0_4_d0.40_r0.25,three_stop,7,35,17.9466,0.7246,eq top under,3,15,6.3657,0.5791,eq top under,0.6453,0.1455,0.2008,1,,0
+strawberry,cropking_nft46_strawberry_strawberry_0_5_d0.40_r0.25,three_stop,8,40,20.2762,0.7780,eq top under,3,15,6.4218,0.4036,eq top under,0.6833,0.3744,0.4813,1,,0

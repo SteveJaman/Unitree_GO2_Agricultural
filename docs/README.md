@@ -73,6 +73,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Sim health + species plants](simulation/sim_health.md) | `run_sim_demo.sh --health`: camera, tracker, windows; the species ladder's plant models |
 | [Orbit frontier (Phase 2)](simulation/orbit_frontier.md) | Three-shell orbit reach of the D1 + claw D435i around a lettuce: frontier table (top shell +15°), 24 executed orbits |
 | [Species ladder (Phase 3)](simulation/species_ladder.md) | Detectors for 5 species, 25 orbits, per-shell coverage and unique detections, does each shell earn its cost |
+| [Early stop (Phase 4)](simulation/early_stop.md) | Entropy early-stopping policy against the full sweep: saves 45-62 % energy, loses 20-32 % coverage (fails) |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),
