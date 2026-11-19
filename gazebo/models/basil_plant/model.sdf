@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="basil_plant"><static>true</static>
+    <link name="plant">
+      <visual name="v"><geometry><mesh><uri>meshes/basil.obj</uri></mesh></geometry></visual>
+      <collision name="c"><pose>0 0 0.144 0 0 0</pose><geometry><cylinder><radius>0.066</radius><length>0.288</length></cylinder></geometry></collision>
+    </link>
+    <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>2</label></plugin>
+  </model>
+</sdf>

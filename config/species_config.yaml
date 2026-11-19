@@ -1,0 +1,58 @@
+# Species ladder for the orbit / coverage study (Phase 1, 2026-11-18).
+# Dimensions are MEASURED from the Gazebo meshes (lettuce: gazebo/worlds/models/lettuce,
+# the control, at the target plant's scale 1.0; the others: gazebo/models/<species>_plant,
+# geometric stand-ins from gazebo/worlds/build_species_models.py, not botanical
+# reconstructions). plant_height_m: base (net-cup rim) to the highest point;
+# canopy_radius_m: largest horizontal distance of any vertex from the stem axis.
+# shell_weights: PRIOR share of the inspection value per elevation shell (under -25..-10 deg,
+# eq -10..+10 deg, top +20..+40 deg, relative to the plant centroid height), from where each
+# species carries what is worth seeing; Phase 3 measures it (unique detections per shell).
+# label: the gz Label system id (dataset generation, scripts/tools/lettuce_dataset.py).
+species:
+  lettuce:
+    label: 1
+    model: model://lettuce
+    plant_height_m: 0.117
+    canopy_radius_m: 0.137
+    shell_weights: {under: 0.15, eq: 0.55, top: 0.30}
+    detection_notes: >-
+      Control. Butterhead head; YOLO11s trained on Gazebo RGB-D frames (mAP50-95 0.816 on the
+      64-image RGB-D validation set); do not retrain. Seen from below the channel top the head
+      is a dark band of leaf undersides; the heart is only visible from the top shell.
+  basil:
+    label: 2
+    model: model://basil_plant
+    plant_height_m: 0.288
+    canopy_radius_m: 0.083
+    shell_weights: {under: 0.20, eq: 0.50, top: 0.30}
+    detection_notes: >-
+      Upright, narrow (3 stems, opposite leaf pairs): mostly sky/background around it from the
+      equator; small leaves at the tip. Light glossy green, close to the lettuce's hue.
+  spinach:
+    label: 3
+    model: model://spinach_plant
+    plant_height_m: 0.120
+    canopy_radius_m: 0.158
+    shell_weights: {under: 0.20, eq: 0.40, top: 0.40}
+    detection_notes: >-
+      Low, wide rosette of dark, spoon-shaped leaves on long petioles; from the equator the
+      petioles and leaf edges dominate, from the top the full rosette. Darkest of the five.
+  tomato:
+    label: 4
+    model: model://tomato_plant
+    plant_height_m: 0.601
+    canopy_radius_m: 0.246
+    shell_weights: {under: 0.30, eq: 0.50, top: 0.20}
+    detection_notes: >-
+      Tall and sparse: a 0.6 m stem with compound leaves; its centroid is ~0.3 m above the cup,
+      so the shells sit higher than for the low species. Fruit trusses (red/orange/green) at
+      0.15-0.4 m. A thin stem and few pixels per leaf: hardest to box as one object.
+  strawberry:
+    label: 5
+    model: model://strawberry_plant
+    plant_height_m: 0.135
+    canopy_radius_m: 0.116
+    shell_weights: {under: 0.50, eq: 0.30, top: 0.20}
+    detection_notes: >-
+      Crown of trifoliate leaves; the fruit hangs low, under and beside the leaves (z -0.01 to
+      0.03 m), so the under shell is expected to carry most of the unique detections.

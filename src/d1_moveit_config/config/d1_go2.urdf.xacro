@@ -20,7 +20,7 @@
                   camera_optical_frame (z out of the lens).
     camera_model  end_effector:=camera only. d405 (default): RealSense D405
                   size, 424x240, 87 deg. d435i: RealSense D435i size, 640x480,
-                  69 deg (its colour field of view), 10 Hz; the simulation
+                  69 deg (its colour field of view), 15 Hz (the real D435i streams 15/30 fps); the simulation
                   republishes it under the real driver's /camera/* topics
                   (docs/ai_and_vision/plant_detection.md).
     claw_camera   end_effector:=gripper only. true: a RealSense D435i (modelled to Intel's
@@ -29,7 +29,7 @@
                   and the RGB lens; USB-C and tripod mount) on a bracket on top of
                   the claw's end, looking along it, as on the lab arm. Frames
                   camera_link (x out of the lens) and camera_optical_frame; in
-                  Gazebo the same 640x480 10 Hz RGB-D sensor as camera_model d435i.
+                  Gazebo the same 640x480 15 Hz RGB-D sensor as camera_model d435i.
     use_mock_hardware   kept for old command lines; false = hardware gazebo.
 -->
 <robot name="d1_go2" xmlns:xacro="http://www.ros.org/wiki/xacro">
@@ -150,7 +150,7 @@
     <xacro:if value="${hardware == 'gazebo'}">
       <gazebo reference="camera_link">
         <sensor name="wrist_depth" type="rgbd_camera">
-          <update_rate>10</update_rate>
+          <update_rate>15</update_rate>
           <always_on>true</always_on>
           <topic>wrist_camera</topic>
           <camera>
@@ -174,7 +174,7 @@
          of the lens past the flange. D405: 23 x 42 x 42 mm. D435i: 25 x 90 x 25 mm. -->
     <xacro:property name="cam" value="${dict(
         d405=dict(depth=0.023, width=0.042, height=0.042, lens=0.025, hfov=1.52, w=424, h=240, near=0.07, far=3.0, rate=5),
-        d435i=dict(depth=0.025, width=0.090, height=0.025, lens=0.027, hfov=1.21, w=640, h=480, near=0.1, far=10.0, rate=10)
+        d435i=dict(depth=0.025, width=0.090, height=0.025, lens=0.027, hfov=1.21, w=640, h=480, near=0.1, far=10.0, rate=15)
       )[camera_model]}"/>
     <link name="camera_link">
       <inertial><mass value="0.06"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/></inertial>

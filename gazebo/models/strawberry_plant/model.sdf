@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="strawberry_plant"><static>true</static>
+    <link name="plant">
+      <visual name="v"><geometry><mesh><uri>meshes/strawberry.obj</uri></mesh></geometry></visual>
+      <collision name="c"><pose>0 0 0.068 0 0 0</pose><geometry><cylinder><radius>0.093</radius><length>0.135</length></cylinder></geometry></collision>
+    </link>
+    <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>5</label></plugin>
+  </model>
+</sdf>

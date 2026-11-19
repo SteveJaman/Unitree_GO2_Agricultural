@@ -70,6 +70,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Traversability in simulation](simulation/traversability_sim.md) | Height bands, gait, backstop and semantic layer: the full sim record |
 | [Hydroponic station trial](simulation/hydroponic_trial.md) | End-to-end MoveIt 2 + Nav2 mission at a hydroponic rack |
 | [Final demo: NFT 4-6 servo](simulation/servo_demo.md) | `run_sim_demo.sh`: our NFT 4-6 with lettuce, RealSense on the arm, distance servo trials, data and graphs |
+| [Sim health + species plants](simulation/sim_health.md) | `run_sim_demo.sh --health`: camera, tracker, windows; the species ladder's plant models |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),

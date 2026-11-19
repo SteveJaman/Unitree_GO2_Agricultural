@@ -1,0 +1,26 @@
+newmtl leaf
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.12 0.12 0.12
+Ns 20
+map_Kd strawberry_leaf.png
+newmtl stem
+Ka 0.42 0.5 0.22
+Kd 0.42 0.5 0.22
+Ks 0.08 0.08 0.08
+Ns 12
+newmtl red
+Ka 0.8 0.08 0.06
+Kd 0.8 0.08 0.06
+Ks 0.4 0.4 0.4
+Ns 60
+newmtl white_fruit
+Ka 0.92 0.88 0.7
+Kd 0.92 0.88 0.7
+Ks 0.4 0.4 0.4
+Ns 60
+newmtl sepal
+Ka 0.2 0.45 0.12
+Kd 0.2 0.45 0.12
+Ks 0.4 0.4 0.4
+Ns 60

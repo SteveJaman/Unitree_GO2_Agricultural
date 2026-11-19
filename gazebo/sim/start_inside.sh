@@ -43,7 +43,7 @@ export HOME="${HOME:-/tmp/simhome}"
 # including the arm emulator (which runs with a cleaned environment).
 export GZ_PARTITION=go2sim GZ_IP=127.0.0.1
 # model:// furniture of lab_office.sdf (setup_gazebo.sh --furniture)
-export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items:$SIM/models/plants:$SIM/worlds/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+export GZ_SIM_RESOURCE_PATH="$SIM/models/furniture:$SIM/models/items:$SIM/models/plants:$SIM/worlds/models:$SIM/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 
 # SIM_ARM_EE=camera (default): the wrist camera instead of the gripper (SIM_WRIST_CAMERA
 # d405 / d435i); claw: the gripper with a RealSense D435i on the claw (as on the lab arm)

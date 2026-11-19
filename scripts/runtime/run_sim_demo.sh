@@ -26,6 +26,9 @@
 # Options: --trials N (per policy, 5) --policies "a b" --skip-nav --keep --out DIR
 #          --timeout S (per trial, 60) --no-train
 #          --reuse: trials in a simulation left up by --keep (implies --keep --skip-nav)
+#          --health: bring everything up, measure the wrist camera's rate (>= 10 Hz), the tracker's
+#                  colour+depth pairs (>= 4/s), list the RViz windows, screenshot the desktop
+#                  (OUT/health.png; tiled with --gui --rviz), write OUT/health.json, stop. No trials.
 #          --disturb M: 4 s into each trial the dog slides M metres (alternately away from and
 #                  towards the rack): the servo has to recover, open loop cannot
 #          --gui: the Gazebo window on the desktop (the demo itself stays the same)
@@ -45,7 +48,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
 NAV2_WIFI_DIR="${NAV2_WIFI_DIR:-$HOME/files/go2-nav2-wifi}"
-TRIALS=5 POLICIES="proportional fixed_step open_loop" SKIP_NAV=0 KEEP=0 TIMEOUT=60 TRAIN=1 REUSE=0 GUI=0 VIDEO=0 RVIZ=0 DISTURB=0
+TRIALS=5 POLICIES="proportional fixed_step open_loop" SKIP_NAV=0 KEEP=0 TIMEOUT=60 TRAIN=1 REUSE=0 GUI=0 VIDEO=0 RVIZ=0 DISTURB=0 HEALTH=0
 OUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -61,6 +64,7 @@ while [ $# -gt 0 ]; do
         --video) VIDEO=1 ;;
         --rviz) RVIZ=1 ;;
         --disturb) DISTURB="$2"; shift ;;
+        --health) HEALTH=1 ;;
         -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *) echo "unknown option $1 (--help)" >&2; exit 2 ;;
     esac
@@ -220,6 +224,42 @@ if [ "$RVIZ" = 1 ]; then
     docker exec -d "$LIDAR" bash -c "$ROS_LIDAR; ros2 run tf2_ros static_transform_publisher \
         --frame-id camera_link --child-frame-id camera_color_optical_frame --roll -1.5708 --yaw -1.5708 > /tmp/camera_tf.log 2>&1"
     log "RViz: the arm (MoveIt) and the plant detector on the wrist camera (log $OUT/plant_detection.log)"
+fi
+
+if [ "$HEALTH" = 1 ]; then
+    log "health check: camera rate, tracker rate, windows, screenshot"
+    hz() {  # hz TOPIC -> average rate over ~10 s
+        docker exec "$LIDAR" bash -c "$ROS_LIDAR; timeout 12 ros2 topic hz $1 2>&1" | awk '/average rate/ {r=$3} END {print r+0}'
+    }
+    COLOR_HZ=$(hz /camera/color/image_raw)
+    DEPTH_HZ=$(hz /camera/aligned_depth_to_color/image_raw)
+    for _ in $(seq 1 6); do sleep 5; done   # two more tracker reports
+    PAIRS=$(grep -o "[0-9.]* colour+depth pairs/s" "$OUT/tracker.log" | tail -1 | awk '{print $1+0}')
+    if [ "$GUI" = 1 ] && [ "$RVIZ" = 1 ]; then
+        python3 "$REPO/scripts/tools/desktop_capture.py" tile --wait 30 2>&1 | tee -a "$OUT/demo.log" || true
+        sleep 3
+    fi
+    WINDOWS=$(python3 "$REPO/scripts/tools/desktop_capture.py" list 2>/dev/null | grep -iE "rviz|gazebo" || true)
+    python3 "$REPO/scripts/tools/desktop_capture.py" shot "$OUT/health.png" >/dev/null 2>&1 || log "WARN: no screenshot"
+    python3 - "$OUT/health.json" "$COLOR_HZ" "$DEPTH_HZ" "${PAIRS:-0}" "$WINDOWS" "$GUI" "$RVIZ" <<'PY'
+import json, sys
+out, color, depth, pairs, windows, gui, rviz = sys.argv[1:]
+w = [x for x in windows.splitlines() if x.strip()]
+need = (["gazebo"] if gui == "1" else []) + (["lidar3d_navigation", "moveit", "plant_detection"] if rviz == "1" else ["lidar3d_navigation"])
+found = {k: any(k in x.lower() and (k == "gazebo" or "rviz" in x.lower()) for x in w) for k in need}
+checks = {"color_hz>=10": float(color) >= 10, "depth_hz>=10": float(depth) >= 10, "tracker_pairs>=4": float(pairs) >= 4,
+          **{f"window:{k}": v for k, v in found.items()}}
+rep = {"color_hz": float(color), "depth_hz": float(depth), "tracker_pairs_per_s": float(pairs), "windows": w,
+       "checks": checks, "pass": all(checks.values())}
+json.dump(rep, open(out, "w"), indent=1)
+print(json.dumps(rep, indent=1))
+PY
+    if python3 -c "import json,sys; sys.exit(0 if json.load(open('$OUT/health.json'))['pass'] else 1)"; then
+        log "HEALTH PASS: colour ${COLOR_HZ} Hz, depth ${DEPTH_HZ} Hz, tracker ${PAIRS} pairs/s"
+        exit 0
+    fi
+    log "HEALTH FAIL: see $OUT/health.json"
+    exit 1
 fi
 
 # ---------------------------------------------------------------- 4. trials

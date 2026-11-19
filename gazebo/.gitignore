@@ -1,2 +1,4 @@
 # Downloaded by setup_gazebo.sh (official Unitree models; not redistributed here)
-models/
+models/*
+# the species stand-ins are generated in the repo (worlds/build_species_models.py)
+!models/*_plant/
