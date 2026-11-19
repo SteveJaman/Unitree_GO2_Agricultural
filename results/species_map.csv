@@ -1,0 +1,6 @@
+species,train_frames,val_frames,mAP50,mAP50_95,precision,recall,floor_mAP50_95,pass
+lettuce,445,64,0.9878,0.815,0.9689,0.9417,0.8,True
+basil,342,49,0.9928,0.8982,0.98,0.9665,0.75,True
+spinach,350,50,0.98,0.8688,0.9731,0.9381,0.7,True
+tomato,350,50,0.9519,0.7656,0.938,0.871,0.7,True
+strawberry,350,50,0.9812,0.859,0.982,0.9319,0.65,True

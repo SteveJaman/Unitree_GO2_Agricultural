@@ -71,7 +71,8 @@ then [architecture](architecture.md), then [status](status.md).
 | [Hydroponic station trial](simulation/hydroponic_trial.md) | End-to-end MoveIt 2 + Nav2 mission at a hydroponic rack |
 | [Final demo: NFT 4-6 servo](simulation/servo_demo.md) | `run_sim_demo.sh`: our NFT 4-6 with lettuce, RealSense on the arm, distance servo trials, data and graphs |
 | [Sim health + species plants](simulation/sim_health.md) | `run_sim_demo.sh --health`: camera, tracker, windows; the species ladder's plant models |
-| [Orbit frontier (Phase 2)](simulation/orbit_frontier.md) | Three-shell orbit reach of the D1 + claw D435i around a lettuce: frontier table, why it stopped |
+| [Orbit frontier (Phase 2)](simulation/orbit_frontier.md) | Three-shell orbit reach of the D1 + claw D435i around a lettuce: frontier table (top shell +15°), 24 executed orbits |
+| [Species ladder (Phase 3)](simulation/species_ladder.md) | Detectors for 5 species, 25 orbits, per-shell coverage and unique detections, does each shell earn its cost |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),
