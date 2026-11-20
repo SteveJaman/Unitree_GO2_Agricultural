@@ -74,6 +74,9 @@ then [architecture](architecture.md), then [status](status.md).
 | [Orbit frontier (Phase 2)](simulation/orbit_frontier.md) | Three-shell orbit reach of the D1 + claw D435i around a lettuce: frontier table (top shell +15°), 24 executed orbits |
 | [Species ladder (Phase 3)](simulation/species_ladder.md) | Detectors for 5 species, 25 orbits, per-shell coverage and unique detections, does each shell earn its cost |
 | [Early stop (Phase 4)](simulation/early_stop.md) | Entropy early-stopping policy against the full sweep: saves 45-62 % energy, loses 20-32 % coverage (fails) |
+| [Orbit results (Phase 8)](simulation/results_orbit.md) | Manuscript-ready results of the orbit study: frontier, species, energy, limitations, acceptance checklist |
+| [Orbit videos](simulation/video_index.md) | Paths and durations of the V1-V3 screen captures and V2 wrist clips |
+| [Equations](theory/equations.md) · [Optimization](theory/optimization.md) | E1-E8 and the optimization framing |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),
