@@ -91,6 +91,7 @@ def tile(wait):
             send(w, atom("_NET_WM_STATE"), [0, atom("_NET_WM_STATE_MAXIMIZED_VERT"), atom("_NET_WM_STATE_MAXIMIZED_HORZ"), 1])
             flags = (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | 1
             send(w, atom("_NET_MOVERESIZE_WINDOW"), [flags, col * W // 2, row * H // 2, W // 2, H // 2])
+            send(w, atom("_NET_ACTIVE_WINDOW"), [2, X.CurrentTime])  # to the front: a capture records the screen
             d.flush()
             done.add(k)
         time.sleep(1)
@@ -124,7 +125,9 @@ def main():
         p = subprocess.Popen([ffmpeg(), "-loglevel", "error", "-y", "-f", "x11grab", "-framerate", str(a.fps),
                               "-video_size", f"{w}x{h}", "-i", disp, "-c:v", "libx264", "-preset", "ultrafast",
                               "-crf", "28", "-pix_fmt", "yuv420p", a.out], stdin=subprocess.PIPE)
-        stop = lambda *_: p.stdin.write(b"q") or p.stdin.flush()  # noqa: E731  (ffmpeg's own quit key)
+        # SIGINT makes ffmpeg finish the file and exit; its "q" key on stdin is ignored when it runs in
+        # the background (a script's `&` job), which left recordings running for hours
+        stop = lambda *_: p.send_signal(signal.SIGINT)  # noqa: E731
         signal.signal(signal.SIGINT, lambda *_: stop())
         signal.signal(signal.SIGTERM, lambda *_: stop())
         p.wait()
