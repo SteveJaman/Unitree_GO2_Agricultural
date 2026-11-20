@@ -1,7 +1,8 @@
 # Orbit inspection: optimization
 
-[← README](../../README.md) · [Docs index](../README.md) · [Equations](equations.md) ·
-[Orbit results](../simulation/results_orbit.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 ## Decision variables
 

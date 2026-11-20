@@ -69,14 +69,7 @@ then [architecture](architecture.md), then [status](status.md).
 | [Indoor lab world](simulation/lab_office.md) | The furnished 7-room lab world and the drive-mode trials |
 | [Traversability in simulation](simulation/traversability_sim.md) | Height bands, gait, backstop and semantic layer: the full sim record |
 | [Hydroponic station trial](simulation/hydroponic_trial.md) | End-to-end MoveIt 2 + Nav2 mission at a hydroponic rack |
-| [Final demo: NFT 4-6 servo](simulation/servo_demo.md) | `run_sim_demo.sh`: our NFT 4-6 with lettuce, RealSense on the arm, distance servo trials, data and graphs |
-| [Sim health + species plants](simulation/sim_health.md) | `run_sim_demo.sh --health`: camera, tracker, windows; the species ladder's plant models |
-| [Orbit frontier (Phase 2)](simulation/orbit_frontier.md) | Three-shell orbit reach of the D1 + claw D435i around a lettuce: frontier table (top shell +15°), 24 executed orbits |
-| [Species ladder (Phase 3)](simulation/species_ladder.md) | Detectors for 5 species, 25 orbits, per-shell coverage and unique detections, does each shell earn its cost |
-| [Early stop (Phase 4)](simulation/early_stop.md) | Entropy early-stopping policy against the full sweep: saves 45-62 % energy, loses 20-32 % coverage (fails) |
-| [Orbit results (Phase 8)](simulation/results_orbit.md) | Manuscript-ready results of the orbit study: frontier, species, energy, limitations, acceptance checklist |
-| [Orbit videos](simulation/video_index.md) | Paths and durations of the V1-V3 screen captures and V2 wrist clips |
-| [Equations](theory/equations.md) · [Optimization](theory/optimization.md) | E1-E8 and the optimization framing |
+| [Plant inspection: arm orbit study](plant_inspection/README.md) | The D1 + claw D435i orbiting NFT 4-6 plants from the parked Go2 in Gazebo: reach frontier, 5 species, early stop, figures, videos, equations, how to run it |
 | [Unity simulation](simulation/unity.md) | The explorer and Nav2 in the CMU Unity sim |
 
 Supporting data: [`simulation/results/`](simulation/results/) (traversability trial tables),

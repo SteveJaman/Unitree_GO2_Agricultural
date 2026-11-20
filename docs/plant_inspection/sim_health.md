@@ -1,6 +1,8 @@
 # Simulation health check and the species ladder's plants
 
-[← README](../../README.md) · [Docs index](../README.md) · [Servo demo](servo_demo.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 ## Health check
 
@@ -21,7 +23,7 @@ tracker, the RViz windows), then checks and stops:
 `DIR/health.json` holds the numbers and checks, `DIR/health.png` the desktop (tiled 2×2 by
 `scripts/tools/desktop_capture.py tile`, which needs python-xlib).
 
-![Desktop at the health check](../images/sim_health/phase1_baseline.png)
+![Desktop at the health check](figures/sim_health/phase1_baseline.png)
 
 `wifi_nav.sh --sim --arm` alone starts the older D1 emulator, not MoveIt; the MoveIt arm, the
 claw camera, the tracker and the extra RViz windows come from `run_sim_demo.sh`, which
@@ -43,4 +45,4 @@ Sizes and per-species notes: [`config/species_config.yaml`](../../config/species
 | tomato | `model://tomato_plant` | 0.601 m | 0.246 m | 4 |
 | strawberry | `model://strawberry_plant` | 0.135 m | 0.116 m | 5 |
 
-![Strawberry, tomato, spinach, basil, lettuce](../images/sim_health/species_preview.jpg)
+![Strawberry, tomato, spinach, basil, lettuce](figures/sim_health/species_preview.jpg)

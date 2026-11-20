@@ -1,7 +1,8 @@
 # Orbit inspection: equations (E1–E8)
 
-[← README](../../README.md) · [Docs index](../README.md) · [Optimization](optimization.md) ·
-[Orbit frontier](../simulation/orbit_frontier.md) · [Orbit results](../simulation/results_orbit.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 Notation: the arm frame has its origin at the D1's base on the dog's back, x pointing at the plant
 (the arm is modelled facing forward; the dog parks tail-first), z up. Lengths in m, angles in
@@ -30,7 +31,7 @@ is ≤ −1. At θ = 90°, R(90°) = √(d² + r²): `run_orbit_sweep.sh` skips 
 
 E1 is a necessary condition only. The observed reach-only limits (IK with joint limits, no
 collisions) are 55° to more than 138° tighter in every cell
-([frontier](../simulation/orbit_frontier.md)): the binding constraint is turning the camera
+([frontier](frontier.md)): the binding constraint is turning the camera
 sideways onto a plant 0.36 m above the shoulder while keeping it level (wrist dexterity), not
 radial reach. The wrist-centre variant W = C − a x_c − b z_c, |W − S| ≤ L (a = 0.163 m,
 b = 0.054 m, S the shoulder at 0.4796 m, L = 0.479 m) is computed by

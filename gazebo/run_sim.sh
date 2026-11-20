@@ -50,7 +50,7 @@
 #   SIM_REALISM=0         1 = the arm on effort (torque) control under gravity, with servo-like gains,
 #                         joint damping and friction (it sags and lags like the real D1), and the dog
 #                         with acceleration lag and a gait-synchronised body bob (with SIM_GAIT=1:
-#                         the legs trot). docs/simulation/servo_demo.md
+#                         the legs trot). docs/plant_inspection/README.md
 #   SIM_SENSOR_YAML=$NAV2_WIFI_DIR/go2_nav2/config/lidar3d_robot_viz.yaml
 #                         lidar mount (sensor_from_base) the laptop stack uses;
 #                         the sim places its lidar to match

@@ -15,7 +15,7 @@ ci95() are imported, and scipy's mannwhitneyu / fisher_exact are called the same
   - two-sided Mann-Whitney U on the per-run energy (full sweep vs each policy);
   - Fisher's exact test on the detection sets (runs whose detection set equals the full
     sweep's, policy vs full) and on per-shell detection (shells with a detection).
-Energy is the simulation's relative index (docs/theory/equations.md E3), not hardware joules.
+Energy is the simulation's relative index (docs/plant_inspection/equations.md E3), not hardware joules.
 """
 import argparse
 import csv

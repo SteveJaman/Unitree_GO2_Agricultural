@@ -1,6 +1,8 @@
 # Video index (Phase 6)
 
-[← README](../../README.md) · [Docs index](../README.md) · [Orbit results](results_orbit.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 The videos are not in git (too large). They are on the lab workstation under
 `~/files/go2-nav2-wifi/ws/log/orbit_video/`, made by:

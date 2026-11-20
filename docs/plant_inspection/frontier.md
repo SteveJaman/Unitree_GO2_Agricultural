@@ -1,7 +1,8 @@
 # Three-shell orbit frontier (Phase 2)
 
-[← README](../../README.md) · [Docs index](../README.md) · [Sim health + species](sim_health.md) ·
-[Servo demo](servo_demo.md) · [Equations](../theory/equations.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 **Status (2026-11-19): Phase 2 passes with the top shell at +15°.** The first pass (top shell at
 +30°) stopped at the gate: no cell reached the top shell (kept below as the record). On the
@@ -28,9 +29,9 @@ still fails in every cell (finding 4).
 | 0.50 | 0.35 | all-shells | ±35 / ±4 / ±17 | ±31 / ±1 / ±8 | −25..+18° | 88.9° |
 | 0.50 | 0.40 | skipped (R(90) 0.640 m) | | ±29 / ±3 / ±10 | −24..+15° | 83.7° |
 
-Data: [`results/orbit_frontier/`](../../results/orbit_frontier/) (per-cell frontier JSON,
+Data: [`results/orbit_frontier/`](../../results/orbit_frontier) (per-cell frontier JSON,
 `reach.json`, `frontier.md` with every column, `cells.tsv`). The +30° run is kept in
-[`results/orbit_frontier_top30/`](../../results/orbit_frontier_top30/).
+[`results/orbit_frontier_top30/`](../../results/orbit_frontier_top30).
 
 ### Executed orbits
 
@@ -120,7 +121,7 @@ camera up as near vertical as the look-at allows (roll 0, ±30° tried).
 The collision-free limits can exceed the reach-only ones because the frontier also tries the
 camera rolled ±30° about its viewing axis; the reach-only check keeps it upright.
 
-Data: [`results/orbit_frontier/`](../../results/orbit_frontier/) (per-cell frontier JSON,
+Data: [`results/orbit_frontier/`](../../results/orbit_frontier) (per-cell frontier JSON,
 `reach.json`, `frontier.md`, `cells.tsv`).
 
 ### Findings

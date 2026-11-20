@@ -1,7 +1,8 @@
 # Species ladder (Phase 3)
 
-[← README](../../README.md) · [Docs index](../README.md) · [Orbit frontier](orbit_frontier.md) ·
-[Sim health + species](sim_health.md) · [Equations](../theory/equations.md)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 **Status (2026-11-19): gate passes.** Every detector meets its floor, and the per-shell
 unique-detection table is filled in for all five species. Tomato is the exception for coverage:
@@ -53,7 +54,7 @@ the plant that no other shell's detection covered.
 Coverage is the mean over the 5 plants. Unique detections are summed over the 5 orbits. The
 energy index is the mean per orbit, a relative number (E3). Every executed frame had a detection
 of its plant (conf ≥ 0.25): lettuce 135/135, basil 170/170, spinach 175/175, strawberry 185/185.
-Data: [`results/species/`](../../results/species/) (`<species>_trials.csv` per waypoint,
+Data: [`results/species/`](../../results/species) (`<species>_trials.csv` per waypoint,
 `_runs.csv` per run and shell, `_frames.csv.gz` per frame, `unique.csv`).
 
 ### What did not execute, and why

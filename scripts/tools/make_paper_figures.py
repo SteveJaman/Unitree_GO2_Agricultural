@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-make_paper_figures.py: every orbit-study figure (F1-F6) from the result CSVs, one command.
+make_paper_figures.py: every orbit-study figure (F1-F5) from the result CSVs, one command.
 
-  python3 scripts/tools/make_paper_figures.py            # -> docs/images/orbit_paper/F*.png
+  python3 scripts/tools/make_paper_figures.py            # -> docs/plant_inspection/figures/F*.png
 
 Inputs (repo paths unless noted):
   F1  results/orbit_frontier/frontier/*.json (collision-free limits), results/orbit_frontier/reach.json
@@ -12,9 +12,7 @@ Inputs (repo paths unless noted):
   F5  results/species/<species>_trials_frames.csv(.gz) to pick frames; the images from --frames-root
       (default ~/files/go2-nav2-wifi/ws/log/orbit/species/<species>/runs); the YOLO box is redrawn
       with ~/.cache/go2-yolo/<species>_yolo11s.pt
-  F6  the servo study's figures (docs/images/servo_demo/fig_*.png, commit 4f36620), tiled as they
-      are: reused, not regenerated
-Energy is the simulation's relative index (docs/theory/equations.md E3).
+Energy is the simulation's relative index (docs/plant_inspection/equations.md E3).
 """
 import argparse
 import csv
@@ -293,33 +291,15 @@ def f5_frames(out, frames_root):
     return p
 
 
-def f6_servo(out):
-    src = [os.path.join(REPO, "docs", "images", "servo_demo", f"fig_{k}.png") for k in ("success", "error", "effort", "recovery")]
-    src = [s for s in src if os.path.exists(s)]
-    if not src:
-        return None
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), constrained_layout=True)
-    for ax in axes.flat:
-        ax.axis("off")
-    for ax, s in zip(axes.flat, src):
-        ax.imshow(plt.imread(s))
-    fig.suptitle("F6  Distance-servo robustness (reused from the servo study, commit 4f36620; not regenerated)",
-                 x=0.0, ha="left", fontsize=10, color=INK)
-    p = os.path.join(out, "F6_servo_robustness.png")
-    fig.savefig(p, dpi=150)
-    plt.close(fig)
-    return p
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", default=os.path.join(REPO, "docs", "images", "orbit_paper"))
+    ap.add_argument("--out", default=os.path.join(REPO, "docs", "plant_inspection", "figures"))
     ap.add_argument("--frames-root", default=os.path.expanduser("~/files/go2-nav2-wifi/ws/log/orbit/species/{species}/runs"))
-    ap.add_argument("--only", nargs="*", default=None, help="F1 ... F6")
+    ap.add_argument("--only", nargs="*", default=None, help="F1 ... F5")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     jobs = {"F1": lambda: f1_frontier(a.out), "F2": lambda: f2_semisphere(a.out), "F3": lambda: f3_coverage(a.out),
-            "F4": lambda: f4_pareto(a.out), "F5": lambda: f5_frames(a.out, a.frames_root), "F6": lambda: f6_servo(a.out)}
+            "F4": lambda: f4_pareto(a.out), "F5": lambda: f5_frames(a.out, a.frames_root)}
     made = defaultdict(str)
     for k, fn in jobs.items():
         if a.only and k not in a.only:

@@ -1,7 +1,8 @@
 # Early-stopping policy (Phase 4): fails the coverage criterion
 
-[← README](../../README.md) · [Docs index](../README.md) · [Species ladder](species_ladder.md) ·
-[Equations](../theory/equations.md) (E5)
+[Overview](README.md) · [Frontier](frontier.md) · [Species](species.md) · [Early stop](early_stop.md) ·
+[Videos](videos.md) · [Equations](equations.md) · [Optimization](optimization.md) ·
+[Sim health](sim_health.md) · [Docs index](../README.md)
 
 **Status (2026-11-19): gate fails on 4 of 4 reachable species** (tomato has no executed waypoints
 to test). The policy saves 45-62 % of the energy index and never loses a detection, but loses

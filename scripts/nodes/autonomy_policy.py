@@ -23,12 +23,12 @@ Modes (all replay the waypoints in their recorded, fixed order; none reorders th
               are not.
 
 Per run and mode: waypoints and frames used, energy (sum of exec_energy_j + hold_energy_j of the
-waypoints used: a relative index, see docs/theory/equations.md E3), coverage fraction (E4, union
+waypoints used: a relative index, see docs/plant_inspection/equations.md E3), coverage fraction (E4, union
 of the used frames' seen samples / visible half), and the detection set: the shells in which the
 plant was detected (conf >= 0.25 in at least one used frame). Acceptance of early_stop against
 full (per run): energy saving >= 30 %, relative coverage loss <= 2 %, identical detection set.
 The energy of skipped waypoints is removed; the move from the stop to the next shell's first
-waypoint is taken as recorded (an approximation, noted in docs/theory/optimization.md).
+waypoint is taken as recorded (an approximation, noted in docs/plant_inspection/optimization.md).
 """
 
 import argparse
